@@ -354,7 +354,10 @@ async def live_report_task():
                 ld.close()
             for st in en:
                 s = report.snapshot_one(S.ledger.db, st)
-                lines.append(f"{st[:12]:<12}{s['pnl']:>+7.1f}$ b{s['budget']:>4.0f} {s['settled']:>3}w sim")
+                nf = s['buys'] + s['sells']
+                avg = s['volume'] / nf if nf else 0.0
+                lines.append(f"{st[:12]:<12}{s['pnl']:>+7.1f}$ {s['win_rate']*100:>3.0f}% {s['settled']:>3}w b{s['budget']:>4.0f}")
+                lines.append(f"  vol {s['volume']:>5.0f}$ avg {avg:.2f}$ s/b {s['sell_buy']:.2f}")
             if not real:
                 lines.append("NO real orders - executor OFF.")
                 lines.append("(these 2 arms are queued for live)")

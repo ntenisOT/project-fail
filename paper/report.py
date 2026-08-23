@@ -88,12 +88,14 @@ def tg_text(db_path: str = "paper/paper.db") -> str:
     if row and row[0]:
         hours = (row[1] - row[0]) / 3600
     out = [f"PAPER A/B v2.1 · {hours:.1f}h · {_t.strftime('%H:%M')}",
-           f"{'strategy':<12}{'pnl$':>6}{'ROC%':>7}{'win':>5}{'bud$':>6}"]
+           f"{'strategy':<10}{'pnl$':>5}{'ROC%':>5}{'vol$':>6}{'avg$':>5}{'win%':>5}{'bud$':>5}"]
     for s in snaps:
-        roc = max(-9999, min(9999, s['roc_budget'] * 100))
-        out.append(f"{s['strategy'][:12]:<12}{s['pnl']:>+6.0f}{roc:>+7.0f}"
-                   f"{s['win_rate']*100:>4.0f}%{s['budget']:>6.0f}")
-    out.append("ROC=pnl/bankroll needed. full cols in logs")
+        roc = max(-999, min(999, s['roc_budget'] * 100))
+        nf = s['buys'] + s['sells']
+        avg = s['volume'] / nf if nf else 0.0
+        out.append(f"{s['strategy'][:10]:<10}{s['pnl']:>+5.0f}{roc:>+5.0f}{min(99999, s['volume']):>6.0f}"
+                   f"{min(99.99, avg):>5.2f}{s['win_rate']*100:>4.0f}%{min(99999, s['budget']):>5.0f}")
+    out.append("ROC=pnl/bankroll. full cols in logs")
     return "\n".join(out)
 
 

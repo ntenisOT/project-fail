@@ -320,8 +320,10 @@ async def heartbeat():
 
 async def summary_task():
     mins = float(os.environ.get("PAPER_SUMMARY_MINS", "15"))
+    delay = 120.0                     # first report ~2 min after start, then every interval
     while True:
-        await asyncio.sleep(mins * 60)
+        await asyncio.sleep(delay)
+        delay = mins * 60
         txt = report.text()
         for line in txt.splitlines():
             log.info(line)
@@ -331,8 +333,10 @@ async def summary_task():
 async def live_report_task():
     import sqlite3
     mins = float(os.environ.get("PAPER_TG_MINS", "10"))
+    delay = 150.0                     # first report ~2.5 min after start, then every interval
     while True:
-        await asyncio.sleep(mins * 60)
+        await asyncio.sleep(delay)
+        delay = mins * 60
         en = sorted((S.gate._config().get("enabled") or []))
         if not (S.gate.active and en):
             continue

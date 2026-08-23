@@ -47,11 +47,14 @@ STRATEGIES = [
     {"name": "twap_deribit","mode": "roundtrip", "signal": "twap",    "confirm": ["deribit"],           "spread": 0.03, "size_mode": "fixed"},
     {"name": "binance_only","mode": "roundtrip", "signal": "binance", "confirm": [],                    "spread": 0.03, "size_mode": "fixed"},
     {"name": "deribit_only","mode": "roundtrip", "signal": "deribit", "confirm": [],                    "spread": 0.03, "size_mode": "fixed"},
+    # order-size experiment: clones of the leading arm with bigger participation
+    {"name": "td_f40",      "mode": "roundtrip", "signal": "twap",    "confirm": ["deribit"],           "spread": 0.03, "size_mode": "fixed", "f": 0.4},
+    {"name": "td_inv600",   "mode": "roundtrip", "signal": "twap",    "confirm": ["deribit"],           "spread": 0.03, "size_mode": "fixed", "maxinv": 600},
 ]
 NAMES = [s["name"] for s in STRATEGIES]
 F, MAXINV, MINSIG = 0.2, 200, 0.05
 REQUOTE = float(os.environ.get("PAPER_REQUOTE", "1.0"))   # s between quote refreshes (fill model v2)
-LOCK_THRESH, LOCK_CAP = 0.99, 200.0   # capture YES+NO asks < 0.99; max shares/window
+LOCK_MARGIN, TAKER_RATE = 0.002, 0.07  # capture only sets with NET edge (after taker fees) > margin
 
 CL_WS = "wss://ws-live-data.polymarket.com"
 DERIBIT_WS = "wss://www.deribit.com/ws/api/v2"
@@ -195,7 +198,8 @@ async def window_task():
                     slug = f"{prefix}-{base}"
                     S.wref[a] = {"twap": S.twap[a].at(base), "binance": S.binance.get(a), "deribit": S.deribit.get(a)}
                     for s in STRATEGIES:
-                        w = PaperWindow(a, slug, base, s["spread"], F, MAXINV, MINSIG if s["signal"] != "mid" else -1.0,
+                        w = PaperWindow(a, slug, base, s["spread"], s.get("f", F), s.get("maxinv", MAXINV),
+                                        MINSIG if s["signal"] != "mid" else -1.0,
                                         mode=s["mode"], size_mode=s["size_mode"], requote=REQUOTE)
                         w.up_tok, w.down_tok = ids[0], ids[1]
                         S.win[s["name"]][a] = w
@@ -219,11 +223,14 @@ def check_lock(a):
     if ua is None or da is None:
         return
     s = ua + da
-    if s < LOCK_THRESH:                        # YES+NO < 1: buy both, merge complete set back to $1 instantly
+    # both legs lift the ask = TAKER: fee = 0.07*p*(1-p) per share on each leg
+    fee = TAKER_RATE * (ua * (1 - ua) + da * (1 - da))
+    net = 1.0 - s - fee
+    if net > LOCK_MARGIN:                      # YES+NO cheap enough to survive fees: buy both, merge to $1
         size = F * 50
-        cost = size * s
+        cost = size * (s + fee)
         lk["cost"] += cost
-        lk["profit"] += size * (1.0 - s)
+        lk["profit"] += size * net
         lk["peak"] = max(lk["peak"], cost)     # capital recycles via merge -> bankroll = peak single lock
         lk["n"] += 1
 
@@ -318,7 +325,7 @@ async def summary_task():
 
 
 async def main():
-    log.info("paper trader (11 strategies) starting | fill model v2 (requote=%.1fs, min-post=5sh, taker-only fees->maker 0) | assets=%s (PAPER - no real orders)", REQUOTE, list(ASSETS))
+    log.info("paper trader (13 strategies) starting | fill model v2 (requote=%.1fs, min-post=5sh, taker-only fees->maker 0) | assets=%s (PAPER - no real orders)", REQUOTE, list(ASSETS))
     S.notify.send("paper trader started: 11-strategy A/B, fill model v2 (PAPER - no real orders)")
     await asyncio.gather(ws_live_task(), deribit_task(), window_task(), market_task(), heartbeat(), summary_task())
 

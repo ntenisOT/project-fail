@@ -21,8 +21,11 @@ paper/run.py  ──►  paper/live_gate.py  ──►  paper/intents.jsonl  ─
 - Fees: `crypto_fees_v2`, **taker-only** (`{rate 0.07, exponent 1, takerOnly: true}`)
   → resting (maker) orders pay **0**; makers additionally earn rebates
   (`rebateRate 0.2`) which our models ignore (conservative).
-- Taker fee ≈ `0.07 × min(p, 1−p)` per share → ~0.2% of notional at p≈0.97
-  (cheap near-close exits), ~3.5¢/share at p=0.5 (avoid mid-range taking).
+- Taker fee = `shares × 0.07 × p × (1−p)` (docs-confirmed) → 1.75¢/share at
+  p=0.5, 0.2¢/share at p≈0.97 (cheap near-close exits, dear mid-range).
+- lock_arb lifts both asks = taker both legs → fee ≈ 3.45¢/set at balanced
+  prices vs 1-2¢ gross edge: modeled since fill v2.1; balanced sets need
+  YES+NO < ~0.965 to profit after fees.
 - Limit orders: **minimum 5 shares** to post, tick 0.01. Partial fills of a
   posted order are valid at any size. Market orders: $1 minimum.
 - Redemption of held winners ≈ 2h after settlement (budget$ column models this).

@@ -1,0 +1,15 @@
+# secrets — never commit
+.env
+.env.*
+!.env.example
+# large local data + caches
+out/
+backtest_cache/
+# live paper-trading ledger (local runtime state)
+paper/*.db
+paper/*.db-journal
+# python / tooling
+__pycache__/
+*.pyc
+*.log
+.claude/

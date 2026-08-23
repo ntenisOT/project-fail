@@ -1,0 +1,6 @@
+{
+  "enabled": ["twap_deribit"],
+  "max_order_usd": 5,
+  "max_inventory_usd": 50,
+  "daily_loss_stop_usd": 25
+}

@@ -22,6 +22,7 @@ import websockets
 from paper import report
 from paper.engine import PaperWindow, TWAP, fair_up
 from paper.ledger import Ledger
+from paper.live_gate import LiveGate
 from paper.notify import notifier
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
@@ -49,6 +50,7 @@ STRATEGIES = [
 ]
 NAMES = [s["name"] for s in STRATEGIES]
 F, MAXINV, MINSIG = 0.2, 200, 0.05
+REQUOTE = float(os.environ.get("PAPER_REQUOTE", "1.0"))   # s between quote refreshes (fill model v2)
 LOCK_THRESH, LOCK_CAP = 0.99, 200.0   # capture YES+NO asks < 0.99; max shares/window
 
 CL_WS = "wss://ws-live-data.polymarket.com"
@@ -83,6 +85,7 @@ class State:
         self.tokens: set[str] = set()
         self.tokens_changed = asyncio.Event()
         self.ledger = Ledger()
+        self.gate = LiveGate()
         self.notify = notifier()
         self.counts = collections.Counter()
 
@@ -183,7 +186,7 @@ async def window_task():
                 lk = S.lock.get(a)
                 if lk and lk["n"] > 0:
                     S.ledger.record_settlement(now, "lock_arb", a, lk["slug"],
-                        {"cash": lk["profit"], "residual": 0.0, "pnl": lk["profit"], "capital": lk["cost"],
+                        {"cash": lk["profit"], "residual": 0.0, "pnl": lk["profit"], "capital": lk["peak"],
                          "buys": lk["n"], "sells": lk["n"], "resid_shares": 0.0, "n_fills": lk["n"], "outcome_up": outcome})
                 log.info("settled %s %s outcome=%d", a, ref.slug, outcome)
             if ref is None or rolled:
@@ -193,10 +196,10 @@ async def window_task():
                     S.wref[a] = {"twap": S.twap[a].at(base), "binance": S.binance.get(a), "deribit": S.deribit.get(a)}
                     for s in STRATEGIES:
                         w = PaperWindow(a, slug, base, s["spread"], F, MAXINV, MINSIG if s["signal"] != "mid" else -1.0,
-                                        mode=s["mode"], size_mode=s["size_mode"])
+                                        mode=s["mode"], size_mode=s["size_mode"], requote=REQUOTE)
                         w.up_tok, w.down_tok = ids[0], ids[1]
                         S.win[s["name"]][a] = w
-                    S.lock[a] = {"slug": slug, "up": ids[0], "dn": ids[1], "cost": 0.0, "profit": 0.0, "n": 0, "shares": 0.0}
+                    S.lock[a] = {"slug": slug, "up": ids[0], "dn": ids[1], "cost": 0.0, "profit": 0.0, "n": 0, "peak": 0.0}
         tok_map, toks = {}, set()
         for a, w in S.win[NAMES[0]].items():
             if w.up_tok:
@@ -216,11 +219,12 @@ def check_lock(a):
     if ua is None or da is None:
         return
     s = ua + da
-    if s < LOCK_THRESH and lk["shares"] < LOCK_CAP:
-        size = min(F * 50, LOCK_CAP - lk["shares"])   # modest capture per detection
-        lk["cost"] += size * s
+    if s < LOCK_THRESH:                        # YES+NO < 1: buy both, merge complete set back to $1 instantly
+        size = F * 50
+        cost = size * s
+        lk["cost"] += cost
         lk["profit"] += size * (1.0 - s)
-        lk["shares"] += size
+        lk["peak"] = max(lk["peak"], cost)     # capital recycles via merge -> bankroll = peak single lock
         lk["n"] += 1
 
 
@@ -248,6 +252,7 @@ def handle_event(it):
         return
     a, is_up = info
     tok = it.get("asset_id")
+    now = time.time()
     prev_mid = S.last_price.get(tok)      # mid BEFORE this trade (for neutral MM)
     is_sell = str(it.get("side", "")).upper() == "SELL"
     for s in STRATEGIES:
@@ -259,9 +264,16 @@ def handle_event(it):
         else:
             fu = strat_fair_up(s, a)
             fair_tok = None if fu is None else (fu if is_up else 1 - fu)
-        rec = w.on_trade(is_up, price, size, is_sell, fair_tok)
+        pre = None
+        if S.gate.enabled(s["name"]):
+            qq = w.q[is_up]; pre = (qq["bid"], qq["ask"])
+        rec = w.on_trade(now, is_up, price, size, is_sell, fair_tok)
         if rec:
-            S.ledger.record_fill(time.time(), s["name"], a, w.slug, rec)
+            S.ledger.record_fill(now, s["name"], a, w.slug, rec)
+        if pre is not None:
+            qq = w.q[is_up]
+            if (qq["bid"], qq["ask"]) != pre:
+                S.gate.emit_quotes(s["name"], a, w.slug, tok, is_up, qq["bid"], qq["ask"], w.deployed)
     S.last_price[tok] = price
 
 
@@ -306,8 +318,8 @@ async def summary_task():
 
 
 async def main():
-    log.info("paper trader (11 strategies) starting | assets=%s (PAPER - no real orders)", list(ASSETS))
-    S.notify.send("paper trader started: 11-strategy A/B (PAPER - no real orders)")
+    log.info("paper trader (11 strategies) starting | fill model v2 (requote=%.1fs, min-post=5sh, taker-only fees->maker 0) | assets=%s (PAPER - no real orders)", REQUOTE, list(ASSETS))
+    S.notify.send("paper trader started: 11-strategy A/B, fill model v2 (PAPER - no real orders)")
     await asyncio.gather(ws_live_task(), deribit_task(), window_task(), market_task(), heartbeat(), summary_task())
 
 

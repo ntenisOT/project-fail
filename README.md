@@ -26,6 +26,19 @@ a replicable, low-capital edge, and if so, what execution captures it?*
 | `mm_sim.py`, `mm_sim_v2.py` | market-making simulators |
 | `paper/` | the live **11-strategy paper-trading A/B harness** |
 
+
+## Fill model v2 + live-readiness (2026-08-23)
+
+- `paper/engine.py` fill model v2: fills hit POSTED quotes up to `PAPER_REQUOTE`
+  (1.0s) stale -> adverse selection simulated; quotes only post with >=5-share
+  capacity/inventory (Polymarket limit-order minimum); maker fee 0 per market
+  metadata (`crypto_fees_v2` is taker-only; maker rebates ignored = conservative).
+- `paper/live_gate.py` + `GO_LIVE.md`: per-strategy graduation path. Strategies
+  emit desired-quote INTENTS (paper/intents.jsonl) behind a double opt-in
+  (PAPER_LIVE_INTENTS=1 + paper/live.json) with hard caps and a KILL file.
+  No keys/signing/submission in this repo - a user-run executor consumes intents.
+- v1 optimistic-model ledger archived as paper/paper_fillv1_20260823.db.
+
 ## Paper trader (`paper/`)
 Runs 11 strategies in parallel on the same live feed, each with its own ledger:
 hold, roundtrip, rt_wide, opp_size, **neutral** (no-signal control), lock_arb, and a

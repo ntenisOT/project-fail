@@ -128,6 +128,12 @@ def main():
     log.info("mode=%s enabled=%s caps: order $%.0f, inventory $%.0f, day-stop $%.0f",
              MODE, sorted(enabled), cap_ord, cap_inv, stop)
     if MODE == "place":
+        # geo interlock: UK box is paper-only (Polymarket blocks UK trading).
+        # place-mode only runs where the operator has declared the permitted region.
+        if os.environ.get("DEPLOY_REGION") != "eu-west-1":
+            log.error("REFUSED: place mode requires DEPLOY_REGION=eu-west-1 in .env "
+                      "(this box is paper-only; deploy to the Ireland box per GO_LIVE.md)")
+            return
         clob = Clob()
     else:
         clob = None

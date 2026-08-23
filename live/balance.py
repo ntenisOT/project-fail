@@ -11,17 +11,29 @@ from paper import envload
 
 envload.load()
 
-RPC = "https://polygon-rpc.com"
+RPCS = ["https://polygon-bor-rpc.publicnode.com", "https://1rpc.io/matic",
+        "https://polygon.llamarpc.com", "https://polygon-rpc.com"]
 USDC_E = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"   # bridged USDC.e (Polymarket collateral)
 USDC_N = "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"   # native USDC
 
 
+def rpc(method: str, params: list):
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode()
+    last = None
+    for host in RPCS:
+        try:
+            req = urllib.request.Request(host, headers={"Content-Type": "application/json",
+                                                        "User-Agent": "Mozilla/5.0"}, data=body)
+            r = json.load(urllib.request.urlopen(req, timeout=15))
+            if r.get("result") is not None:
+                return r["result"]
+        except Exception as e:
+            last = e
+    raise RuntimeError(f"all RPCs failed: {last}")
+
+
 def call(to: str, data: str):
-    req = urllib.request.Request(RPC, headers={"Content-Type": "application/json"},
-        data=json.dumps({"jsonrpc": "2.0", "id": 1, "method": "eth_call",
-                         "params": [{"to": to, "data": data}, "latest"]}).encode())
-    r = json.load(urllib.request.urlopen(req, timeout=15))
-    return int(r.get("result") or "0x0", 16)
+    return int(rpc("eth_call", [{"to": to, "data": data}, "latest"]) or "0x0", 16)
 
 
 def main():
@@ -34,10 +46,7 @@ def main():
     usdcn = call(USDC_N, "0x70a08231" + slot) / 1e6
     pol = None
     try:
-        req = urllib.request.Request(RPC, headers={"Content-Type": "application/json"},
-            data=json.dumps({"jsonrpc": "2.0", "id": 1, "method": "eth_getBalance",
-                             "params": [addr, "latest"]}).encode())
-        pol = int(json.load(urllib.request.urlopen(req, timeout=15)).get("result") or "0x0", 16) / 1e18
+        pol = int(rpc("eth_getBalance", [addr, "latest"]) or "0x0", 16) / 1e18
     except Exception:
         pass
     total = usdce + usdcn

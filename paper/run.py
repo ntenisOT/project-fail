@@ -319,8 +319,9 @@ async def heartbeat():
 
 
 async def summary_task():
+    mins = float(os.environ.get("PAPER_SUMMARY_MINS", "15"))
     while True:
-        await asyncio.sleep(900)
+        await asyncio.sleep(mins * 60)
         txt = report.text()
         for line in txt.splitlines():
             log.info(line)

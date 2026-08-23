@@ -6,7 +6,7 @@ below, one strategy at a time, smallest possible size first.
 ## Architecture (who does what)
 
 ```
-paper/run.py  ──►  paper/live_gate.py  ──►  paper/intents.jsonl  ──►  YOUR executor (project-magic)
+paper/run.py  ──►  paper/live_gate.py  ──►  paper/intents.jsonl  ──►  YOUR executor (live/executor.py)
 (strategies)       (risk caps, kill,        (desired quotes,          (holds YOUR keys, signs,
  all simulated      double opt-in)           no keys, no orders)       places/cancels, final risk)
 ```
@@ -48,7 +48,8 @@ paper/run.py  ──►  paper/live_gate.py  ──►  paper/intents.jsonl  ─
       ONE strategy; keep `max_order_usd: 5`, `max_inventory_usd: 50`,
       `daily_loss_stop_usd: 25` for the first session
 - [ ] Start runner with `PAPER_LIVE_INTENTS=1` (otherwise nothing is emitted)
-- [ ] Point project-magic's executor at `paper/intents.jsonl` (user-run, user keys)
+- [ ] Run the bundled executor yourself: `python -m live.executor` (log-only first;
+      set LIVE_EXECUTOR_MODE=place in .env when ready for real orders)
 - [ ] Confirm USDC allowance for the CTF exchange is set (Polymarket UI / executor)
 - [ ] Dry pass: watch intents for 15 min with executor in log-only mode; check
       quote churn vs CLOB rate limits before letting it place

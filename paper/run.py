@@ -19,6 +19,9 @@ import urllib.request
 
 import websockets
 
+from paper import envload
+envload.load()
+
 from paper import report
 from paper.engine import PaperWindow, TWAP, fair_up
 from paper.ledger import Ledger
@@ -324,10 +327,36 @@ async def summary_task():
         S.notify.send(txt)
 
 
+async def live_report_task():
+    import sqlite3
+    mins = float(os.environ.get("PAPER_TG_MINS", "10"))
+    while True:
+        await asyncio.sleep(mins * 60)
+        en = sorted((S.gate._config().get("enabled") or []))
+        if not (S.gate.active and en):
+            continue
+        lines = [f"LIVE strategies ({'REAL fills' if os.path.exists('live/live.db') else 'sim view - executor not running'})"]
+        try:
+            if os.path.exists("live/live.db"):
+                ld = sqlite3.connect("live/live.db")
+                day0 = time.time() // 86400 * 86400
+                n, cash = ld.execute("""SELECT count(*), COALESCE(sum(CASE WHEN side='BUY' THEN -usd ELSE usd END),0)
+                                        FROM live_fills WHERE ts>=?""", (day0,)).fetchone()
+                no, nc = ld.execute("SELECT sum(action='place'), sum(action='cancel') FROM live_orders WHERE ts>=?", (day0,)).fetchone()
+                lines.append(f"today: fills {n} | net cash {cash:+.2f} | orders placed {no or 0} / cancelled {nc or 0}")
+                ld.close()
+            for st in en:
+                snap = report.snapshot_one(S.ledger.db, st)
+                lines.append(f"{st}: win {snap['settled']} | pnl {snap['pnl']:+.1f} | bud {snap['budget']:.0f} | s/b {snap['sell_buy']:.2f} (sim)")
+        except Exception as e:
+            lines.append(f"(report error: {e.__class__.__name__})")
+        S.notify.send("\n".join(lines))
+
+
 async def main():
     log.info("paper trader (13 strategies) starting | fill model v2 (requote=%.1fs, min-post=5sh, taker-only fees->maker 0) | assets=%s (PAPER - no real orders)", REQUOTE, list(ASSETS))
     S.notify.send("paper trader started: 11-strategy A/B, fill model v2 (PAPER - no real orders)")
-    await asyncio.gather(ws_live_task(), deribit_task(), window_task(), market_task(), heartbeat(), summary_task())
+    await asyncio.gather(ws_live_task(), deribit_task(), window_task(), market_task(), heartbeat(), summary_task(), live_report_task())
 
 
 if __name__ == "__main__":

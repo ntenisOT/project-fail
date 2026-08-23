@@ -13,3 +13,6 @@ __pycache__/
 *.pyc
 *.log
 .claude/
+# runtime artifacts of the live pipeline
+live/live.db
+paper/intents.jsonl

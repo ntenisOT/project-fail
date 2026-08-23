@@ -19,9 +19,13 @@ import urllib.request
 
 import websockets
 
+from paper import envload
+envload.load()
+
 from paper import report
 from paper.engine import PaperWindow, TWAP, fair_up
 from paper.ledger import Ledger
+from paper.live_gate import LiveGate
 from paper.notify import notifier
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
@@ -46,10 +50,14 @@ STRATEGIES = [
     {"name": "twap_deribit","mode": "roundtrip", "signal": "twap",    "confirm": ["deribit"],           "spread": 0.03, "size_mode": "fixed"},
     {"name": "binance_only","mode": "roundtrip", "signal": "binance", "confirm": [],                    "spread": 0.03, "size_mode": "fixed"},
     {"name": "deribit_only","mode": "roundtrip", "signal": "deribit", "confirm": [],                    "spread": 0.03, "size_mode": "fixed"},
+    # order-size experiment: clones of the leading arm with bigger participation
+    {"name": "td_f40",      "mode": "roundtrip", "signal": "twap",    "confirm": ["deribit"],           "spread": 0.03, "size_mode": "fixed", "f": 0.4},
+    {"name": "td_inv600",   "mode": "roundtrip", "signal": "twap",    "confirm": ["deribit"],           "spread": 0.03, "size_mode": "fixed", "maxinv": 600},
 ]
 NAMES = [s["name"] for s in STRATEGIES]
 F, MAXINV, MINSIG = 0.2, 200, 0.05
-LOCK_THRESH, LOCK_CAP = 0.99, 200.0   # capture YES+NO asks < 0.99; max shares/window
+REQUOTE = float(os.environ.get("PAPER_REQUOTE", "1.0"))   # s between quote refreshes (fill model v2)
+LOCK_MARGIN, TAKER_RATE = 0.002, 0.07  # capture only sets with NET edge (after taker fees) > margin
 
 CL_WS = "wss://ws-live-data.polymarket.com"
 DERIBIT_WS = "wss://www.deribit.com/ws/api/v2"
@@ -83,6 +91,7 @@ class State:
         self.tokens: set[str] = set()
         self.tokens_changed = asyncio.Event()
         self.ledger = Ledger()
+        self.gate = LiveGate()
         self.notify = notifier()
         self.counts = collections.Counter()
 
@@ -183,7 +192,7 @@ async def window_task():
                 lk = S.lock.get(a)
                 if lk and lk["n"] > 0:
                     S.ledger.record_settlement(now, "lock_arb", a, lk["slug"],
-                        {"cash": lk["profit"], "residual": 0.0, "pnl": lk["profit"], "capital": lk["cost"],
+                        {"cash": lk["profit"], "residual": 0.0, "pnl": lk["profit"], "capital": lk["peak"],
                          "buys": lk["n"], "sells": lk["n"], "resid_shares": 0.0, "n_fills": lk["n"], "outcome_up": outcome})
                 log.info("settled %s %s outcome=%d", a, ref.slug, outcome)
             if ref is None or rolled:
@@ -192,11 +201,12 @@ async def window_task():
                     slug = f"{prefix}-{base}"
                     S.wref[a] = {"twap": S.twap[a].at(base), "binance": S.binance.get(a), "deribit": S.deribit.get(a)}
                     for s in STRATEGIES:
-                        w = PaperWindow(a, slug, base, s["spread"], F, MAXINV, MINSIG if s["signal"] != "mid" else -1.0,
-                                        mode=s["mode"], size_mode=s["size_mode"])
+                        w = PaperWindow(a, slug, base, s["spread"], s.get("f", F), s.get("maxinv", MAXINV),
+                                        MINSIG if s["signal"] != "mid" else -1.0,
+                                        mode=s["mode"], size_mode=s["size_mode"], requote=REQUOTE)
                         w.up_tok, w.down_tok = ids[0], ids[1]
                         S.win[s["name"]][a] = w
-                    S.lock[a] = {"slug": slug, "up": ids[0], "dn": ids[1], "cost": 0.0, "profit": 0.0, "n": 0, "shares": 0.0}
+                    S.lock[a] = {"slug": slug, "up": ids[0], "dn": ids[1], "cost": 0.0, "profit": 0.0, "n": 0, "peak": 0.0}
         tok_map, toks = {}, set()
         for a, w in S.win[NAMES[0]].items():
             if w.up_tok:
@@ -216,11 +226,15 @@ def check_lock(a):
     if ua is None or da is None:
         return
     s = ua + da
-    if s < LOCK_THRESH and lk["shares"] < LOCK_CAP:
-        size = min(F * 50, LOCK_CAP - lk["shares"])   # modest capture per detection
-        lk["cost"] += size * s
-        lk["profit"] += size * (1.0 - s)
-        lk["shares"] += size
+    # both legs lift the ask = TAKER: fee = 0.07*p*(1-p) per share on each leg
+    fee = TAKER_RATE * (ua * (1 - ua) + da * (1 - da))
+    net = 1.0 - s - fee
+    if net > LOCK_MARGIN:                      # YES+NO cheap enough to survive fees: buy both, merge to $1
+        size = F * 50
+        cost = size * (s + fee)
+        lk["cost"] += cost
+        lk["profit"] += size * net
+        lk["peak"] = max(lk["peak"], cost)     # capital recycles via merge -> bankroll = peak single lock
         lk["n"] += 1
 
 
@@ -248,6 +262,7 @@ def handle_event(it):
         return
     a, is_up = info
     tok = it.get("asset_id")
+    now = time.time()
     prev_mid = S.last_price.get(tok)      # mid BEFORE this trade (for neutral MM)
     is_sell = str(it.get("side", "")).upper() == "SELL"
     for s in STRATEGIES:
@@ -259,9 +274,16 @@ def handle_event(it):
         else:
             fu = strat_fair_up(s, a)
             fair_tok = None if fu is None else (fu if is_up else 1 - fu)
-        rec = w.on_trade(is_up, price, size, is_sell, fair_tok)
+        pre = None
+        if S.gate.enabled(s["name"]):
+            qq = w.q[is_up]; pre = (qq["bid"], qq["ask"])
+        rec = w.on_trade(now, is_up, price, size, is_sell, fair_tok)
         if rec:
-            S.ledger.record_fill(time.time(), s["name"], a, w.slug, rec)
+            S.ledger.record_fill(now, s["name"], a, w.slug, rec)
+        if pre is not None:
+            qq = w.q[is_up]
+            if (qq["bid"], qq["ask"]) != pre:
+                S.gate.emit_quotes(s["name"], a, w.slug, tok, is_up, qq["bid"], qq["ask"], w.deployed)
     S.last_price[tok] = price
 
 
@@ -297,18 +319,57 @@ async def heartbeat():
 
 
 async def summary_task():
+    mins = float(os.environ.get("PAPER_SUMMARY_MINS", "15"))
+    delay = 120.0                     # first report ~2 min after start, then every interval
     while True:
-        await asyncio.sleep(900)
+        await asyncio.sleep(delay)
+        delay = mins * 60
         txt = report.text()
         for line in txt.splitlines():
             log.info(line)
-        S.notify.send(txt)
+        S.notify.send(report.tg_text(), pre=True)
+
+
+async def live_report_task():
+    import sqlite3
+    mins = float(os.environ.get("PAPER_TG_MINS", "10"))
+    delay = 150.0                     # first report ~2.5 min after start, then every interval
+    while True:
+        await asyncio.sleep(delay)
+        delay = mins * 60
+        en = sorted((S.gate._config().get("enabled") or []))
+        if not (S.gate.active and en):
+            continue
+        real = os.path.exists("live/live.db")
+        lines = [(f"LIVE · REAL fills · {time.strftime('%H:%M')}" if real else
+                  f"LIVE-CANDIDATES · paper sim · {time.strftime('%H:%M')}")]
+        try:
+            if real:
+                ld = sqlite3.connect("live/live.db")
+                day0 = time.time() // 86400 * 86400
+                n, cash = ld.execute("""SELECT count(*), COALESCE(sum(CASE WHEN side='BUY' THEN -usd ELSE usd END),0)
+                                        FROM live_fills WHERE ts>=?""", (day0,)).fetchone()
+                no, nc = ld.execute("SELECT sum(action='place'), sum(action='cancel') FROM live_orders WHERE ts>=?", (day0,)).fetchone()
+                lines.append(f"today {n}f · net {cash:+.2f}$ · ord {no or 0}/{nc or 0}")
+                ld.close()
+            for st in en:
+                s = report.snapshot_one(S.ledger.db, st)
+                nf = s['buys'] + s['sells']
+                avg = s['volume'] / nf if nf else 0.0
+                lines.append(f"{st[:12]:<12}{s['pnl']:>+7.1f}$ {s['win_rate']*100:>3.0f}% {s['settled']:>3}w b{s['budget']:>4.0f}")
+                lines.append(f"  vol {s['volume']:>5.0f}$ avg {avg:.2f}$ s/b {s['sell_buy']:.2f}")
+            if not real:
+                lines.append("NO real orders - executor OFF.")
+                lines.append("(these 2 arms are queued for live)")
+        except Exception as e:
+            lines.append(f"(report error: {e.__class__.__name__})")
+        S.notify.send("\n".join(lines), pre=True)
 
 
 async def main():
-    log.info("paper trader (11 strategies) starting | assets=%s (PAPER - no real orders)", list(ASSETS))
-    S.notify.send("paper trader started: 11-strategy A/B (PAPER - no real orders)")
-    await asyncio.gather(ws_live_task(), deribit_task(), window_task(), market_task(), heartbeat(), summary_task())
+    log.info("paper trader (13 strategies) starting | fill model v2 (requote=%.1fs, min-post=5sh, taker-only fees->maker 0) | assets=%s (PAPER - no real orders)", REQUOTE, list(ASSETS))
+    S.notify.send("paper trader started: 11-strategy A/B, fill model v2 (PAPER - no real orders)")
+    await asyncio.gather(ws_live_task(), deribit_task(), window_task(), market_task(), heartbeat(), summary_task(), live_report_task())
 
 
 if __name__ == "__main__":

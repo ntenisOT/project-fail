@@ -37,14 +37,21 @@ class Notifier:
         if not self.enabled:
             log.info("telegram push disabled (set TELEGRAM_BOT_TOKEN + chat ids to enable); logging only")
 
-    def send(self, text: str) -> None:
+    def send(self, text: str, pre: bool = False) -> None:
+        """pre=True -> monospace block (<pre>), so aligned columns stay aligned."""
         if not self.enabled:
             log.info("[telegram-off] %s", text)
             return
+        body = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        # tag every message: this chat is shared with the project-magic bot's own alerts
+        if pre:
+            body = f"project-fail\n<pre>{body}</pre>"
+        else:
+            body = f"[project-fail] {body}"
         for chat in self.chats:
             try:
                 data = urllib.parse.urlencode(
-                    {"chat_id": chat, "text": text, "parse_mode": "HTML", "disable_web_page_preview": "true"}
+                    {"chat_id": chat, "text": body, "parse_mode": "HTML", "disable_web_page_preview": "true"}
                 ).encode()
                 req = urllib.request.Request(
                     f"https://api.telegram.org/bot{self.token}/sendMessage", data=data

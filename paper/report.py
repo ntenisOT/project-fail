@@ -74,5 +74,28 @@ def text(db_path: str = "paper/paper.db") -> str:
     return "\n".join(out)
 
 
+def tg_text(db_path: str = "paper/paper.db") -> str:
+    """Phone-width (~36 char) monospace layout for Telegram. Full detail stays
+    in the terminal report / logs."""
+    import time as _t
+    db = sqlite3.connect(db_path)
+    strats = _strategies(db)
+    if not strats:
+        return "(warming up - no settled windows yet)"
+    snaps = sorted((snapshot_one(db, st) for st in strats), key=lambda s: s["pnl"], reverse=True)
+    hours = 0.0
+    row = db.execute("SELECT min(ts), max(ts) FROM settlements WHERE n_fills>0").fetchone()
+    if row and row[0]:
+        hours = (row[1] - row[0]) / 3600
+    out = [f"PAPER A/B v2.1 · {hours:.1f}h · {_t.strftime('%H:%M')}",
+           f"{'strategy':<12}{'pnl$':>6}{'ROC%':>7}{'win':>5}{'bud$':>6}"]
+    for s in snaps:
+        roc = max(-9999, min(9999, s['roc_budget'] * 100))
+        out.append(f"{s['strategy'][:12]:<12}{s['pnl']:>+6.0f}{roc:>+7.0f}"
+                   f"{s['win_rate']*100:>4.0f}%{s['budget']:>6.0f}")
+    out.append("ROC=pnl/bankroll needed. full cols in logs")
+    return "\n".join(out)
+
+
 if __name__ == "__main__":
     print(text())

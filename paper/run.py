@@ -324,7 +324,7 @@ async def summary_task():
         txt = report.text()
         for line in txt.splitlines():
             log.info(line)
-        S.notify.send(txt)
+        S.notify.send(report.tg_text(), pre=True)
 
 
 async def live_report_task():

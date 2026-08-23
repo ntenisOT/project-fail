@@ -64,3 +64,26 @@ paper/run.py  ──►  paper/live_gate.py  ──►  paper/intents.jsonl  ─
 - [ ] Maker rebate accounting (currently ignored = hidden upside)
 - [ ] winner_clone build: open+close participation, sell/buy ≈ 1.0 target,
       near-close taker exit at ≥0.97 (fee ~0.2% there)
+
+## Deploy runbook — Ireland box (AWS eu-west-1)
+
+CLOB matching runs in AWS eu-west-2 (London); eu-west-1 is the closest
+non-georestricted region (~1-5 ms RTT). Same region we used for project-magic.
+
+```
+git clone https://github.com/ntenisOT/project-fail && cd project-fail
+python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
+# copy .env by hand (scp) - NEVER commit it. Fill keys locally on the box.
+python -m live.latency          # measure real RTT -> set PAPER_REQUOTE in .env
+python -m live.balance          # confirm funds visible
+tmux new -d -s paper 'python -m paper.run'            # 13-arm paper + intents
+python -m live.executor         # log-only session first, watch [dry] churn
+# when ready: LIVE_EXECUTOR_MODE=place in .env, then
+tmux new -d -s exec 'python -m live.executor'         # YOU run this = live
+# instant stop from anywhere:  touch paper/KILL
+```
+
+Calibration rule: whatever p50 `live.latency` reports on the box, set
+PAPER_REQUOTE to ~2xRTT+50ms and restart the paper runner - then the sim's
+adverse-selection assumption matches the deployment, and paper-vs-live fill
+comparison becomes apples-to-apples.

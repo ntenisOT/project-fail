@@ -62,7 +62,10 @@ def text(db_path: str = "paper/paper.db") -> str:
         warm = db.execute("SELECT count(*) FROM fills").fetchone()[0]
         return f"(warming up — no settled windows with fills yet; sim-fills so far: {warm})"
     snaps = sorted((snapshot_one(db, st) for st in strats), key=lambda s: s["pnl"], reverse=True)
-    out = ["PAPER A/B — vs recorder baseline (win ~65%, ROC/win ~10%)",
+    import time as _t
+    last = db.execute("SELECT max(ts) FROM settlements WHERE n_fills>0").fetchone()[0] or 0
+    out = [f"PAPER A/B — vs recorder baseline (win ~65%, ROC/win ~10%) | last settle "
+           f"{_t.strftime('%H:%M:%S', _t.gmtime(last))} UTC (5-min cycles)",
            f"{'strategy':<13}{'windows':>8}{'fills':>7}{'vol$':>9}{'avg$':>7}{'win%':>6}{'pnl$':>9}{'budget$':>9}{'ROC/bud':>9}{'sell/buy':>9}"]
     for s in snaps:
         nf = s['buys'] + s['sells']
@@ -87,7 +90,8 @@ def tg_text(db_path: str = "paper/paper.db") -> str:
     row = db.execute("SELECT min(ts), max(ts) FROM settlements WHERE n_fills>0").fetchone()
     if row and row[0]:
         hours = (row[1] - row[0]) / 3600
-    out = [f"PAPER A/B v2.1 · {hours:.1f}h · {_t.strftime('%H:%M')}",
+    last = row[1] or 0
+    out = [f"PAPER A/B v2.1 · {hours:.1f}h · settled@{_t.strftime('%H:%M', _t.gmtime(last))}Z",
            f"{'strategy':<10}{'pnl$':>5}{'ROC%':>5}{'vol$':>6}{'avg$':>5}{'win%':>5}{'bud$':>5}"]
     for s in snaps:
         roc = max(-999, min(999, s['roc_budget'] * 100))

@@ -43,8 +43,11 @@ class Notifier:
             log.info("[telegram-off] %s", text)
             return
         body = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        # tag every message: this chat is shared with the project-magic bot's own alerts
         if pre:
-            body = f"<pre>{body}</pre>"
+            body = f"project-fail\n<pre>{body}</pre>"
+        else:
+            body = f"[project-fail] {body}"
         for chat in self.chats:
             try:
                 data = urllib.parse.urlencode(

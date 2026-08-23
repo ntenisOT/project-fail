@@ -336,22 +336,27 @@ async def live_report_task():
         en = sorted((S.gate._config().get("enabled") or []))
         if not (S.gate.active and en):
             continue
-        lines = [f"LIVE strategies ({'REAL fills' if os.path.exists('live/live.db') else 'sim view - executor not running'})"]
+        real = os.path.exists("live/live.db")
+        lines = [(f"LIVE · REAL fills · {time.strftime('%H:%M')}" if real else
+                  f"LIVE-CANDIDATES · paper sim · {time.strftime('%H:%M')}")]
         try:
-            if os.path.exists("live/live.db"):
+            if real:
                 ld = sqlite3.connect("live/live.db")
                 day0 = time.time() // 86400 * 86400
                 n, cash = ld.execute("""SELECT count(*), COALESCE(sum(CASE WHEN side='BUY' THEN -usd ELSE usd END),0)
                                         FROM live_fills WHERE ts>=?""", (day0,)).fetchone()
                 no, nc = ld.execute("SELECT sum(action='place'), sum(action='cancel') FROM live_orders WHERE ts>=?", (day0,)).fetchone()
-                lines.append(f"today: fills {n} | net cash {cash:+.2f} | orders placed {no or 0} / cancelled {nc or 0}")
+                lines.append(f"today {n}f · net {cash:+.2f}$ · ord {no or 0}/{nc or 0}")
                 ld.close()
             for st in en:
-                snap = report.snapshot_one(S.ledger.db, st)
-                lines.append(f"{st}: win {snap['settled']} | pnl {snap['pnl']:+.1f} | bud {snap['budget']:.0f} | s/b {snap['sell_buy']:.2f} (sim)")
+                s = report.snapshot_one(S.ledger.db, st)
+                lines.append(f"{st[:12]:<12}{s['pnl']:>+7.1f}$ b{s['budget']:>4.0f} {s['settled']:>3}w sim")
+            if not real:
+                lines.append("NO real orders - executor OFF.")
+                lines.append("(these 2 arms are queued for live)")
         except Exception as e:
             lines.append(f"(report error: {e.__class__.__name__})")
-        S.notify.send("\n".join(lines))
+        S.notify.send("\n".join(lines), pre=True)
 
 
 async def main():

@@ -74,6 +74,26 @@ class LiveGate:
         return self.active and strategy in (self._config().get("enabled") or [])
 
     # -- emission -------------------------------------------------------
+    def emit_book(self, slug: str, token: str, is_up: bool, bid, ask) -> None:
+        """Throttled best-bid/ask snapshot (~1/s per token) so the executor can
+        run set logic (pair recycling, lock-taker) without its own market feed.
+        Emitted whenever the gate is active, independent of enabled strategies."""
+        if not self.active or os.path.exists(KILL):
+            return
+        now = time.time()
+        last = getattr(self, "_book_ts", {})
+        if now - last.get(token, 0) < 1.0:
+            return
+        last[token] = now
+        self._book_ts = last
+        rec = {"type": "book", "ts": round(now, 3), "slug": slug, "token": token,
+               "side_up": bool(is_up), "bid": bid, "ask": ask}
+        try:
+            with open(INTENTS, "a", encoding="utf-8") as f:
+                f.write(json.dumps(rec) + "\n")
+        except OSError as e:
+            log.warning("book emit failed: %s", e)
+
     def emit_quotes(self, strategy: str, asset: str, slug: str, token: str,
                     is_up: bool, bid, ask, inventory_usd: float) -> None:
         """Write the strategy's DESIRED quote state for one token. The executor

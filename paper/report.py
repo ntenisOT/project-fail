@@ -45,7 +45,7 @@ def pair_text(db) -> list[str]:
                    f"{o['sb']:>7.2f}{x['sb']:>7.2f}{o['resid']:>9.0f}{x['resid']:>9.0f}{min(o['n'],x['n']):>6}")
     out.append("edge$ = xf minus original | resid = shares carried into settlement (the carry)")
     return out
-REDEMPTION_LOCK = 7200  # seconds: capital held to settlement stays locked ~2h until redemption
+REDEMPTION_LOCK = 600   # seconds: MEASURED live 2026-08-24 - auto-redeem lands ~5-10 min after settle (old 2h assumption was wrong)
 
 
 def _strategies(db):
@@ -109,7 +109,7 @@ def text(db_path: str = "paper/paper.db") -> str:
                    f"{s['win_rate']*100:>5.0f}%{s['pnl']:>+9.1f}{s['budget']:>9.1f}"
                    f"{s['roc_budget']*100:>+8.0f}%{s['sell_buy']:>9.2f}")
     out.append("windows=settled; fills=buys+sells; budget$=peak capital-at-risk = bankroll needed")
-    out.append("(sells recover instantly; HELD residual locked ~2h to redemption). sell/buy: 0=pure hold.")
+    out.append("(sells recover instantly; HELD residual locked ~10min to auto-redeem (measured)). sell/buy: 0=pure hold.")
     out.append("")
     out.extend(pair_text(db))
     return "\n".join(out)

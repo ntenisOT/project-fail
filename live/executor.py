@@ -227,6 +227,12 @@ def main():
     conf = cfg()
     enabled = set(conf.get("enabled") or [])
     dump_strats = set(conf.get("dump_at_close") or [])       # G12: close-dump per strategy
+    recycle_on = bool(conf.get("recycle_pairs", False))       # G16: sell held pairs at sum>=1+margin
+    recycle_margin = float(conf.get("recycle_margin", 0.02))
+    lt = conf.get("lock_taker") or {}                         # G17: taker-buy sets below face
+    lt_on = bool(lt.get("enabled", False))
+    lt_margin = float(lt.get("margin", 0.005))
+    lt_per_window = float(lt.get("max_usd_per_window", 15.0))
     cap_ord = float(conf.get("max_order_usd", 5.0))
     cap_inv_total = float(conf.get("max_inventory_usd", 50.0)) * max(1, len(enabled))  # G7 global
     stop = float(conf.get("daily_loss_stop_usd", 25.0))
@@ -274,6 +280,10 @@ def main():
         pos.update({k: {"sh": v, "cost": v * 0.5, "value": v * 0.5}
                     for k, v in _test_positions().items()})   # log-only test injection
     dumped: set[tuple] = set()            # (token, close_ts) already dump-ordered (G12)
+    books: dict[str, dict] = {}           # token -> latest book snapshot (from the gate)
+    pair_of: dict[str, dict] = {}         # slug -> {True: up_tok, False: dn_tok}
+    recycled: set[str] = set()            # slugs with paired asks posted this window
+    lock_spend: dict[str, float] = {}     # slug -> $ spent by lock-taker this window
     window_spend: dict[tuple, float] = {}  # (token, close_ts) -> $ of BUY orders PLACED (G13:
     rejected_px: dict[tuple, float] = {}   # feed-independent cap; counts at placement, cannot
                                            # be blinded by a broken fills feed)
@@ -335,6 +345,79 @@ def main():
 
             now = time.time()
             actions = 0                                                # G9
+            # ---- G16 pair recycler: we hold BOTH sides -> post paired maker asks
+            # summing to >= $1 + margin (fee-free capital recycling; no chain merge
+            # needed - the proxy wallet blocker makes on-chain merge a later build).
+            if recycle_on and clob and actions < ACTIONS_PER_LOOP:
+                for slug, sides in list(pair_of.items()):
+                    up_t, dn_t = sides.get(True), sides.get(False)
+                    if not up_t or not dn_t or slug in recycled:
+                        continue
+                    pu = pos.get(up_t, {}).get("sh", 0.0) if isinstance(pos.get(up_t), dict) else 0.0
+                    pd = pos.get(dn_t, {}).get("sh", 0.0) if isinstance(pos.get(dn_t), dict) else 0.0
+                    matched = min(pu, pd)
+                    if matched < MIN_SHARES:
+                        continue
+                    bu, bd = books.get(up_t) or {}, books.get(dn_t) or {}
+                    if not bu.get("bid") or not bd.get("bid"):
+                        continue
+                    tot = float(bu["bid"]) + float(bd["bid"])
+                    ask_u = round(max(float(bu["bid"]) + TICK, float(bu["bid"]) / max(tot, 0.01) * (1 + recycle_margin)), 2)
+                    ask_d = round(max(0.02, 1 + recycle_margin - ask_u), 2)
+                    for tok, px in ((up_t, ask_u), (dn_t, ask_d)):
+                        try:
+                            oid = clob.place(tok, "sell", px, matched) if live_orders else f"dry-recycle-{int(now*1000)}"
+                            if not live_orders:
+                                log.info("[dry] RECYCLE sell %.1f sh %s @ %.2f (pair sum %.2f)", matched, tok[:10], px, ask_u + ask_d)
+                            if oid:
+                                led.order("recycler", tok, "sell", px, matched, oid, "recycle")
+                        except Exception as e:
+                            log.warning("recycle place failed: %s", e)
+                        actions += 1
+                    recycled.add(slug)
+
+            # ---- G17 lock-taker: both asks sum < $1 - fees - margin -> take both
+            # legs (FAK-style); pairs settle at face, recycled by G16 or redemption.
+            if lt_on and clob and actions < ACTIONS_PER_LOOP - 1:
+                for slug, sides in list(pair_of.items()):
+                    up_t, dn_t = sides.get(True), sides.get(False)
+                    if not up_t or not dn_t:
+                        continue
+                    bu, bd = books.get(up_t) or {}, books.get(dn_t) or {}
+                    au, ad = bu.get("ask"), bd.get("ask")
+                    if not au or not ad or now - float(bu.get("ts", 0)) > 3 or now - float(bd.get("ts", 0)) > 3:
+                        continue
+                    au, ad = float(au), float(ad)
+                    fee = 0.07 * (au * (1 - au) + ad * (1 - ad))
+                    net = 1.0 - (au + ad) - fee
+                    if net <= lt_margin or lock_spend.get(slug, 0.0) >= lt_per_window:
+                        continue
+                    sh = max(MIN_SHARES, round(min(cap_ord / au, cap_ord / ad), 1))
+                    legs = []
+                    ok = True
+                    for tok, px in ((up_t, au), (dn_t, ad)):
+                        try:
+                            oid = clob.place(tok, "buy", px, sh, post_only=False) if live_orders else f"dry-lock-{int(now*1000)}"
+                            if not live_orders:
+                                log.info("[dry] LOCK take %.1f sh %s @ %.2f (net %.3f)", sh, tok[:10], px, net)
+                            legs.append((tok, px, oid))
+                            led.order("lock_taker", tok, "buy", px, sh, oid or "?", "lock-take")
+                        except Exception as e:
+                            log.warning("lock leg failed (%s) - %s", tok[:10], e)
+                            ok = False
+                            break
+                        actions += 1
+                    if ok:
+                        lock_spend[slug] = lock_spend.get(slug, 0.0) + sh * (au + ad)
+                    elif legs and live_orders:
+                        # legged: sell back the filled first leg immediately (bounded cost)
+                        tok, px, _ = legs[0]
+                        try:
+                            clob.place(tok, "sell", round(max(0.01, px - 0.02), 2), sh, post_only=False)
+                            led.order("lock_taker", tok, "sell", px - 0.02, sh, "unwind", "lock-unwind")
+                        except Exception as e:
+                            log.error("lock unwind FAILED %s: %s", tok[:10], e)
+
             # ---- G12 close-dump: liquidate REAL remaining position near window close
             # for strategies configured dump_at_close (e.g. pair_mm's unpaired tail).
             for (strat, token), it in list(desired.items()):

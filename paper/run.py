@@ -307,6 +307,11 @@ def handle_event(it):
         if info and (asks or bids):
             check_lock(info[0])
             check_split(info[0])
+            if S.gate.active:
+                a, is_up = info
+                w = S.win[NAMES[0]].get(a)
+                if w and not w.settled:
+                    S.gate.emit_book(w.slug, tok, is_up, S.best_bid.get(tok), S.best_ask.get(tok))
         return
     if et != "last_trade_price":
         return

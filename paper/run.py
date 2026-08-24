@@ -95,14 +95,13 @@ STRATEGIES = [
     # PARITY RULE: an arm goes live only when its lv_ twin is green in paper.
     {"name": "lv_neutral",  "mode": "roundtrip", "signal": "mid",     "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "live_sim": True},
     {"name": "lv_pair",     "mode": "roundtrip", "signal": "pair",    "confirm": [],                    "spread": 0.02, "size_mode": "fixed", "pair_balance": True, "xf": True, "live_sim": True},
-    # fq_*: FAST-PIPELINE twins of the live candidates - identical live mechanics
-    # but requote 0.15s instead of 1.0s (probe-measured in-process ws->order
-    # latency). The maker-side counterpart of lock_fast/split_fast: measures
-    # what the executor rebuild would buy the quoting arms.
-    {"name": "fq_twap_con", "mode": "roundtrip", "signal": "twap",    "confirm": ["binance", "deribit"],"spread": 0.03, "size_mode": "fixed", "live_sim": True, "requote": 0.15},
-    {"name": "fq_neutral",  "mode": "roundtrip", "signal": "mid",     "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "live_sim": True, "requote": 0.15},
-    {"name": "fq_pair",     "mode": "roundtrip", "signal": "pair",    "confirm": [],                    "spread": 0.02, "size_mode": "fixed", "pair_balance": True, "xf": True, "live_sim": True, "requote": 0.15},
-    {"name": "fq_hl_pair",  "mode": "roundtrip", "signal": "pair_hl", "confirm": [],                    "spread": 0.02, "size_mode": "fixed", "pair_balance": True, "xf": True, "live_sim": True, "requote": 0.15},
+    # sq_*: SLOW-PIPELINE twins (requote 1.0s = today's file/poll executor) of
+    # the live candidates. Everything else now runs the 0.15s in-process cadence
+    # (fair board); these 4 keep the old-pipeline reference until it retires.
+    {"name": "sq_twap_con", "mode": "roundtrip", "signal": "twap",    "confirm": ["binance", "deribit"],"spread": 0.03, "size_mode": "fixed", "live_sim": True, "requote": 1.0},
+    {"name": "sq_neutral",  "mode": "roundtrip", "signal": "mid",     "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "live_sim": True, "requote": 1.0},
+    {"name": "sq_pair",     "mode": "roundtrip", "signal": "pair",    "confirm": [],                    "spread": 0.02, "size_mode": "fixed", "pair_balance": True, "xf": True, "live_sim": True, "requote": 1.0},
+    {"name": "sq_hl_pair",  "mode": "roundtrip", "signal": "pair_hl", "confirm": [],                    "spread": 0.02, "size_mode": "fixed", "pair_balance": True, "xf": True, "live_sim": True, "requote": 1.0},
     {"name": "lv_ta_pair",  "mode": "roundtrip", "signal": "pair",    "confirm": [],                    "spread": 0.02, "size_mode": "fixed", "pair_balance": True, "xf": True, "late_floor": True, "live_sim": True},
     # pair_mm: trades the SUM, not the direction (the measured winner style).
     # fair(token) = 1 - last price of the OTHER side  =>  bid fills only when
@@ -112,7 +111,10 @@ STRATEGIES = [
 ]
 NAMES = [s["name"] for s in STRATEGIES]
 F, MAXINV, MINSIG = 0.2, 200, 0.05
-REQUOTE = float(os.environ.get("PAPER_REQUOTE", "1.0"))   # s between quote refreshes (fill model v2)
+REQUOTE = float(os.environ.get("PAPER_REQUOTE", "0.15"))  # s between quote refreshes.
+# gen-9: default 0.15s = probe-measured in-process pipeline (ws event + decide +
+# 28ms flight) - the executor path being built. The sq_ twins keep the old 1.0s
+# file/poll pipeline as reference for the 4 live candidates.
 LOCK_MARGIN, TAKER_RATE = 0.002, 0.07  # capture only sets with NET edge (after taker fees) > margin
 
 CL_WS = "wss://ws-live-data.polymarket.com"

@@ -51,7 +51,7 @@ def main():
     except Exception as e:
         print(f"3) WARN balance/allowance read: {e.__class__.__name__}: {e}")
     try:
-        oo = c.get_orders()
+        oo = c.get_open_orders()
         print(f"4) open-orders endpoint (L2 auth): {len(oo or [])} resting orders  OK")
     except Exception as e:
         print(f"4) WARN open orders: {e.__class__.__name__}: {e}")

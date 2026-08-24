@@ -156,8 +156,7 @@ class Clob:
         return (r or {}).get("orderID") or (r or {}).get("order_id")
 
     def cancel(self, oid):
-        fn = getattr(self.c, "cancel", None) or getattr(self.c, "cancel_order")
-        fn(oid)
+        self.c.cancel_orders([oid])          # v2: takes a list of order hashes
 
     def cancel_all(self):
         self.c.cancel_all()

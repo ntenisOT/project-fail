@@ -68,6 +68,12 @@ STRATEGIES = [
     {"name": "ta_twap_der", "mode": "roundtrip", "signal": "twap_t",  "confirm": ["deribit"],           "spread": 0.03, "size_mode": "fixed", "xf": True, "late_floor": True},
     {"name": "ta_neutral",  "mode": "roundtrip", "signal": "mid",     "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "xf": True, "late_floor": True},
     {"name": "ta_pair",     "mode": "roundtrip", "signal": "pair",    "confirm": [],                    "spread": 0.02, "size_mode": "fixed", "pair_balance": True, "xf": True, "late_floor": True},
+    # lv_*: LIVE-PARITY twins - identical configs to the live candidates but
+    # with live_sim fills ($5 clips, G13 $15/token/window, $50 inventory cost).
+    # PARITY RULE: an arm goes live only when its lv_ twin is green in paper.
+    {"name": "lv_neutral",  "mode": "roundtrip", "signal": "mid",     "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "live_sim": True},
+    {"name": "lv_pair",     "mode": "roundtrip", "signal": "pair",    "confirm": [],                    "spread": 0.02, "size_mode": "fixed", "pair_balance": True, "xf": True, "live_sim": True},
+    {"name": "lv_ta_pair",  "mode": "roundtrip", "signal": "pair",    "confirm": [],                    "spread": 0.02, "size_mode": "fixed", "pair_balance": True, "xf": True, "late_floor": True, "live_sim": True},
     # pair_mm: trades the SUM, not the direction (the measured winner style).
     # fair(token) = 1 - last price of the OTHER side  =>  bid fills only when
     # up+down < 1-spread (buy sets below face, maker), asks when sum > 1+spread.
@@ -232,7 +238,7 @@ async def window_task():
                                         MINSIG if s["signal"] not in ("mid", "pair") else -1.0,
                                         mode=s["mode"], size_mode=s["size_mode"], requote=REQUOTE,
                                         exit_first=s.get("xf", False), pair_balance=s.get("pair_balance", False),
-                                        late_floor=s.get("late_floor", False))
+                                        late_floor=s.get("late_floor", False), live_sim=s.get("live_sim", False))
                         w.up_tok, w.down_tok = ids[0], ids[1]
                         S.win[s["name"]][a] = w
                     S.lock[a] = {"slug": slug, "up": ids[0], "dn": ids[1], "cost": 0.0, "profit": 0.0, "n": 0, "peak": 0.0}
@@ -433,7 +439,7 @@ async def live_report_task():
 
 
 async def main():
-    log.info("paper trader (25 arms + lock_arb + split_sell) starting | fill model v2 (requote=%.1fs, min-post=5sh, taker-only fees->maker 0) | assets=%s (PAPER - no real orders)", REQUOTE, list(ASSETS))
+    log.info("paper trader (28 arms + lock_arb + split_sell) starting | fill model v2 (requote=%.1fs, min-post=5sh, taker-only fees->maker 0) | assets=%s (PAPER - no real orders)", REQUOTE, list(ASSETS))
     S.notify.send("paper trader started: 11-strategy A/B, fill model v2 (PAPER - no real orders)")
     await asyncio.gather(ws_live_task(), deribit_task(), window_task(), market_task(), heartbeat(), summary_task(), live_report_task())
 

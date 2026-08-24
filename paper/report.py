@@ -14,7 +14,8 @@ PAIRS = [("roundtrip", "xf_roundtrip"), ("opp_size", "xf_opp"), ("neutral", "xf_
          ("twap_confirm", "xf_twap_con"), ("twap_binance", "xf_twap_bin"),
          ("twap_deribit", "xf_twap_der"), ("binance_only", "xf_binance"),
          ("deribit_only", "xf_deribit"), ("lock_arb", "split_sell"),
-         ("xf_twap_der", "ta_twap_der"), ("xf_neutral", "ta_neutral"), ("pair_mm", "ta_pair")]
+         ("xf_twap_der", "ta_twap_der"), ("xf_neutral", "ta_neutral"), ("pair_mm", "ta_pair"),
+         ("neutral", "lv_neutral"), ("pair_mm", "lv_pair"), ("ta_pair", "lv_ta_pair")]
 
 
 def _since(db, strat, t0):

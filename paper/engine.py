@@ -75,7 +75,7 @@ class PaperWindow:
     def __init__(self, asset, slug, start, spread, fill_frac, max_inventory,
                  min_signal, mode="roundtrip", size_mode="fixed", min_order=5.0,
                  requote=1.0, fee_bps=0.0, exit_first=False, xf_offset=0.02,
-                 pair_balance=False, late_floor=False):
+                 pair_balance=False, late_floor=False, live_sim=False):
         self.asset = asset
         self.slug = slug
         self.start = start
@@ -88,6 +88,12 @@ class PaperWindow:
         self.exit_first = exit_first   # winner-style: entry-anchored asks + forced near-close exit
         self.pair_balance = pair_balance   # pair mode: bid only the side we hold LESS of (forces sets)
         self.late_floor = late_floor       # last 90s: never bid the lottery zone (<10c)
+        # live_sim: mirror the LIVE EXECUTOR mechanics exactly - $5 clip orders
+        # (min 5 shares), fills consume the ORDER size (not an f-skim of flow),
+        # G13 $15/token/window spend cap, $50 inventory-cost cap. The parity
+        # rule: an arm goes live only after its lv_ twin is green in paper.
+        self.live_sim = live_sim
+        self.win_spend = {True: 0.0, False: 0.0}   # per-side $ bought this window (G13 mirror)
         self.xf_offset = xf_offset     # ask = avg entry + this (never follows fair away)
         self.cost_up = self.cost_dn = 0.0    # cost basis per side (for entry-anchored asks)
         self.size_mode = size_mode  # "fixed" | "opp"
@@ -126,6 +132,15 @@ class PaperWindow:
         # bid only if we could still post a >= min_order-share order
         q["bid"] = (max(0.01, min(0.98, fair_tok - self.spread))
                     if self.max_inv - inv >= self.min_order else None)
+        if self.live_sim and q["bid"] is not None:
+            if self.win_spend[is_up] >= 15.0:                  # G13 mirror: $15/token/window
+                q["bid"] = None
+            elif self.cost_up + self.cost_dn >= 50.0:          # executor inventory-cost cap
+                q["bid"] = None
+            else:
+                q["bid_sh"] = max(5.0, round(5.0 / q["bid"], 1))   # the $5 live clip
+        elif self.live_sim:
+            q["bid_sh"] = 0.0
         if self.pair_balance and q["bid"] is not None:
             other = self.inv_dn if is_up else self.inv_up
             if inv > other + 25:          # this side is ahead: stop bidding it, let the other catch up
@@ -176,7 +191,14 @@ class PaperWindow:
                 return {"action": "sell", "price": px, "size": fill, "signed_cash": proceeds}
 
         if is_sell and q["bid"] is not None and price <= q["bid"]:      # sell hits our bid -> BUY
-            fill = min(self.max_inv - inv, self._fill_size(size, q["fair"]))
+            if self.live_sim:
+                clip = q.get("bid_sh", 0.0)
+                fill = min(self.max_inv - inv, clip, size)      # order-sized, full participation
+                q["bid_sh"] = clip - fill
+                if fill > 0:
+                    self.win_spend[is_up] += fill * price
+            else:
+                fill = min(self.max_inv - inv, self._fill_size(size, q["fair"]))
             if fill > 0:      # partial fills of a posted order are valid at any size
                 cost = fill * price * (1 + self.fee)
                 self.cash -= cost

@@ -253,11 +253,19 @@ async def window_task():
                         S.ledger.record_settlement(now, "lock_arb", a, lk["slug"],
                             {"cash": lk["profit"], "residual": 0.0, "pnl": lk["profit"], "capital": lk["peak"],
                              "buys": lk["n"], "sells": lk["n"], "resid_shares": 0.0, "n_fills": lk["n"], "outcome_up": outcome})
+                    if lk and lk.get("fast_n", 0) > 0:     # 150ms tier: the in-process-pipeline case
+                        S.ledger.record_settlement(now, "lock_fast", a, lk["slug"],
+                            {"cash": lk["fast_profit"], "residual": 0.0, "pnl": lk["fast_profit"], "capital": lk["fast_peak"],
+                             "buys": lk["fast_n"], "sells": lk["fast_n"], "resid_shares": 0.0, "n_fills": lk["fast_n"], "outcome_up": outcome})
                     sp = S.split.get(a)
                     if sp and sp["n"] > 0:
                         S.ledger.record_settlement(now, "split_sell", a, sp["slug"],
                             {"cash": sp["profit"], "residual": 0.0, "pnl": sp["profit"], "capital": sp["peak"],
                              "buys": sp["n"], "sells": sp["n"], "resid_shares": 0.0, "n_fills": sp["n"], "outcome_up": outcome})
+                    if sp and sp.get("fast_n", 0) > 0:
+                        S.ledger.record_settlement(now, "split_fast", a, sp["slug"],
+                            {"cash": sp["fast_profit"], "residual": 0.0, "pnl": sp["fast_profit"], "capital": sp["fast_peak"],
+                             "buys": sp["fast_n"], "sells": sp["fast_n"], "resid_shares": 0.0, "n_fills": sp["fast_n"], "outcome_up": outcome})
                     log.info("settled %s %s outcome=%d", a, ref.slug, outcome)
             if ref is None or rolled:
                 ids = await loop.run_in_executor(None, gamma_tokens, prefix, base)
@@ -308,17 +316,23 @@ def check_split(a):
         return
     # gen-8 realism: the shadow soak (1Hz sampling) measured ~2 captures while
     # paper counted ~650 - sub-second flickers are not reachable by a real taker.
-    # Require the SAME qualifying book state to persist >= 1s, capture it once.
+    # Two capture tiers, one per pipeline (probe-measured 2026-08-24):
+    #   fast 0.15s = in-process ws->FAK (~95-165ms end-to-end) - the upgrade case
+    #   slow 1.0s  = today's file/poll pipeline (~1s mean)
     now = time.time()
     pend = sp.get("pend")
     if not pend or pend[0] != (bu, bd):
         sp["pend"] = ((bu, bd), now)
         return
-    if now - pend[1] < 1.0 or sp.get("last_cap") == (bu, bd):
-        return
-    sp["last_cap"] = (bu, bd)
-    if True:
-        size = F * 50
+    age = now - pend[1]
+    size = F * 50
+    if age >= 0.15 and sp.get("last_cap_f") != (bu, bd):
+        sp["last_cap_f"] = (bu, bd)
+        sp["fast_profit"] = sp.get("fast_profit", 0.0) + size * net
+        sp["fast_peak"] = max(sp.get("fast_peak", 0.0), size * 1.0)
+        sp["fast_n"] = sp.get("fast_n", 0) + 1
+    if age >= 1.0 and sp.get("last_cap") != (bu, bd):
+        sp["last_cap"] = (bu, bd)
         sp["cost"] += size * 1.0                   # mint cost, recycled on the immediate sells
         sp["profit"] += size * net
         sp["peak"] = max(sp["peak"], size * 1.0)
@@ -342,18 +356,23 @@ def check_lock(a):
     if net <= LOCK_MARGIN:
         lk["pend"] = None                        # dislocation gone before we could act
         return
-    # gen-8 realism: same >=1s persistence gate as check_split (see comment there)
+    # gen-8 realism: two persistence tiers, same rationale as check_split
     now = time.time()
     pend = lk.get("pend")
     if not pend or pend[0] != (ua, da):
         lk["pend"] = ((ua, da), now)
         return
-    if now - pend[1] < 1.0 or lk.get("last_cap") == (ua, da):
-        return
-    lk["last_cap"] = (ua, da)
-    if True:                                   # YES+NO cheap enough to survive fees: buy both, merge to $1
-        size = F * 50
-        cost = size * (s + fee)
+    age = now - pend[1]
+    size = F * 50
+    cost = size * (s + fee)
+    if age >= 0.15 and lk.get("last_cap_f") != (ua, da):
+        lk["last_cap_f"] = (ua, da)
+        lk["fast_profit"] = lk.get("fast_profit", 0.0) + size * net
+        lk["fast_peak"] = max(lk.get("fast_peak", 0.0), cost)
+        lk["fast_n"] = lk.get("fast_n", 0) + 1
+    if age >= 1.0 and lk.get("last_cap") != (ua, da):
+        # YES+NO cheap enough to survive fees: buy both, merge to $1
+        lk["last_cap"] = (ua, da)
         lk["cost"] += cost
         lk["profit"] += size * net
         lk["peak"] = max(lk["peak"], cost)     # capital recycles via merge -> bankroll = peak single lock

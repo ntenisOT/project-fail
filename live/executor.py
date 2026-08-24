@@ -161,15 +161,35 @@ class Clob:
     def cancel_all(self):
         self.c.cancel_all()
 
-    def trades(self):
-        return self.c.get_trades() or []
+    def trades(self, after_ts=None):
+        """Authenticated account trade feed. Server-side `after` filter when the
+        SDK supports it; callers still filter by match_time (belt+braces) because
+        the feed contains the wallet's ENTIRE history."""
+        from py_clob_client_v2 import TradeParams
+        params = None
+        if after_ts:
+            try:
+                params = TradeParams(after=int(after_ts))
+            except TypeError:
+                params = None
+        return self.c.get_trades(params) or []
 
-    def my_side(self, t: dict) -> str:
-        """Trade rows report the TAKER side; flip it when we were the maker."""
-        side = str(t.get("side", "")).upper()
-        if str(t.get("maker_address", "")).lower() == self.addr:
-            return "SELL" if side == "BUY" else "BUY"
-        return side
+    def my_fill(self, t: dict):
+        """(side, size) of OUR fill in a v2 trade row. `side` is the TAKER side;
+        `trader_side` says which we were. As MAKER our size is our portion of
+        maker_orders, not the taker total."""
+        taker_side = str(t.get("side", "")).upper()
+        if str(t.get("trader_side", "")).upper() == "MAKER":
+            our = 0.0
+            for mo in t.get("maker_orders") or []:
+                if str(mo.get("maker_address", "")).lower() == self.addr:
+                    our += float(mo.get("size", mo.get("matched_amount", 0)) or 0)
+            size = our if our > 0 else float(t.get("size", 0))
+            side = "SELL" if taker_side == "BUY" else "BUY"
+        else:
+            size = float(t.get("size", 0))
+            side = taker_side
+        return side, size
 
 
 def main():
@@ -202,6 +222,7 @@ def main():
         log.info("LOG-ONLY: no orders will be sent")
 
     led = Ledger()
+    session_t0 = time.time()              # ingest ONLY this session's trades
     desired: dict[tuple, dict] = {}       # (strategy, token) -> latest intent
     resting: dict[tuple, dict] = {}       # (strategy, token, side) -> {id, price, size}
     pos: dict[str, float] = {}            # token -> net shares REALLY held (G6)
@@ -352,13 +373,17 @@ def main():
             if clob and now - last_fills > FILLS_EVERY_S:
                 last_fills = now
                 try:
-                    for t in clob.trades():
+                    for t in clob.trades(after_ts=session_t0 - 60):
                         try:
-                            side = clob.my_side(t)
-                            price, size = float(t["price"]), float(t["size"])
-                            led.fill((float(t.get("match_time") or now), "live",
-                                      t.get("asset_id", ""), side, price, size,
-                                      price * size, str(t.get("id"))))
+                            mt = float(t.get("match_time") or 0)
+                            if mt < session_t0 - 60:      # history guard: session only
+                                continue
+                            side, size = clob.my_fill(t)
+                            if size <= 0:
+                                continue
+                            price = float(t["price"])
+                            led.fill((mt or now, "live", t.get("asset_id", ""), side,
+                                      price, size, price * size, str(t.get("id"))))
                         except (KeyError, TypeError, ValueError):
                             continue
                 except Exception as e:

@@ -1,5 +1,6 @@
 {
-  "enabled": ["binance_only", "deribit_only"],
+  "enabled": ["neutral", "pair_mm"],
+  "dump_at_close": ["pair_mm"],
   "max_order_usd": 5,
   "max_inventory_usd": 50,
   "daily_loss_stop_usd": 25

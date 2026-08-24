@@ -69,6 +69,15 @@ def cfg() -> dict:
         return {}
 
 
+# log-only testing hook: inject fake positions via env (ignored in place mode)
+def _test_positions():
+    import os as _os
+    try:
+        return {k: float(v) for k, v in json.loads(_os.environ.get("LIVE_TEST_POS", "{}")).items()}
+    except (ValueError, TypeError):
+        return {}
+
+
 def slug_close_ts(slug: str):
     """{asset}-updown-5m-{base} -> base + 300 (window close, unix)."""
     try:
@@ -162,6 +171,7 @@ class Clob:
 def main():
     conf = cfg()
     enabled = set(conf.get("enabled") or [])
+    dump_strats = set(conf.get("dump_at_close") or [])       # G12: close-dump per strategy
     cap_ord = float(conf.get("max_order_usd", 5.0))
     cap_inv_total = float(conf.get("max_inventory_usd", 50.0)) * max(1, len(enabled))  # G7 global
     stop = float(conf.get("daily_loss_stop_usd", 25.0))
@@ -191,6 +201,9 @@ def main():
     desired: dict[tuple, dict] = {}       # (strategy, token) -> latest intent
     resting: dict[tuple, dict] = {}       # (strategy, token, side) -> {id, price, size}
     pos: dict[str, float] = {}            # token -> net shares REALLY held (G6)
+    if clob is None:
+        pos.update(_test_positions())     # log-only tests can inject positions
+    dumped: set[tuple] = set()            # (token, close_ts) already dump-ordered (G12)
     day_cash = 0.0
     read_pos = 0
     last_fills = 0.0
@@ -249,6 +262,32 @@ def main():
 
             now = time.time()
             actions = 0                                                # G9
+            # ---- G12 close-dump: liquidate REAL remaining position near window close
+            # for strategies configured dump_at_close (e.g. pair_mm's unpaired tail).
+            for (strat, token), it in list(desired.items()):
+                if strat not in dump_strats or actions >= ACTIONS_PER_LOOP:
+                    continue
+                close_ts = slug_close_ts(it.get("slug", ""))
+                held = pos.get(token, 0.0)
+                if (close_ts is None or not (close_ts - 45 <= now < close_ts - CLOSE_EARLY_S)
+                        or held < MIN_SHARES or (token, close_ts) in dumped):
+                    continue
+                ref = it.get("bid") or it.get("ask") or 0.5
+                px = round(max(0.02, min(0.98, round(ref / TICK) * TICK - 2 * TICK)), 2)
+                do_cancel((strat, token, "sell"), "pre-dump")           # replace any resting ask
+                try:
+                    oid = clob.place(token, "sell", px, held) if clob else f"dry-dump-{int(now*1000)}"
+                    if not clob:
+                        log.info("[dry] DUMP %s sell %.1f sh %s @ %.2f (close-%ds)",
+                                 strat, held, token[:10], px, int(close_ts - now))
+                    if oid:
+                        resting[(strat, token, "sell")] = {"id": oid, "price": px, "size": held}
+                        led.order(strat, token, "sell", px, held, oid, "dump")
+                        dumped.add((token, close_ts))
+                except Exception as e:
+                    log.warning("dump place failed %s: %s", token[:10], e)
+                actions += 1
+
             for (strat, token), it in list(desired.items()):
                 close_ts = slug_close_ts(it.get("slug", ""))
                 expired = (close_ts is not None and now >= close_ts - CLOSE_EARLY_S)  # G4

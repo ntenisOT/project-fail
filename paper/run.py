@@ -299,14 +299,25 @@ def check_split(a):
     bu, bd = S.best_bid.get(sp["up"]), S.best_bid.get(sp["dn"])
     if bu is None or bd is None:
         return
-    if sp.get("last_state") == (bu, bd):
-        return                                   # F5: same resting book -> one capture only
-    sp["last_state"] = (bu, bd)
     s = bu + bd
     # mint $1 -> SELL both sides at the bids = taker on both legs
     fee = TAKER_RATE * (bu * (1 - bu) + bd * (1 - bd))
     net = s - 1.0 - fee
-    if net > LOCK_MARGIN:
+    if net <= LOCK_MARGIN:
+        sp["pend"] = None                        # dislocation gone before we could act
+        return
+    # gen-8 realism: the shadow soak (1Hz sampling) measured ~2 captures while
+    # paper counted ~650 - sub-second flickers are not reachable by a real taker.
+    # Require the SAME qualifying book state to persist >= 1s, capture it once.
+    now = time.time()
+    pend = sp.get("pend")
+    if not pend or pend[0] != (bu, bd):
+        sp["pend"] = ((bu, bd), now)
+        return
+    if now - pend[1] < 1.0 or sp.get("last_cap") == (bu, bd):
+        return
+    sp["last_cap"] = (bu, bd)
+    if True:
         size = F * 50
         sp["cost"] += size * 1.0                   # mint cost, recycled on the immediate sells
         sp["profit"] += size * net
@@ -324,14 +335,23 @@ def check_lock(a):
     ua, da = S.best_ask.get(lk["up"]), S.best_ask.get(lk["dn"])
     if ua is None or da is None:
         return
-    if lk.get("last_state") == (ua, da):
-        return                                   # F5: same resting book -> one capture only
-    lk["last_state"] = (ua, da)
     s = ua + da
     # both legs lift the ask = TAKER: fee = 0.07*p*(1-p) per share on each leg
     fee = TAKER_RATE * (ua * (1 - ua) + da * (1 - da))
     net = 1.0 - s - fee
-    if net > LOCK_MARGIN:                      # YES+NO cheap enough to survive fees: buy both, merge to $1
+    if net <= LOCK_MARGIN:
+        lk["pend"] = None                        # dislocation gone before we could act
+        return
+    # gen-8 realism: same >=1s persistence gate as check_split (see comment there)
+    now = time.time()
+    pend = lk.get("pend")
+    if not pend or pend[0] != (ua, da):
+        lk["pend"] = ((ua, da), now)
+        return
+    if now - pend[1] < 1.0 or lk.get("last_cap") == (ua, da):
+        return
+    lk["last_cap"] = (ua, da)
+    if True:                                   # YES+NO cheap enough to survive fees: buy both, merge to $1
         size = F * 50
         cost = size * (s + fee)
         lk["cost"] += cost

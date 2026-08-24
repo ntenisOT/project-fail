@@ -19,6 +19,7 @@ Fill model v2 (realism pass):
 from __future__ import annotations
 
 import bisect
+import math
 import statistics
 
 K_SKEW = 400.0
@@ -58,11 +59,23 @@ def fair_up(now, ref, k: float = K_SKEW):
     return min(0.98, max(0.02, 0.5 + k * (now - ref) / ref))
 
 
+def fair_up_t(now, ref, t_left, k: float = K_SKEW):
+    """TIME-AWARE fair: the same drift becomes more decisive as the clock runs
+    out (terminal-probability shape). At t_left=300 it roughly matches the
+    linear model mid-range; near expiry it saturates toward 0/1 - which pulls
+    bids OFF a decided side instead of catching the falling knife (the
+    incident's strategy defect)."""
+    if now is None or not ref:
+        return None
+    scale = math.sqrt(max(0.05, t_left / 300.0))
+    return min(0.99, max(0.01, 0.5 + 0.5 * math.tanh(2.0 * k * (now - ref) / ref / scale)))
+
+
 class PaperWindow:
     def __init__(self, asset, slug, start, spread, fill_frac, max_inventory,
                  min_signal, mode="roundtrip", size_mode="fixed", min_order=5.0,
                  requote=1.0, fee_bps=0.0, exit_first=False, xf_offset=0.02,
-                 pair_balance=False):
+                 pair_balance=False, late_floor=False):
         self.asset = asset
         self.slug = slug
         self.start = start
@@ -74,6 +87,7 @@ class PaperWindow:
         self.mode = mode            # "roundtrip" | "hold"
         self.exit_first = exit_first   # winner-style: entry-anchored asks + forced near-close exit
         self.pair_balance = pair_balance   # pair mode: bid only the side we hold LESS of (forces sets)
+        self.late_floor = late_floor       # last 90s: never bid the lottery zone (<10c)
         self.xf_offset = xf_offset     # ask = avg entry + this (never follows fair away)
         self.cost_up = self.cost_dn = 0.0    # cost basis per side (for entry-anchored asks)
         self.size_mode = size_mode  # "fixed" | "opp"
@@ -116,6 +130,9 @@ class PaperWindow:
             other = self.inv_dn if is_up else self.inv_up
             if inv > other + 25:          # this side is ahead: stop bidding it, let the other catch up
                 q["bid"] = None
+        if self.late_floor and q["bid"] is not None:
+            if now > self.end - 90 and q["bid"] < 0.10:
+                q["bid"] = None           # decided-side lottery zone: do not buy
         # ask only in roundtrip mode and only if we HOLD >= min_order shares.
         # exit_first: anchor the ask to OUR AVG ENTRY (+offset) so it does not chase
         # the model away from the flow -- the #1 reason vanilla asks never filled.

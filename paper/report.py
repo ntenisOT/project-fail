@@ -13,7 +13,8 @@ BASE_ROC = 0.10
 PAIRS = [("roundtrip", "xf_roundtrip"), ("opp_size", "xf_opp"), ("neutral", "xf_neutral"),
          ("twap_confirm", "xf_twap_con"), ("twap_binance", "xf_twap_bin"),
          ("twap_deribit", "xf_twap_der"), ("binance_only", "xf_binance"),
-         ("deribit_only", "xf_deribit"), ("lock_arb", "split_sell")]
+         ("deribit_only", "xf_deribit"), ("lock_arb", "split_sell"),
+         ("xf_twap_der", "ta_twap_der"), ("xf_neutral", "ta_neutral"), ("pair_mm", "ta_pair")]
 
 
 def _since(db, strat, t0):

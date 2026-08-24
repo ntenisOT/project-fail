@@ -23,7 +23,7 @@ from paper import envload
 envload.load()
 
 from paper import report
-from paper.engine import PaperWindow, TWAP, fair_up
+from paper.engine import PaperWindow, TWAP, fair_up, fair_up_t
 from paper.ledger import Ledger
 from paper.live_gate import LiveGate
 from paper.notify import notifier
@@ -63,6 +63,11 @@ STRATEGIES = [
     {"name": "xf_twap_der", "mode": "roundtrip", "signal": "twap",    "confirm": ["deribit"],           "spread": 0.03, "size_mode": "fixed", "xf": True},
     {"name": "xf_binance",  "mode": "roundtrip", "signal": "binance", "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "xf": True},
     {"name": "xf_deribit",  "mode": "roundtrip", "signal": "deribit", "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "xf": True},
+    # ta_*: TIME-AWARE twins (paper race per production rule) - terminal-prob
+    # fair + never bid <10c in final 90s + xf exits. Race vs their xf/base twins.
+    {"name": "ta_twap_der", "mode": "roundtrip", "signal": "twap_t",  "confirm": ["deribit"],           "spread": 0.03, "size_mode": "fixed", "xf": True, "late_floor": True},
+    {"name": "ta_neutral",  "mode": "roundtrip", "signal": "mid",     "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "xf": True, "late_floor": True},
+    {"name": "ta_pair",     "mode": "roundtrip", "signal": "pair",    "confirm": [],                    "spread": 0.02, "size_mode": "fixed", "pair_balance": True, "xf": True, "late_floor": True},
     # pair_mm: trades the SUM, not the direction (the measured winner style).
     # fair(token) = 1 - last price of the OTHER side  =>  bid fills only when
     # up+down < 1-spread (buy sets below face, maker), asks when sum > 1+spread.
@@ -226,7 +231,8 @@ async def window_task():
                         w = PaperWindow(a, slug, base, s["spread"], s.get("f", F), s.get("maxinv", MAXINV),
                                         MINSIG if s["signal"] not in ("mid", "pair") else -1.0,
                                         mode=s["mode"], size_mode=s["size_mode"], requote=REQUOTE,
-                                        exit_first=s.get("xf", False), pair_balance=s.get("pair_balance", False))
+                                        exit_first=s.get("xf", False), pair_balance=s.get("pair_balance", False),
+                                        late_floor=s.get("late_floor", False))
                         w.up_tok, w.down_tok = ids[0], ids[1]
                         S.win[s["name"]][a] = w
                     S.lock[a] = {"slug": slug, "up": ids[0], "dn": ids[1], "cost": 0.0, "profit": 0.0, "n": 0, "peak": 0.0}
@@ -322,6 +328,15 @@ def handle_event(it):
             other = w.down_tok if is_up else w.up_tok
             po = S.last_price.get(other)
             fair_tok = None if po is None else max(0.02, min(0.98, 1.0 - po))
+        elif s["signal"] == "twap_t":
+            fu = fair_up_t(S.twap[a].now(), S.wref[a]["twap"], w.end - now)
+            if fu is not None:
+                for csig in s["confirm"]:
+                    cf = src_fair(csig, a)
+                    if cf is None or (cf - 0.5) * (fu - 0.5) <= 0:
+                        fu = None
+                        break
+            fair_tok = None if fu is None else (fu if is_up else 1 - fu)
         else:
             fu = strat_fair_up(s, a)
             fair_tok = None if fu is None else (fu if is_up else 1 - fu)
@@ -418,7 +433,7 @@ async def live_report_task():
 
 
 async def main():
-    log.info("paper trader (22 arms + lock_arb + split_sell) starting | fill model v2 (requote=%.1fs, min-post=5sh, taker-only fees->maker 0) | assets=%s (PAPER - no real orders)", REQUOTE, list(ASSETS))
+    log.info("paper trader (25 arms + lock_arb + split_sell) starting | fill model v2 (requote=%.1fs, min-post=5sh, taker-only fees->maker 0) | assets=%s (PAPER - no real orders)", REQUOTE, list(ASSETS))
     S.notify.send("paper trader started: 11-strategy A/B, fill model v2 (PAPER - no real orders)")
     await asyncio.gather(ws_live_task(), deribit_task(), window_task(), market_task(), heartbeat(), summary_task(), live_report_task())
 

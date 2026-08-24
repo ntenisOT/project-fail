@@ -140,8 +140,11 @@ class Clob:
         l1 = ClobClient(HOST, 137, key=key, **proxy_kw)
         creds = l1.create_or_derive_api_key()
         self.c = ClobClient(HOST, 137, key=key, creds=creds, **proxy_kw)
-        self.addr = (self.c.get_address() or "").lower()
-        log.info("CLOB v2 client ready (addr %s...%s)", self.addr[:6], self.addr[-4:])
+        # on-chain maker identity: the FUNDER/proxy when set (what maker_orders
+        # rows carry), else the signer EOA. Matching the signer against
+        # maker_orders was the root cause of the blind-inventory incident.
+        self.addr = (funder or self.c.get_address() or "").lower()
+        log.info("CLOB v2 client ready (maker identity %s...%s)", self.addr[:6], self.addr[-4:])
 
     def place(self, token, side, price, size, post_only=True):
         """post_only=True: exchange REJECTS would-cross orders instead of taking,
@@ -175,21 +178,20 @@ class Clob:
         return self.c.get_trades(params) or []
 
     def my_fill(self, t: dict):
-        """(side, size) of OUR fill in a v2 trade row. `side` is the TAKER side;
-        `trader_side` says which we were. As MAKER our size is our portion of
-        maker_orders, not the taker total."""
-        taker_side = str(t.get("side", "")).upper()
+        """(side, size) of OUR portion of a v2 trade row. As MAKER, our
+        maker_orders entries are authoritative (own side + matched_amount);
+        NO heuristics, NO taker-total fallback (that fallback inflated the
+        ledger in the incident). Returns (None, 0) when the row has no
+        recognizable portion of ours."""
         if str(t.get("trader_side", "")).upper() == "MAKER":
-            our = 0.0
+            size = 0.0
+            side = None
             for mo in t.get("maker_orders") or []:
                 if str(mo.get("maker_address", "")).lower() == self.addr:
-                    our += float(mo.get("size", mo.get("matched_amount", 0)) or 0)
-            size = our if our > 0 else float(t.get("size", 0))
-            side = "SELL" if taker_side == "BUY" else "BUY"
-        else:
-            size = float(t.get("size", 0))
-            side = taker_side
-        return side, size
+                    size += float(mo.get("matched_amount", mo.get("size", 0)) or 0)
+                    side = str(mo.get("side", "")).upper() or side
+            return (side, size) if side and size > 0 else (None, 0.0)
+        return str(t.get("side", "")).upper() or None, float(t.get("size", 0))
 
 
 def main():
@@ -229,6 +231,9 @@ def main():
     if clob is None:
         pos.update(_test_positions())     # log-only tests can inject positions
     dumped: set[tuple] = set()            # (token, close_ts) already dump-ordered (G12)
+    window_spend: dict[tuple, float] = {}  # (token, close_ts) -> $ of BUY orders PLACED (G13:
+    rejected_px: dict[tuple, float] = {}   # feed-independent cap; counts at placement, cannot
+                                           # be blinded by a broken fills feed)
     day_cash = 0.0
     read_pos = 0
     last_fills = 0.0
@@ -340,6 +345,11 @@ def main():
                     if want_px is not None and side == "buy":          # G7 global exposure cap
                         if max(0.0, -day_cash) >= cap_inv_total:
                             want_px = None
+                    if want_px is not None and side == "buy":          # G13 per-token/window spend cap
+                        if window_spend.get((token, close_ts), 0.0) + want_px * want_sh > 3 * cap_ord:
+                            want_px = None
+                    if want_px is not None and rejected_px.get((strat, token, side)) == want_px:
+                        continue                                       # G14: do not respam a post-only-rejected px
                     if want_px is not None and side == "sell" and clob:  # G6 holdings only
                         held = pos.get(token, 0.0)
                         if held < MIN_SHARES:
@@ -365,8 +375,18 @@ def main():
                         if oid:
                             resting[key] = {"id": oid, "price": want_px, "size": want_sh}
                             led.order(strat, token, side, want_px, want_sh, oid, "place")
+                            rejected_px.pop((strat, token, side), None)
+                            if side == "buy":
+                                window_spend[(token, close_ts)] = window_spend.get((token, close_ts), 0.0) + want_px * want_sh
+                        elif clob:
+                            log.error("FAIL-CLOSED: order accepted but no order id in response -> cancel_all + halt")
+                            cancel_everything("no-oid")
+                            return
                     except Exception as e:
-                        log.warning("place %s %s@%.2f failed: %s", side, token[:10], want_px, e)
+                        if "post-only" in str(e) or "crosses book" in str(e):
+                            rejected_px[(strat, token, side)] = want_px    # G14: wait for a new px
+                        else:
+                            log.warning("place %s %s@%.2f failed: %s", side, token[:10], want_px, e)
                     actions += 1
 
             # ---- fills -> positions, realized-basis day stop (place mode) ----
@@ -379,7 +399,7 @@ def main():
                             if mt < session_t0 - 60:      # history guard: session only
                                 continue
                             side, size = clob.my_fill(t)
-                            if size <= 0:
+                            if not side or size <= 0:
                                 continue
                             price = float(t["price"])
                             led.fill((mt or now, "live", t.get("asset_id", ""), side,
@@ -390,6 +410,10 @@ def main():
                     log.warning("trades pull failed: %s", e)
                 day0 = now // 86400 * 86400
                 pos, day_cash = led.positions_and_cash(day0)
+                if day_cash > cap_inv_total:                           # G15 tripwire: feed implausible
+                    log.error("FAIL-CLOSED: ledger says +$%.0f net cash (implausible) -> halt", day_cash)
+                    cancel_everything("feed-implausible")
+                    return
                 if day_cash <= -(cap_inv_total + stop):                # G8 realized basis
                     log.error("DAY LOSS STOP: net cash %+.2f beyond open-cap %+.2f + stop %.2f "
                               "-> cancel all + HALT for the day", day_cash, -cap_inv_total, stop)

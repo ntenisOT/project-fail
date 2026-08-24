@@ -138,11 +138,11 @@ class Clob:
     Construction mirrors project-magic's proven two-stage pattern: L1 client
     (key only) derives API creds, then the signed client gets key+creds
     (+proxy funder). Only constructed in place mode."""
-    def __init__(self):
+    def __init__(self, key=None, funder="ENV", sig=None):
         from py_clob_client_v2 import ClobClient
-        key = os.environ["POLY_PRIVATE_KEY"]
-        funder = os.environ.get("POLY_FUNDER") or None
-        sig = int(os.environ.get("POLY_SIGNATURE_TYPE", "2"))
+        key = key or os.environ["POLY_PRIVATE_KEY"]
+        funder = (os.environ.get("POLY_FUNDER") or None) if funder == "ENV" else funder
+        sig = int(os.environ.get("POLY_SIGNATURE_TYPE", "2")) if sig is None else sig
         proxy_kw = {"signature_type": sig, "funder": funder} if funder else {}
         l1 = ClobClient(HOST, 137, key=key, **proxy_kw)
         creds = l1.create_or_derive_api_key()

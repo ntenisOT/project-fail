@@ -17,10 +17,11 @@ from eth_utils import keccak, to_checksum_address
 
 CHAIN_ID = 137
 RPCS = ([os.environ["POLYGON_RPC_URL"]] if os.environ.get("POLYGON_RPC_URL") else []) + [
-    "https://polygon-rpc.com",
     "https://polygon-bor-rpc.publicnode.com",
+    "https://polygon-rpc.com",
+    "https://polygon.drpc.org",
+    "https://rpc.ankr.com/polygon",
     "https://1rpc.io/matic",
-    "https://polygon.llamarpc.com",
 ]
 
 # canonical Polymarket/Polygon contracts
@@ -32,7 +33,7 @@ NEG_RISK_ADAPTER = "0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296"
 
 
 def _rpc(method, params):
-    last = None
+    errs = []
     for url in RPCS:
         try:
             req = urllib.request.Request(url, method="POST",
@@ -45,8 +46,8 @@ def _rpc(method, params):
                 raise RuntimeError(r["error"])
             return r["result"]
         except Exception as e:
-            last = e
-    raise RuntimeError(f"all RPCs failed for {method}: {last}")
+            errs.append(f"{url.split('//')[1].split('/')[0]}: {e}")
+    raise RuntimeError(f"all RPCs failed for {method}:\n  " + "\n  ".join(errs))
 
 
 # ---- minimal ABI encoding ------------------------------------------------
@@ -126,8 +127,11 @@ def send(key: str, to: str, data: str, desc: str) -> str:
     signed = acct.sign_transaction({
         "chainId": CHAIN_ID, "to": to_checksum_address(to), "value": 0,
         "data": data, "gas": int(gas * 1.3), "gasPrice": gas_price, "nonce": nonce})
-    txh = _rpc("eth_sendRawTransaction", [signed.raw_transaction.hex()
-               if hasattr(signed, "raw_transaction") else signed.rawTransaction.hex()])
+    raw = (signed.raw_transaction if hasattr(signed, "raw_transaction")
+           else signed.rawTransaction).hex()
+    if not raw.startswith("0x"):
+        raw = "0x" + raw                       # some eth_account versions omit it
+    txh = _rpc("eth_sendRawTransaction", [raw])
     for _ in range(60):                                    # ~2 min
         time.sleep(2)
         rec = _rpc("eth_getTransactionReceipt", [txh])

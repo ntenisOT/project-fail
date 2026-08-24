@@ -75,7 +75,8 @@ class PaperWindow:
     def __init__(self, asset, slug, start, spread, fill_frac, max_inventory,
                  min_signal, mode="roundtrip", size_mode="fixed", min_order=5.0,
                  requote=1.0, fee_bps=0.0, exit_first=False, xf_offset=0.02,
-                 pair_balance=False, late_floor=False, live_sim=False):
+                 pair_balance=False, late_floor=False, live_sim=False,
+                 mint_basis=False, mint_sets=60.0):
         self.asset = asset
         self.slug = slug
         self.start = start
@@ -94,6 +95,13 @@ class PaperWindow:
         # rule: an arm goes live only after its lv_ twin is green in paper.
         self.live_sim = live_sim
         self.win_spend = {True: 0.0, False: 0.0}   # per-side $ bought this window (G13 mirror)
+        # mint_basis: the winners' mechanic - inventory arrives via CTF
+        # splitPosition at EXACTLY $1.00/set (no spread paid, no adverse entry).
+        # No bids ever; asks track fair+spread per side; at settle the matched
+        # leftover pairs MERGE back to $1 and only single-side residue rides
+        # the outcome. Capital = the mint outlay.
+        self.mint_basis = mint_basis
+        self.mint_sets = float(mint_sets)
         self.xf_offset = xf_offset     # ask = avg entry + this (never follows fair away)
         self.cost_up = self.cost_dn = 0.0    # cost basis per side (for entry-anchored asks)
         self.size_mode = size_mode  # "fixed" | "opp"
@@ -107,6 +115,11 @@ class PaperWindow:
         self.inv_up = self.inv_dn = 0.0
         self.cash = self.deployed = self.peak = 0.0
         self.buys = self.sells = 0
+        if self.mint_basis:                        # mint N sets at $1.00 flat
+            self.inv_up = self.inv_dn = self.mint_sets
+            self.cost_up = self.cost_dn = 0.5 * self.mint_sets
+            self.cash = -self.mint_sets
+            self.deployed = self.peak = self.mint_sets
         # posted (resting) quotes per token: refreshed at most every `requote` s
         self.q = {True: {"bid": None, "ask": None, "fair": None, "ts": -1e18},
                   False: {"bid": None, "ask": None, "fair": None, "ts": -1e18}}
@@ -132,8 +145,10 @@ class PaperWindow:
         # bid only if we could still post a >= min_order-share order.
         # Quantize to the 0.01 tick (floor) - unpostable sub-tick prices were
         # granting phantom precision to fills.
+        # mint_basis NEVER bids: inventory comes from splitPosition, not the book.
         q["bid"] = (max(0.01, min(0.98, int((fair_tok - self.spread) * 100) / 100.0))
-                    if self.max_inv - inv >= self.min_order else None)
+                    if (not self.mint_basis and self.max_inv - inv >= self.min_order)
+                    else None)
         if self.live_sim and q["bid"] is not None:
             if self.win_spend[is_up] >= 15.0:                  # G13 mirror: $15/token/window
                 q["bid"] = None
@@ -242,8 +257,22 @@ class PaperWindow:
         return rec
 
     def settle(self, outcome_up: int) -> dict:
-        residual = self.inv_up * outcome_up + self.inv_dn * (1 - outcome_up)
+        if self.mint_basis:
+            # matched leftover pairs merge back to $1.00 (instant, riskless);
+            # only the single-side residue rides the binary outcome.
+            matched = min(self.inv_up, self.inv_dn)
+            residual = (matched * 1.0
+                        + (self.inv_up - matched) * outcome_up
+                        + (self.inv_dn - matched) * (1 - outcome_up))
+            resid_sh = (self.inv_up - matched) + (self.inv_dn - matched)
+        else:
+            residual = self.inv_up * outcome_up + self.inv_dn * (1 - outcome_up)
+            resid_sh = self.inv_up + self.inv_dn
+        # the mint itself counts as a fill: merge-only windows must still be
+        # recorded or the stats sample only the windows that happened to sell
+        n_fills = ((self.buys + self.sells) if not self.mint_basis
+                   else max(1, self.buys + self.sells))
         return {"cash": self.cash, "residual": residual, "pnl": self.cash + residual,
                 "capital": max(self.peak, 0.0), "buys": self.buys, "sells": self.sells,
-                "resid_shares": self.inv_up + self.inv_dn,
-                "n_fills": self.buys + self.sells, "outcome_up": outcome_up}
+                "resid_shares": resid_sh,
+                "n_fills": n_fills, "outcome_up": outcome_up}

@@ -78,18 +78,21 @@ def snapshot_one(db, strat: str) -> dict:
     # hold locks its whole stack for 2h -> needs far more. (For runs < 2h the hold-heavy
     # number is still climbing toward its steady-state peak, since nothing has redeemed yet.)
     fills = db.execute("SELECT ts, signed_cash FROM fills WHERE strategy=?", (strat,)).fetchall()
+    budget = 0.0
     if fills:
         ev = [(r[0], -r[1]) for r in fills]
         ev += [(r[0] + REDEMPTION_LOCK, r[1]) for r in db.execute(   # residual released 2h after settle
             "SELECT ts, cash FROM settlements WHERE strategy=? AND n_fills>0", (strat,))]
         ev.sort(key=lambda e: e[0])
-        run = budget = 0.0
+        run = 0.0
         for _, c in ev:
             run += c
             budget = max(budget, run)
-    else:   # lock_arb: a complete set merges to $1 instantly, so capital recycles -> bankroll = peak single lock
-        budget = db.execute("SELECT COALESCE(max(capital),0) FROM settlements WHERE strategy=?",
-                            (strat,)).fetchone()[0]
+    # deployments that are NOT fills (mint outlay, lock sets) only appear in the
+    # capital field - bankroll must cover at least one window's peak of those.
+    cap_peak = db.execute("SELECT COALESCE(max(capital),0) FROM settlements WHERE strategy=?",
+                          (strat,)).fetchone()[0]
+    budget = max(budget, cap_peak)
     buys, sells = db.execute(
         "SELECT COALESCE(sum(buys),0), COALESCE(sum(sells),0) FROM settlements WHERE strategy=?",
         (strat,)).fetchone()

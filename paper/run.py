@@ -98,8 +98,8 @@ STRATEGIES = [
     # mint_*: the WINNERS' mechanic (proven on-chain 21:41Z, $1 round-trip) -
     # inventory minted at $1.00/set, never bids, asks track fair+spread per
     # side, matched leftovers merge back at $1. Race the two ask anchors.
-    {"name": "mint_hl",     "mode": "roundtrip", "signal": "pair_hl", "confirm": [],                    "spread": 0.02, "size_mode": "fixed", "live_sim": True, "mint_basis": True},
-    {"name": "mint_tw",     "mode": "roundtrip", "signal": "twap",    "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "live_sim": True, "mint_basis": True},
+    {"name": "mint_hl",     "mode": "roundtrip", "signal": "pair_hl", "confirm": [],                    "spread": 0.02, "size_mode": "fixed", "live_sim": True, "mint_basis": True, "mint_sets": 20},
+    {"name": "mint_tw",     "mode": "roundtrip", "signal": "twap",    "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "live_sim": True, "mint_basis": True, "mint_sets": 20},
     # sq_*: SLOW-PIPELINE twins (requote 1.0s = today's file/poll executor) of
     # the live candidates. Everything else now runs the 0.15s in-process cadence
     # (fair board); these 4 keep the old-pipeline reference until it retires.
@@ -296,7 +296,8 @@ async def window_task():
                                         mode=s["mode"], size_mode=s["size_mode"], requote=s.get("requote", REQUOTE),
                                         exit_first=s.get("xf", False), pair_balance=s.get("pair_balance", False),
                                         late_floor=s.get("late_floor", False), live_sim=s.get("live_sim", False),
-                                        mint_basis=s.get("mint_basis", False))
+                                        mint_basis=s.get("mint_basis", False),
+                                        mint_sets=s.get("mint_sets", 60.0))
                         w.up_tok, w.down_tok = ids[0], ids[1]
                         S.win[s["name"]][a] = w
                     S.lock[a] = {"slug": slug, "up": ids[0], "dn": ids[1], "cost": 0.0, "profit": 0.0, "n": 0, "peak": 0.0}

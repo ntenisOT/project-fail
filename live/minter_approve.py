@@ -21,17 +21,27 @@ def main():
     if not key or not addr:
         print("MINTER_* missing from .env")
         return
+    # 1) ERC1155 approval: lets the exchange settle our CLOB sells
     ap = chain.call(chain.CTF, chain.encode_call(
         "isApprovedForAll(address,address)", [addr, chain.CTF_EXCHANGE]))
     if int(ap, 16) == 1:
-        print("already approved - nothing to do")
-        return
-    print("approving ConditionalTokens -> CTFExchange (one-time)...")
-    chain.send(key, chain.CTF,
-               chain.encode_call("setApprovalForAll(address,bool)",
-                                 [chain.CTF_EXCHANGE, True]),
-               "setApprovalForAll(CTFExchange)")
-    print("DONE - the minter can now sell on the CLOB.")
+        print("exchange approval: already granted")
+    else:
+        print("approving ConditionalTokens -> CTFExchange (one-time)...")
+        chain.send(key, chain.CTF,
+                   chain.encode_call("setApprovalForAll(address,bool)",
+                                     [chain.CTF_EXCHANGE, True]),
+                   "setApprovalForAll(CTFExchange)")
+    # 2) USDC.e allowance to ConditionalTokens: consumed by every splitPosition
+    # (review finding: the $2 setup allowance would have blocked ALL mints)
+    allowance = int(chain.call(chain.USDC_E, chain.encode_call(
+        "allowance(address,address)", [addr, chain.CTF])), 16) / 1e6
+    if allowance >= 10_000:
+        print(f"USDC.e allowance: already ${allowance:,.0f}")
+    else:
+        print("approving $50,000 USDC.e -> ConditionalTokens (cumulative mint budget)...")
+        chain.approve(key, chain.USDC_E, chain.CTF, 50_000.0)
+    print("DONE - the minter can mint AND sell on the CLOB.")
 
 
 if __name__ == "__main__":

@@ -238,7 +238,9 @@ class PaperWindow:
                 rec = {"action": "buy", "price": exec_px, "size": fill, "signed_cash": -cost}
         elif (self.mode == "roundtrip" and (not is_sell) and q["ask"] is not None
               and price >= q["ask"] and inv > 0):                        # buy lifts our ask -> SELL
-            fill = min(inv, self._fill_size(size, q["fair"]))
+            # live_sim: a resting order absorbs the WHOLE print up to inventory
+            # (restored - the gen-6 patch was lost to a silent replace)
+            fill = min(inv, size) if self.live_sim else min(inv, self._fill_size(size, q["fair"]))
             if fill > 0:
                 exec_px = q["ask"]                       # F4: maker sell fills AT THE ASK
                 proceeds = fill * exec_px * (1 - self.fee)

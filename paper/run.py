@@ -68,6 +68,28 @@ STRATEGIES = [
     {"name": "ta_twap_der", "mode": "roundtrip", "signal": "twap_t",  "confirm": ["deribit"],           "spread": 0.03, "size_mode": "fixed", "xf": True, "late_floor": True},
     {"name": "ta_neutral",  "mode": "roundtrip", "signal": "mid",     "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "xf": True, "late_floor": True},
     {"name": "ta_pair",     "mode": "roundtrip", "signal": "pair",    "confirm": [],                    "spread": 0.02, "size_mode": "fixed", "pair_balance": True, "xf": True, "late_floor": True},
+    # hl_pair: HALF-LOCK pair - bids priced off the other side LIVE BEST ASK
+    # (not stale last trade): a fill is instantly completable into a set < $1.
+    {"name": "hl_pair",     "mode": "roundtrip", "signal": "pair_hl", "confirm": [],                    "spread": 0.02, "size_mode": "fixed", "pair_balance": True, "xf": True},
+    {"name": "lv_hl_pair",  "mode": "roundtrip", "signal": "pair_hl", "confirm": [],                    "spread": 0.02, "size_mode": "fixed", "pair_balance": True, "xf": True, "live_sim": True},
+    # FULL lv coverage (gen-6): every distinct strategy config gets a live-
+    # mechanics twin. td_f40/td_inv600/opp_size collapse into lv_roundtrip /
+    # lv_twap_der (f and maxinv knobs do not exist under live mechanics).
+    {"name": "lv_hold",     "mode": "hold",      "signal": "twap",    "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "live_sim": True},
+    {"name": "lv_roundtrip","mode": "roundtrip", "signal": "twap",    "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "live_sim": True},
+    {"name": "lv_rt_wide",  "mode": "roundtrip", "signal": "twap",    "confirm": [],                    "spread": 0.05, "size_mode": "fixed", "live_sim": True},
+    {"name": "lv_twap_con", "mode": "roundtrip", "signal": "twap",    "confirm": ["binance", "deribit"],"spread": 0.03, "size_mode": "fixed", "live_sim": True},
+    {"name": "lv_twap_bin", "mode": "roundtrip", "signal": "twap",    "confirm": ["binance"],           "spread": 0.03, "size_mode": "fixed", "live_sim": True},
+    {"name": "lv_twap_der", "mode": "roundtrip", "signal": "twap",    "confirm": ["deribit"],           "spread": 0.03, "size_mode": "fixed", "live_sim": True},
+    {"name": "lv_binance",  "mode": "roundtrip", "signal": "binance", "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "live_sim": True},
+    {"name": "lv_deribit",  "mode": "roundtrip", "signal": "deribit", "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "live_sim": True},
+    {"name": "lv_xf_rt",    "mode": "roundtrip", "signal": "twap",    "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "xf": True, "live_sim": True},
+    {"name": "lv_xf_td",    "mode": "roundtrip", "signal": "twap",    "confirm": ["deribit"],           "spread": 0.03, "size_mode": "fixed", "xf": True, "live_sim": True},
+    {"name": "lv_xf_bin",   "mode": "roundtrip", "signal": "binance", "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "xf": True, "live_sim": True},
+    {"name": "lv_xf_der",   "mode": "roundtrip", "signal": "deribit", "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "xf": True, "live_sim": True},
+    {"name": "lv_xf_neu",   "mode": "roundtrip", "signal": "mid",     "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "xf": True, "live_sim": True},
+    {"name": "lv_ta_td",    "mode": "roundtrip", "signal": "twap_t",  "confirm": ["deribit"],           "spread": 0.03, "size_mode": "fixed", "xf": True, "late_floor": True, "live_sim": True},
+    {"name": "lv_ta_neu",   "mode": "roundtrip", "signal": "mid",     "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "xf": True, "late_floor": True, "live_sim": True},
     # lv_*: LIVE-PARITY twins - identical configs to the live candidates but
     # with live_sim fills ($5 clips, G13 $15/token/window, $50 inventory cost).
     # PARITY RULE: an arm goes live only when its lv_ twin is green in paper.
@@ -339,6 +361,10 @@ def handle_event(it):
             other = w.down_tok if is_up else w.up_tok
             po = S.last_price.get(other)
             fair_tok = None if po is None else max(0.02, min(0.98, 1.0 - po))
+        elif s["signal"] == "pair_hl":
+            other = w.down_tok if is_up else w.up_tok
+            oa = S.best_ask.get(other)                    # LIVE completable price, not stale last
+            fair_tok = None if oa is None else max(0.02, min(0.98, 1.0 - oa))
         elif s["signal"] == "twap_t":
             fu = fair_up_t(S.twap[a].now(), S.wref[a]["twap"], w.end - now)
             if fu is not None:
@@ -444,7 +470,7 @@ async def live_report_task():
 
 
 async def main():
-    log.info("paper trader (28 arms + lock_arb + split_sell) starting | fill model v2 (requote=%.1fs, min-post=5sh, taker-only fees->maker 0) | assets=%s (PAPER - no real orders)", REQUOTE, list(ASSETS))
+    log.info("paper trader (45 arms + lock_arb + split_sell) starting | fill model v2 (requote=%.1fs, min-post=5sh, taker-only fees->maker 0) | assets=%s (PAPER - no real orders)", REQUOTE, list(ASSETS))
     S.notify.send("paper trader started: 11-strategy A/B, fill model v2 (PAPER - no real orders)")
     await asyncio.gather(ws_live_task(), deribit_task(), window_task(), market_task(), heartbeat(), summary_task(), live_report_task())
 

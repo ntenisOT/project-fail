@@ -153,14 +153,17 @@ class Clob:
         self.addr = (funder or self.c.get_address() or "").lower()
         log.info("CLOB v2 client ready (maker identity %s...%s)", self.addr[:6], self.addr[-4:])
 
-    def place(self, token, side, price, size, post_only=True):
+    def place(self, token, side, price, size, post_only=True, fak=False):
         """post_only=True: exchange REJECTS would-cross orders instead of taking,
         guaranteeing maker-only resting quotes (matches the paper model).
-        Dumps pass post_only=False - they are meant to cross."""
+        Dumps pass post_only=False (meant to cross). fak=True: fill-and-kill
+        taker leg - fills what is available and DIES; never rests (G17 legs
+        must never become accidental maker exposure)."""
         from py_clob_client_v2 import OrderArgs, OrderType
         args = OrderArgs(token_id=token, price=round(price, 2), size=round(size, 1),
                          side="BUY" if side == "buy" else "SELL")
-        r = self.c.post_order(self.c.create_order(args), OrderType.GTC, post_only=post_only)
+        otype = getattr(OrderType, "FAK", getattr(OrderType, "FOK", OrderType.GTC)) if fak else OrderType.GTC
+        r = self.c.post_order(self.c.create_order(args), otype, post_only=post_only)
         if isinstance(r, dict) and not r.get("success", True):
             raise RuntimeError(f"post_order rejected: {r.get('errorMsg', r)}")
         return (r or {}).get("orderID") or (r or {}).get("order_id")
@@ -397,7 +400,7 @@ def main():
                     ok = True
                     for tok, px in ((up_t, au), (dn_t, ad)):
                         try:
-                            oid = clob.place(tok, "buy", px, sh, post_only=False) if live_orders else f"dry-lock-{int(now*1000)}"
+                            oid = clob.place(tok, "buy", px, sh, post_only=False, fak=True) if live_orders else f"dry-lock-{int(now*1000)}"
                             if not live_orders:
                                 log.info("[dry] LOCK take %.1f sh %s @ %.2f (net %.3f)", sh, tok[:10], px, net)
                             legs.append((tok, px, oid))
@@ -413,7 +416,7 @@ def main():
                         # legged: sell back the filled first leg immediately (bounded cost)
                         tok, px, _ = legs[0]
                         try:
-                            clob.place(tok, "sell", round(max(0.01, px - 0.02), 2), sh, post_only=False)
+                            clob.place(tok, "sell", round(max(0.01, px - 0.02), 2), sh, post_only=False, fak=True)
                             led.order("lock_taker", tok, "sell", px - 0.02, sh, "unwind", "lock-unwind")
                         except Exception as e:
                             log.error("lock unwind FAILED %s: %s", tok[:10], e)

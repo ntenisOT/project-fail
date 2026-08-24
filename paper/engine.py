@@ -61,7 +61,7 @@ def fair_up(now, ref, k: float = K_SKEW):
 class PaperWindow:
     def __init__(self, asset, slug, start, spread, fill_frac, max_inventory,
                  min_signal, mode="roundtrip", size_mode="fixed", min_order=5.0,
-                 requote=1.0, fee_bps=0.0):
+                 requote=1.0, fee_bps=0.0, exit_first=False, xf_offset=0.02):
         self.asset = asset
         self.slug = slug
         self.start = start
@@ -71,6 +71,9 @@ class PaperWindow:
         self.max_inv = max_inventory
         self.min_signal = min_signal
         self.mode = mode            # "roundtrip" | "hold"
+        self.exit_first = exit_first   # winner-style: entry-anchored asks + forced near-close exit
+        self.xf_offset = xf_offset     # ask = avg entry + this (never follows fair away)
+        self.cost_up = self.cost_dn = 0.0    # cost basis per side (for entry-anchored asks)
         self.size_mode = size_mode  # "fixed" | "opp"
         self.min_order = min_order  # min shares to POST an order (fills may be partial)
         self.requote = requote      # seconds between quote refreshes (latency)
@@ -107,9 +110,18 @@ class PaperWindow:
         # bid only if we could still post a >= min_order-share order
         q["bid"] = (max(0.01, min(0.98, fair_tok - self.spread))
                     if self.max_inv - inv >= self.min_order else None)
-        # ask only in roundtrip mode and only if we HOLD >= min_order shares
-        q["ask"] = (max(0.02, min(0.99, fair_tok + self.spread))
-                    if self.mode == "roundtrip" and inv >= self.min_order else None)
+        # ask only in roundtrip mode and only if we HOLD >= min_order shares.
+        # exit_first: anchor the ask to OUR AVG ENTRY (+offset) so it does not chase
+        # the model away from the flow -- the #1 reason vanilla asks never filled.
+        if self.mode == "roundtrip" and inv >= self.min_order:
+            if self.exit_first:
+                cost = self.cost_up if is_up else self.cost_dn
+                avg = cost / inv if inv > 0 else fair_tok
+                q["ask"] = max(0.02, min(0.99, avg + self.xf_offset))
+            else:
+                q["ask"] = max(0.02, min(0.99, fair_tok + self.spread))
+        else:
+            q["ask"] = None
 
     def on_trade(self, now, is_up, price, size, is_sell, fair_tok):
         """A trade printed on this token. 1) try to fill against our POSTED
@@ -118,6 +130,27 @@ class PaperWindow:
         q = self.q[is_up]
         inv = self.inv_up if is_up else self.inv_dn
         rec = None
+
+        # exit_first FORCED LIQUIDATION: in the last 40s, dump inventory as TAKER
+        # into any print on this token (crossing the spread, taker fee applied).
+        # Carrying nothing to the binary settlement is the whole point.
+        if (self.exit_first and inv > 0 and now > self.end - 40 and price > 0.02):
+            fill = min(inv, self._fill_size(size, q["fair"] if q["fair"] is not None else 0.5))
+            if fill > 0:
+                px = max(0.01, price - 0.01)
+                fee = 0.07 * px * (1 - px)              # crypto_fees_v2 taker fee
+                proceeds = fill * (px - fee)
+                self.cash += proceeds
+                self.deployed -= proceeds
+                if is_up:
+                    self.cost_up *= (1 - fill / self.inv_up) if self.inv_up else 0.0
+                    self.inv_up -= fill
+                else:
+                    self.cost_dn *= (1 - fill / self.inv_dn) if self.inv_dn else 0.0
+                    self.inv_dn -= fill
+                self.sells += 1
+                self._refresh(now, is_up, fair_tok)
+                return {"action": "sell", "price": px, "size": fill, "signed_cash": proceeds}
 
         if is_sell and q["bid"] is not None and price <= q["bid"]:      # sell hits our bid -> BUY
             fill = min(self.max_inv - inv, self._fill_size(size, q["fair"]))
@@ -128,8 +161,10 @@ class PaperWindow:
                 self.peak = max(self.peak, self.deployed)
                 if is_up:
                     self.inv_up += fill
+                    self.cost_up += fill * price
                 else:
                     self.inv_dn += fill
+                    self.cost_dn += fill * price
                 self.buys += 1
                 rec = {"action": "buy", "price": price, "size": fill, "signed_cash": -cost}
         elif (self.mode == "roundtrip" and (not is_sell) and q["ask"] is not None
@@ -140,8 +175,10 @@ class PaperWindow:
                 self.cash += proceeds
                 self.deployed -= proceeds
                 if is_up:
+                    self.cost_up *= (1 - fill / self.inv_up) if self.inv_up else 0.0
                     self.inv_up -= fill
                 else:
+                    self.cost_dn *= (1 - fill / self.inv_dn) if self.inv_dn else 0.0
                     self.inv_dn -= fill
                 self.sells += 1
                 rec = {"action": "sell", "price": price, "size": fill, "signed_cash": proceeds}

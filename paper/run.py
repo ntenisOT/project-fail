@@ -53,6 +53,16 @@ STRATEGIES = [
     # order-size experiment: clones of the leading arm with bigger participation
     {"name": "td_f40",      "mode": "roundtrip", "signal": "twap",    "confirm": ["deribit"],           "spread": 0.03, "size_mode": "fixed", "f": 0.4},
     {"name": "td_inv600",   "mode": "roundtrip", "signal": "twap",    "confirm": ["deribit"],           "spread": 0.03, "size_mode": "fixed", "maxinv": 600},
+    # exit-first (xf) twins: SAME signals, winner-style inventory policy --
+    # entry-anchored asks + forced near-close taker exit (carry ~0 to settlement)
+    {"name": "xf_roundtrip","mode": "roundtrip", "signal": "twap",    "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "xf": True},
+    {"name": "xf_opp",      "mode": "roundtrip", "signal": "twap",    "confirm": [],                    "spread": 0.03, "size_mode": "opp",   "xf": True},
+    {"name": "xf_neutral",  "mode": "roundtrip", "signal": "mid",     "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "xf": True},
+    {"name": "xf_twap_con", "mode": "roundtrip", "signal": "twap",    "confirm": ["binance", "deribit"],"spread": 0.03, "size_mode": "fixed", "xf": True},
+    {"name": "xf_twap_bin", "mode": "roundtrip", "signal": "twap",    "confirm": ["binance"],           "spread": 0.03, "size_mode": "fixed", "xf": True},
+    {"name": "xf_twap_der", "mode": "roundtrip", "signal": "twap",    "confirm": ["deribit"],           "spread": 0.03, "size_mode": "fixed", "xf": True},
+    {"name": "xf_binance",  "mode": "roundtrip", "signal": "binance", "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "xf": True},
+    {"name": "xf_deribit",  "mode": "roundtrip", "signal": "deribit", "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "xf": True},
 ]
 NAMES = [s["name"] for s in STRATEGIES]
 F, MAXINV, MINSIG = 0.2, 200, 0.05
@@ -85,6 +95,8 @@ class State:
         self.wref = {a: {"twap": None, "binance": None, "deribit": None} for a in ASSETS}
         self.win = {n: {} for n in NAMES}
         self.lock = {a: None for a in ASSETS}          # lock_arb accumulator per asset
+        self.split = {a: None for a in ASSETS}         # split_sell accumulator per asset
+        self.best_bid: dict[str, float] = {}
         self.tok_map: dict[str, tuple[str, bool]] = {}
         self.best_ask: dict[str, float] = {}
         self.last_price: dict[str, float] = {}
@@ -194,6 +206,11 @@ async def window_task():
                     S.ledger.record_settlement(now, "lock_arb", a, lk["slug"],
                         {"cash": lk["profit"], "residual": 0.0, "pnl": lk["profit"], "capital": lk["peak"],
                          "buys": lk["n"], "sells": lk["n"], "resid_shares": 0.0, "n_fills": lk["n"], "outcome_up": outcome})
+                sp = S.split.get(a)
+                if sp and sp["n"] > 0:
+                    S.ledger.record_settlement(now, "split_sell", a, sp["slug"],
+                        {"cash": sp["profit"], "residual": 0.0, "pnl": sp["profit"], "capital": sp["peak"],
+                         "buys": sp["n"], "sells": sp["n"], "resid_shares": 0.0, "n_fills": sp["n"], "outcome_up": outcome})
                 log.info("settled %s %s outcome=%d", a, ref.slug, outcome)
             if ref is None or rolled:
                 ids = await loop.run_in_executor(None, gamma_tokens, prefix, base)
@@ -203,10 +220,12 @@ async def window_task():
                     for s in STRATEGIES:
                         w = PaperWindow(a, slug, base, s["spread"], s.get("f", F), s.get("maxinv", MAXINV),
                                         MINSIG if s["signal"] != "mid" else -1.0,
-                                        mode=s["mode"], size_mode=s["size_mode"], requote=REQUOTE)
+                                        mode=s["mode"], size_mode=s["size_mode"], requote=REQUOTE,
+                                        exit_first=s.get("xf", False))
                         w.up_tok, w.down_tok = ids[0], ids[1]
                         S.win[s["name"]][a] = w
                     S.lock[a] = {"slug": slug, "up": ids[0], "dn": ids[1], "cost": 0.0, "profit": 0.0, "n": 0, "peak": 0.0}
+                    S.split[a] = {"slug": slug, "up": ids[0], "dn": ids[1], "cost": 0.0, "profit": 0.0, "n": 0, "peak": 0.0}
         tok_map, toks = {}, set()
         for a, w in S.win[NAMES[0]].items():
             if w.up_tok:
@@ -216,6 +235,25 @@ async def window_task():
         if toks != S.tokens:
             S.tokens = toks; S.tokens_changed.set()
         await asyncio.sleep(5)
+
+
+def check_split(a):
+    sp = S.split.get(a)
+    if not sp:
+        return
+    bu, bd = S.best_bid.get(sp["up"]), S.best_bid.get(sp["dn"])
+    if bu is None or bd is None:
+        return
+    s = bu + bd
+    # mint $1 -> SELL both sides at the bids = taker on both legs
+    fee = TAKER_RATE * (bu * (1 - bu) + bd * (1 - bd))
+    net = s - 1.0 - fee
+    if net > LOCK_MARGIN:
+        size = F * 50
+        sp["cost"] += size * 1.0                   # mint cost, recycled on the immediate sells
+        sp["profit"] += size * net
+        sp["peak"] = max(sp["peak"], size * 1.0)
+        sp["n"] += 1
 
 
 def check_lock(a):
@@ -243,11 +281,15 @@ def handle_event(it):
     S.counts[et] += 1
     if et == "book":
         tok = it.get("asset_id"); asks = it.get("asks") or []
+        bids = it.get("bids") or []
         if asks:
             S.best_ask[tok] = min(float(x["price"]) for x in asks)
-            info = S.tok_map.get(tok)
-            if info:
-                check_lock(info[0])
+        if bids:
+            S.best_bid[tok] = max(float(x["price"]) for x in bids)
+        info = S.tok_map.get(tok)
+        if info and (asks or bids):
+            check_lock(info[0])
+            check_split(info[0])
         return
     if et != "last_trade_price":
         return
@@ -367,7 +409,7 @@ async def live_report_task():
 
 
 async def main():
-    log.info("paper trader (13 strategies) starting | fill model v2 (requote=%.1fs, min-post=5sh, taker-only fees->maker 0) | assets=%s (PAPER - no real orders)", REQUOTE, list(ASSETS))
+    log.info("paper trader (21 arms + lock_arb + split_sell) starting | fill model v2 (requote=%.1fs, min-post=5sh, taker-only fees->maker 0) | assets=%s (PAPER - no real orders)", REQUOTE, list(ASSETS))
     S.notify.send("paper trader started: 11-strategy A/B, fill model v2 (PAPER - no real orders)")
     await asyncio.gather(ws_live_task(), deribit_task(), window_task(), market_task(), heartbeat(), summary_task(), live_report_task())
 

@@ -1,6 +1,6 @@
 {
-  "enabled": ["neutral", "pair_mm"],
-  "dump_at_close": ["pair_mm"],
+  "enabled": ["neutral", "xf_neutral", "xf_opp", "pair_mm"],
+  "dump_at_close": ["xf_neutral", "xf_opp", "pair_mm"],
   "max_order_usd": 5,
   "max_inventory_usd": 50,
   "daily_loss_stop_usd": 25

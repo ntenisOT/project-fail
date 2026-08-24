@@ -63,6 +63,11 @@ STRATEGIES = [
     {"name": "xf_twap_der", "mode": "roundtrip", "signal": "twap",    "confirm": ["deribit"],           "spread": 0.03, "size_mode": "fixed", "xf": True},
     {"name": "xf_binance",  "mode": "roundtrip", "signal": "binance", "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "xf": True},
     {"name": "xf_deribit",  "mode": "roundtrip", "signal": "deribit", "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "xf": True},
+    # pair_mm: trades the SUM, not the direction (the measured winner style).
+    # fair(token) = 1 - last price of the OTHER side  =>  bid fills only when
+    # up+down < 1-spread (buy sets below face, maker), asks when sum > 1+spread.
+    # Paired inventory settles at face value in engine.settle() by construction.
+    {"name": "pair_mm",     "mode": "roundtrip", "signal": "pair",    "confirm": [],                    "spread": 0.02, "size_mode": "fixed"},
 ]
 NAMES = [s["name"] for s in STRATEGIES]
 F, MAXINV, MINSIG = 0.2, 200, 0.05
@@ -219,7 +224,7 @@ async def window_task():
                     S.wref[a] = {"twap": S.twap[a].at(base), "binance": S.binance.get(a), "deribit": S.deribit.get(a)}
                     for s in STRATEGIES:
                         w = PaperWindow(a, slug, base, s["spread"], s.get("f", F), s.get("maxinv", MAXINV),
-                                        MINSIG if s["signal"] != "mid" else -1.0,
+                                        MINSIG if s["signal"] not in ("mid", "pair") else -1.0,
                                         mode=s["mode"], size_mode=s["size_mode"], requote=REQUOTE,
                                         exit_first=s.get("xf", False))
                         w.up_tok, w.down_tok = ids[0], ids[1]
@@ -313,6 +318,10 @@ def handle_event(it):
             continue
         if s["signal"] == "mid":
             fair_tok = prev_mid
+        elif s["signal"] == "pair":
+            other = w.down_tok if is_up else w.up_tok
+            po = S.last_price.get(other)
+            fair_tok = None if po is None else max(0.02, min(0.98, 1.0 - po))
         else:
             fu = strat_fair_up(s, a)
             fair_tok = None if fu is None else (fu if is_up else 1 - fu)
@@ -409,7 +418,7 @@ async def live_report_task():
 
 
 async def main():
-    log.info("paper trader (21 arms + lock_arb + split_sell) starting | fill model v2 (requote=%.1fs, min-post=5sh, taker-only fees->maker 0) | assets=%s (PAPER - no real orders)", REQUOTE, list(ASSETS))
+    log.info("paper trader (22 arms + lock_arb + split_sell) starting | fill model v2 (requote=%.1fs, min-post=5sh, taker-only fees->maker 0) | assets=%s (PAPER - no real orders)", REQUOTE, list(ASSETS))
     S.notify.send("paper trader started: 11-strategy A/B, fill model v2 (PAPER - no real orders)")
     await asyncio.gather(ws_live_task(), deribit_task(), window_task(), market_task(), heartbeat(), summary_task(), live_report_task())
 

@@ -9,6 +9,40 @@ import sqlite3
 
 BASE_WIN = 0.65
 BASE_ROC = 0.10
+# xf twin races: original vs exit-first variant of the SAME signal (+ the two set-arbs)
+PAIRS = [("roundtrip", "xf_roundtrip"), ("opp_size", "xf_opp"), ("neutral", "xf_neutral"),
+         ("twap_confirm", "xf_twap_con"), ("twap_binance", "xf_twap_bin"),
+         ("twap_deribit", "xf_twap_der"), ("binance_only", "xf_binance"),
+         ("deribit_only", "xf_deribit"), ("lock_arb", "split_sell")]
+
+
+def _since(db, strat, t0):
+    """windows/pnl/win%/sell-buy/resid for one strategy since t0 (same-period compare)."""
+    r = db.execute("""SELECT count(*), COALESCE(sum(pnl),0),
+                      COALESCE(sum(pnl > 0),0), COALESCE(sum(sells),0), COALESCE(sum(buys),0),
+                      COALESCE(sum(resid_shares),0)
+                      FROM settlements WHERE n_fills>0 AND strategy=? AND ts>=?""", (strat, t0)).fetchone()
+    n, pnl, wins, sells, buys, resid = r
+    return {"n": n, "pnl": pnl, "win": (wins / n if n else 0.0),
+            "sb": (sells / buys if buys else 0.0), "resid": resid}
+
+
+def pair_text(db) -> list[str]:
+    t0 = db.execute("SELECT COALESCE(min(ts), 0) FROM settlements WHERE strategy LIKE 'xf_%' OR strategy='split_sell'").fetchone()[0]
+    if not t0:
+        return ["(xf twins warming up - no settled twin windows yet)"]
+    import time as _t
+    out = [f"XF TWIN RACES - both sides since {_t.strftime('%H:%M', _t.gmtime(t0))}Z (same tape, same signal; only inventory policy differs)",
+           f"{'family':<14}{'orig pnl$':>10}{'xf pnl$':>9}{'edge$':>8}{'o.s/b':>7}{'xf.s/b':>7}{'o.resid':>9}{'xf.resid':>9}{'wins':>6}"]
+    for orig, xf in PAIRS:
+        o = _since(db, orig, t0)
+        x = _since(db, xf, t0)
+        if o["n"] == 0 and x["n"] == 0:
+            continue
+        out.append(f"{orig[:14]:<14}{o['pnl']:>+10.1f}{x['pnl']:>+9.1f}{x['pnl']-o['pnl']:>+8.1f}"
+                   f"{o['sb']:>7.2f}{x['sb']:>7.2f}{o['resid']:>9.0f}{x['resid']:>9.0f}{min(o['n'],x['n']):>6}")
+    out.append("edge$ = xf minus original | resid = shares carried into settlement (the carry)")
+    return out
 REDEMPTION_LOCK = 7200  # seconds: capital held to settlement stays locked ~2h until redemption
 
 
@@ -74,6 +108,8 @@ def text(db_path: str = "paper/paper.db") -> str:
                    f"{s['roc_budget']*100:>+8.0f}%{s['sell_buy']:>9.2f}")
     out.append("windows=settled; fills=buys+sells; budget$=peak capital-at-risk = bankroll needed")
     out.append("(sells recover instantly; HELD residual locked ~2h to redemption). sell/buy: 0=pure hold.")
+    out.append("")
+    out.extend(pair_text(db))
     return "\n".join(out)
 
 
@@ -100,6 +136,16 @@ def tg_text(db_path: str = "paper/paper.db") -> str:
         out.append(f"{s['strategy'][:10]:<10}{s['pnl']:>+5.0f}{roc:>+5.0f}{min(99999, s['volume']):>6.0f}"
                    f"{min(99.99, avg):>5.2f}{s['win_rate']*100:>4.0f}%{min(99999, s['budget']):>5.0f}")
     out.append("ROC=pnl/bankroll. full cols in logs")
+    t0 = db.execute("SELECT COALESCE(min(ts),0) FROM settlements WHERE strategy LIKE 'xf_%' OR strategy='split_sell'").fetchone()[0]
+    if t0:
+        out.append("")
+        out.append("XF RACES since launch (e=xf-orig)")
+        for orig, xf in PAIRS:
+            o = _since(db, orig, t0)
+            x = _since(db, xf, t0)
+            if x["n"] == 0 and o["n"] == 0:
+                continue
+            out.append(f"{orig[:11]:<11}{o['pnl']:>+6.0f}{x['pnl']:>+6.0f} e{x['pnl']-o['pnl']:>+5.0f}")
     return "\n".join(out)
 
 

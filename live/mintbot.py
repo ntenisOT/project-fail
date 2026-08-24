@@ -109,6 +109,7 @@ class Mintbot:
         self.day_minted = 0.0
         self.day_key = time.strftime("%Y-%m-%d", time.gmtime())
         self.merge_fails = 0
+        self.pos: dict[str, dict] = {}        # token -> data-api position (place)
 
     def rec(self, st, note):
         try:
@@ -179,26 +180,66 @@ class Mintbot:
                         self.clob.cancel(oid)
                     except Exception:
                         pass
-        left_up = st["minted"] - st["sold"][True]
-        left_dn = st["minted"] - st["sold"][False]
-        matched = max(0.0, min(left_up, left_dn))
-        if MODE == "place" and matched >= 1.0:
+        if MODE == "place":
+            # merge what the WALLET actually holds (authoritative), not arithmetic
+            await asyncio.sleep(8)                       # let last fills index
             try:
-                await asyncio.to_thread(chain.merge, self.key, st["cond"], float(int(matched)))
-                st["merged"] = float(int(matched))
-                self.merge_fails = 0
-            except Exception as e:
-                self.merge_fails += 1                     # M6
-                log.error("merge failed %s (#%d): %s - residue will auto-redeem",
-                          st["slug"], self.merge_fails, e)
+                self.pos = await asyncio.to_thread(self.clob.positions)
+            except Exception:
+                pass
+            held_up = self.pos.get(st["up"], {}).get("sh", st["minted"] - st["sold"][True])
+            held_dn = self.pos.get(st["dn"], {}).get("sh", st["minted"] - st["sold"][False])
+            matched = float(int(max(0.0, min(held_up, held_dn))))
+            if matched >= 1.0:
+                for attempt in (1, 2):
+                    try:
+                        await asyncio.to_thread(chain.merge, self.key, st["cond"], matched)
+                        st["merged"] = matched
+                        self.merge_fails = 0
+                        break
+                    except Exception as e:
+                        if attempt == 2:
+                            self.merge_fails += 1        # M6
+                            log.error("merge failed %s (#%d): %s - residue will auto-redeem",
+                                      st["slug"], self.merge_fails, e)
+                        else:
+                            await asyncio.sleep(10)
         else:
-            st["merged"] = matched
+            left_up = st["minted"] - st["sold"][True]
+            left_dn = st["minted"] - st["sold"][False]
+            st["merged"] = max(0.0, min(left_up, left_dn))
         pnl_sold = st["sold_usd"] - (st["sold"][True] + st["sold"][False]) * 0.5
         log.info("%sCLOSE %s: sold %.0fU/%.0fD ($%.2f) merged %.0f  est_pnl %+.2f",
                  "" if MODE == "place" else "[shadow] ", st["slug"],
                  st["sold"][True], st["sold"][False], st["sold_usd"], st.get("merged", 0),
                  pnl_sold)
         self.rec(st, "close")
+
+    # ---- fill truth: the minter EOA is a VIRGIN wallet, so the data-api
+    # positions feed is fully authoritative - sold = minted - still-held.
+    async def positions_task(self):
+        while True:
+            await asyncio.sleep(10)
+            if not self.clob:
+                continue
+            try:
+                self.pos = await asyncio.to_thread(self.clob.positions)
+            except Exception as e:
+                log.warning("positions poll: %s", e)
+                continue
+            for st in self.state.values():
+                for side, tok in ((True, st["up"]), (False, st["dn"])):
+                    held = self.pos.get(tok, {}).get("sh", 0.0)
+                    sold = max(0.0, st["minted"] - held)
+                    if sold > st["sold"][side] + 0.01:
+                        delta = sold - st["sold"][side]
+                        ask = st["asks"].get(side)
+                        px = ask[0] if ask else 0.5
+                        st["sold_usd"] += delta * px
+                        log.info("FILLED %s %s +%.0f sh (~%.2f) total %.0fU/%.0fD",
+                                 st["asset"], "Up" if side else "Dn", delta,
+                                 delta * px, st["sold"][True], st["sold"][False])
+                    st["sold"][side] = sold
 
     # ---- quoting ----------------------------------------------------------
     def on_book(self, tok, bids, asks):
@@ -276,7 +317,7 @@ class Mintbot:
     async def main(self):
         log.info("mintbot starting: mode=%s mint=$%.0f/window day-cap=$%.0f spread=%.2f",
                  MODE, MINT_USD, MINT_DAY_CAP, SPREAD)
-        await asyncio.gather(self.roll_task(), self.ws_task())
+        await asyncio.gather(self.roll_task(), self.ws_task(), self.positions_task())
 
 
 if __name__ == "__main__":

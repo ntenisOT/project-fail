@@ -33,6 +33,9 @@ def main(hours: float):
                     "ubuntu@3.254.130.64:~/project-fail/paper/paper.db", DB_LOCAL], check=True)
     db = sqlite3.connect(DB_LOCAL)
     tmax = db.execute("SELECT max(ts) FROM settlements WHERE n_fills>0").fetchone()[0]
+    if not tmax:
+        print("(fresh baseline - no settled windows yet; bench skipped)")
+        return
     t_from = tmax - hours * 3600
     wins = {s: int(o) for s, o in db.execute(
         "SELECT DISTINCT slug, outcome_up FROM settlements WHERE n_fills>0 AND ts>=?", (t_from,))}

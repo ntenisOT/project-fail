@@ -1,0 +1,159 @@
+"""Minimal Polygon chain access for the minter: raw JSON-RPC + eth_account
+(already a py_clob_client_v2 dependency) - no web3.py needed.
+
+Safety model: every state-changing call runs eth_estimateGas FIRST - a wrong
+encoding or failing condition reverts there, gas-free, before any money moves.
+The setup script only ever uses $1-$2 amounts until the round-trip proves out.
+"""
+from __future__ import annotations
+
+import json
+import os
+import time
+import urllib.request
+
+from eth_account import Account
+from eth_utils import keccak, to_checksum_address
+
+CHAIN_ID = 137
+RPCS = ([os.environ["POLYGON_RPC_URL"]] if os.environ.get("POLYGON_RPC_URL") else []) + [
+    "https://polygon-rpc.com",
+    "https://polygon-bor-rpc.publicnode.com",
+    "https://1rpc.io/matic",
+    "https://polygon.llamarpc.com",
+]
+
+# canonical Polymarket/Polygon contracts
+CTF = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045"          # ConditionalTokens
+USDC_E = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"        # bridged (collateral)
+USDC_NATIVE = "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"   # Circle-native (NOT collateral)
+CTF_EXCHANGE = "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E"  # CLOB settlement
+NEG_RISK_ADAPTER = "0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296"
+
+
+def _rpc(method, params):
+    last = None
+    for url in RPCS:
+        try:
+            req = urllib.request.Request(url, method="POST",
+                data=json.dumps({"jsonrpc": "2.0", "id": 1, "method": method,
+                                 "params": params}).encode(),
+                headers={"Content-Type": "application/json",
+                         "User-Agent": "Mozilla/5.0"})
+            r = json.load(urllib.request.urlopen(req, timeout=10))
+            if "error" in r:
+                raise RuntimeError(r["error"])
+            return r["result"]
+        except Exception as e:
+            last = e
+    raise RuntimeError(f"all RPCs failed for {method}: {last}")
+
+
+# ---- minimal ABI encoding ------------------------------------------------
+def _w(x) -> str:                                  # one 32-byte word, hex no 0x
+    if isinstance(x, int):
+        return f"{x:064x}"
+    x = x.lower().removeprefix("0x")
+    return x.rjust(64, "0")
+
+
+def selector(sig: str) -> str:
+    return keccak(text=sig)[:4].hex()
+
+
+def encode_call(sig: str, args: list) -> str:
+    """Static args + at most ONE trailing uint256[] dynamic arg."""
+    head, tail = [], []
+    types = sig[sig.index("(") + 1:-1].split(",") if sig[-2] != "(" else []
+    n = len(types)
+    for i, (t, a) in enumerate(zip(types, args)):
+        if t == "uint256[]":
+            head.append(None)                       # patched with offset below
+            tail.append(_w(len(a)) + "".join(_w(v) for v in a))
+        elif t == "bool":
+            head.append(_w(1 if a else 0))
+        else:                                       # address/bytes32/uint256
+            head.append(_w(a))
+    off = 32 * n
+    out = []
+    for h in head:
+        if h is None:
+            out.append(_w(off))
+        else:
+            out.append(h)
+    return "0x" + selector(sig) + "".join(out) + "".join(tail)
+
+
+# ---- reads ---------------------------------------------------------------
+def call(to: str, data: str) -> str:
+    return _rpc("eth_call", [{"to": to, "data": data}, "latest"])
+
+
+def erc20_balance(token: str, owner: str) -> float:
+    r = call(token, encode_call("balanceOf(address)", [owner]))
+    return int(r, 16) / 1e6
+
+
+def pol_balance(owner: str) -> float:
+    return int(_rpc("eth_getBalance", [owner, "latest"]), 16) / 1e18
+
+
+def ctf_balance(owner: str, position_id: int) -> float:
+    r = call(CTF, encode_call("balanceOf(address,uint256)", [owner, position_id]))
+    return int(r, 16) / 1e6
+
+
+def position_ids(condition_id: str) -> tuple[int, int]:
+    """ERC1155 ids for outcome slots 1 and 2 (Up/Down) under USDC.e."""
+    ids = []
+    for index_set in (1, 2):
+        coll = call(CTF, encode_call(
+            "getCollectionId(bytes32,bytes32,uint256)",
+            ["0" * 64, condition_id, index_set]))
+        pid = call(CTF, encode_call(
+            "getPositionId(address,bytes32)", [USDC_E, coll]))
+        ids.append(int(pid, 16))
+    return ids[0], ids[1]
+
+
+# ---- writes --------------------------------------------------------------
+def send(key: str, to: str, data: str, desc: str) -> str:
+    acct = Account.from_key(key)
+    tx = {"from": acct.address, "to": to_checksum_address(to), "data": data, "value": "0x0"}
+    gas = int(_rpc("eth_estimateGas", [tx]), 16)          # reverts here = $0 lost
+    gas_price = int(int(_rpc("eth_gasPrice", []), 16) * 1.25)
+    nonce = int(_rpc("eth_getTransactionCount", [acct.address, "pending"]), 16)
+    signed = acct.sign_transaction({
+        "chainId": CHAIN_ID, "to": to_checksum_address(to), "value": 0,
+        "data": data, "gas": int(gas * 1.3), "gasPrice": gas_price, "nonce": nonce})
+    txh = _rpc("eth_sendRawTransaction", [signed.raw_transaction.hex()
+               if hasattr(signed, "raw_transaction") else signed.rawTransaction.hex()])
+    for _ in range(60):                                    # ~2 min
+        time.sleep(2)
+        rec = _rpc("eth_getTransactionReceipt", [txh])
+        if rec:
+            if int(rec["status"], 16) != 1:
+                raise RuntimeError(f"{desc}: tx {txh} REVERTED")
+            print(f"  {desc}: OK  tx {txh[:18]}...  gas {int(rec['gasUsed'],16):,}")
+            return txh
+    raise RuntimeError(f"{desc}: tx {txh} not mined in 2min")
+
+
+def approve(key, token, spender, amount_usd):
+    return send(key, token,
+                encode_call("approve(address,uint256)", [spender, int(amount_usd * 1e6)]),
+                f"approve {amount_usd:.2f} USDC -> {spender[:10]}")
+
+
+def split(key, condition_id, amount_usd):
+    return send(key, CTF, encode_call(
+        "splitPosition(address,bytes32,bytes32,uint256[],uint256)",
+        [USDC_E, "0" * 64, condition_id, [1, 2], int(amount_usd * 1e6)]),
+        f"splitPosition ${amount_usd:.2f}")
+
+
+def merge(key, condition_id, amount_usd):
+    return send(key, CTF, encode_call(
+        "mergePositions(address,bytes32,bytes32,uint256[],uint256)",
+        [USDC_E, "0" * 64, condition_id, [1, 2], int(amount_usd * 1e6)]),
+        f"mergePositions ${amount_usd:.2f}")

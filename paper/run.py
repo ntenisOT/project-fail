@@ -67,7 +67,7 @@ STRATEGIES = [
     # fair(token) = 1 - last price of the OTHER side  =>  bid fills only when
     # up+down < 1-spread (buy sets below face, maker), asks when sum > 1+spread.
     # Paired inventory settles at face value in engine.settle() by construction.
-    {"name": "pair_mm",     "mode": "roundtrip", "signal": "pair",    "confirm": [],                    "spread": 0.02, "size_mode": "fixed", "pair_balance": True},
+    {"name": "pair_mm",     "mode": "roundtrip", "signal": "pair",    "confirm": [],                    "spread": 0.02, "size_mode": "fixed", "pair_balance": True, "xf": True},
 ]
 NAMES = [s["name"] for s in STRATEGIES]
 F, MAXINV, MINSIG = 0.2, 200, 0.05

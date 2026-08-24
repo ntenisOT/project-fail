@@ -33,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import re
 import sqlite3
@@ -187,8 +188,12 @@ class Lockbot:
         self.cooldown[asset] = (state, now)
         # L3 + depth-aware: never take more than BOTH displayed asks show -
         # FAK partial fills (the legging cause) come from overrunning the book.
-        sh = round(min(CAP_LEG / au, CAP_LEG / ad, bu.ask_sz, bd.ask_sz), 1)
-        if sh < MIN_SHARES:
+        # WHOLE shares only: int shares x 2-decimal px = 2-decimal $ amount
+        # (marketable orders reject >2-decimal amounts), and each leg needs
+        # >= $1.00 notional (exchange minimum for marketable BUYs).
+        sh = float(int(min(CAP_LEG / au, CAP_LEG / ad, bu.ask_sz, bd.ask_sz)))
+        need = max(MIN_SHARES, math.ceil(1.0 / au), math.ceil(1.0 / ad))
+        if sh < need:
             return
         spend = sh * (au + ad)
         if self.window_spend.get(slug, 0.0) + spend > CAP_WINDOW:    # L4
@@ -234,6 +239,12 @@ class Lockbot:
         if naked_sh >= 0.1:                                          # L5 unwind
             self.legged_today += 1
             px = round(max(0.01, naked_px - 0.02), 2)
+            naked_sh = int(naked_sh)                # whole shares (amount accuracy)
+            if naked_sh < 1 or naked_sh * px < 1.0:  # below exchange minimums:
+                self.rec(asset, slug, au, ad, naked_sh, net, "legged-small-hold")
+                log.warning("LEGGED %s: %s sh too small to unwind - held to settle (max $1)",
+                            asset, naked_sh)
+                return
             try:
                 await asyncio.to_thread(self.clob.place, naked_tok, "sell", px,
                                         naked_sh, False, True)

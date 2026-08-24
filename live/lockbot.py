@@ -140,6 +140,16 @@ class Lockbot:
                     self.tok_asset[up] = (a, True)
                     self.tok_asset[dn] = (a, False)
                     changed = True
+                    if self.clob:
+                        # pre-warm the client's per-token caches OFF the fire
+                        # path: lazily fetched tick-size + neg-risk cost ~56ms
+                        # on the first order per token (seen live 20:24Z)
+                        for tok in (up, dn):
+                            try:
+                                await asyncio.to_thread(self.clob.c.get_tick_size, tok)
+                                await asyncio.to_thread(self.clob.c.get_neg_risk, tok)
+                            except Exception as e:
+                                log.warning("pre-warm %s: %s", tok[:10], e)
             if changed:
                 self.resub.set()
             await asyncio.sleep(5)

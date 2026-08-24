@@ -111,10 +111,12 @@ STRATEGIES = [
 ]
 NAMES = [s["name"] for s in STRATEGIES]
 F, MAXINV, MINSIG = 0.2, 200, 0.05
-REQUOTE = float(os.environ.get("PAPER_REQUOTE", "0.15"))  # s between quote refreshes.
 # gen-9: default 0.15s = probe-measured in-process pipeline (ws event + decide +
 # 28ms flight) - the executor path being built. The sq_ twins keep the old 1.0s
 # file/poll pipeline as reference for the 4 live candidates.
+# Env knob renamed from PAPER_REQUOTE: the box .env carried a stale 0.11 from
+# the gen-2 experiments that silently overrode the default.
+REQUOTE = float(os.environ.get("PAPER_REQUOTE_S", "0.15"))
 LOCK_MARGIN, TAKER_RATE = 0.002, 0.07  # capture only sets with NET edge (after taker fees) > margin
 
 CL_WS = "wss://ws-live-data.polymarket.com"

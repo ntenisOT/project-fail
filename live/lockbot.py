@@ -79,10 +79,11 @@ def gamma_tokens(prefix: str, base: int):
 
 
 class Book:
-    __slots__ = ("ask", "ts")
+    __slots__ = ("ask", "ask_sz", "ts")
 
     def __init__(self):
         self.ask = None
+        self.ask_sz = 0.0
         self.ts = 0.0
 
 
@@ -144,7 +145,12 @@ class Lockbot:
 
     def on_book(self, tok, asks):
         b = self.books.setdefault(tok, Book())
-        b.ask = min(float(x["price"]) for x in asks) if asks else None
+        if asks:
+            best = min(asks, key=lambda x: float(x["price"]))
+            b.ask = float(best["price"])
+            b.ask_sz = float(best.get("size") or 0)
+        else:
+            b.ask, b.ask_sz = None, 0.0
         b.ts = time.time()
         info = self.tok_asset.get(tok)
         if info:
@@ -179,7 +185,9 @@ class Lockbot:
         if cd and cd[0] == state and now - cd[1] < COOLDOWN_S:       # L8
             return
         self.cooldown[asset] = (state, now)
-        sh = round(min(CAP_LEG / au, CAP_LEG / ad), 1)               # L3
+        # L3 + depth-aware: never take more than BOTH displayed asks show -
+        # FAK partial fills (the legging cause) come from overrunning the book.
+        sh = round(min(CAP_LEG / au, CAP_LEG / ad, bu.ask_sz, bd.ask_sz), 1)
         if sh < MIN_SHARES:
             return
         spend = sh * (au + ad)

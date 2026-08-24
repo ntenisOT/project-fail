@@ -7,6 +7,11 @@ CLOB. Run it YOURSELF:
 Modes (LIVE_EXECUTOR_MODE in .env):
   log-only : full reconcile loop, prints every order it WOULD place/cancel.
              No credentials needed. Prove the loop like this first.
+  shadow   : REAL client + REAL fills/positions feed, but every order action
+             is suppressed (nothing can be placed or cancelled). Validates the
+             live-only code paths (fill recognition, caps, day-stop) at $0 -
+             the stage the first incident proved necessary. Read-only: skips
+             the startup/exit cancel_all too.
   place    : REAL ORDERS. Needs POLY_PRIVATE_KEY (+ POLY_FUNDER for site
              accounts) in .env AND DEPLOY_REGION=eu-west-1 (geo interlock).
 
@@ -39,6 +44,8 @@ import logging
 import os
 import sqlite3
 import time
+import urllib.parse
+import urllib.request
 
 from paper import envload
 
@@ -164,6 +171,28 @@ class Clob:
     def cancel_all(self):
         self.c.cancel_all()
 
+    def usdc_balance(self) -> float:
+        from py_clob_client_v2 import BalanceAllowanceParams, AssetType
+        b = self.c.get_balance_allowance(BalanceAllowanceParams(asset_type=AssetType.COLLATERAL))
+        return float(b.get("balance", 0)) / 1e6
+
+    def positions(self) -> dict:
+        """AUTHORITATIVE per-token holdings for our maker identity, from the
+        public data-api (exchange-side accounting; no trade-row parsing). The
+        first validation proved the trades feed multi-counts maker fills, so
+        caps/dumps key off THIS, never off get_trades."""
+        url = "https://data-api.polymarket.com/positions?sizeThreshold=0.1&user=" + urllib.parse.quote(self.addr)
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        rows = json.load(urllib.request.urlopen(req, timeout=10)) or []
+        out = {}
+        for r in rows:
+            tok = str(r.get("asset", r.get("tokenId", "")))
+            if tok:
+                out[tok] = {"sh": float(r.get("size", 0)),
+                            "cost": float(r.get("initialValue", 0)),
+                            "value": float(r.get("currentValue", 0))}
+        return out
+
     def trades(self, after_ts=None):
         """Authenticated account trade feed. Server-side `after` filter when the
         SDK supports it; callers still filter by match_time (belt+braces) because
@@ -208,6 +237,7 @@ def main():
         return
 
     clob = None
+    live_orders = MODE == "place"          # ONLY place mode may touch the book
     if MODE == "place":
         if os.environ.get("DEPLOY_REGION") != "eu-west-1":            # G1
             log.error("REFUSED: place mode requires DEPLOY_REGION=eu-west-1 in .env "
@@ -220,16 +250,29 @@ def main():
         except Exception as e:
             log.error("startup cancel_all FAILED (%s) - refusing to run blind", e)
             return
+    elif MODE == "shadow":
+        clob = Clob()                       # real client, reads only; orders suppressed
+        log.info("SHADOW: real fills/positions feed active; ALL order actions suppressed")
     else:
         log.info("LOG-ONLY: no orders will be sent")
 
     led = Ledger()
     session_t0 = time.time()              # ingest ONLY this session's trades
+    usdc_start = None
+    if clob:
+        try:
+            usdc_start = clob.usdc_balance()
+            log.info("session start USDC balance: $%.2f (day-stop baseline)", usdc_start)
+        except Exception as e:
+            log.error("cannot read starting balance (%s) - refusing to run blind", e)
+            return
     desired: dict[tuple, dict] = {}       # (strategy, token) -> latest intent
     resting: dict[tuple, dict] = {}       # (strategy, token, side) -> {id, price, size}
-    pos: dict[str, float] = {}            # token -> net shares REALLY held (G6)
+    pos: dict[str, dict] = {}             # token -> authoritative position (data-api)
+    exposure_cost = 0.0                    # $ cost of all open positions (G7 source)
     if clob is None:
-        pos.update(_test_positions())     # log-only tests can inject positions
+        pos.update({k: {"sh": v, "cost": v * 0.5, "value": v * 0.5}
+                    for k, v in _test_positions().items()})   # log-only test injection
     dumped: set[tuple] = set()            # (token, close_ts) already dump-ordered (G12)
     window_spend: dict[tuple, float] = {}  # (token, close_ts) -> $ of BUY orders PLACED (G13:
     rejected_px: dict[tuple, float] = {}   # feed-independent cap; counts at placement, cannot
@@ -244,7 +287,7 @@ def main():
         if not r:
             return True
         strat, token, side = key
-        if clob:
+        if clob and live_orders:
             try:
                 clob.cancel(r["id"])                                   # G3 wrapped
             except Exception as e:
@@ -257,7 +300,7 @@ def main():
     def cancel_everything(reason):
         for key in list(resting):
             do_cancel(key, reason)
-        if clob:
+        if clob and live_orders:
             try:
                 clob.cancel_all()                                      # belt and braces
             except Exception as e:
@@ -298,7 +341,7 @@ def main():
                 if strat not in dump_strats or actions >= ACTIONS_PER_LOOP:
                     continue
                 close_ts = slug_close_ts(it.get("slug", ""))
-                held = pos.get(token, 0.0)
+                held = pos.get(token, {}).get("sh", 0.0) if isinstance(pos.get(token), dict) else 0.0
                 if (close_ts is None or not (close_ts - 45 <= now < close_ts - CLOSE_EARLY_S)
                         or held < MIN_SHARES or (token, close_ts) in dumped):
                     continue
@@ -306,8 +349,9 @@ def main():
                 px = round(max(0.02, min(0.98, round(ref / TICK) * TICK - 2 * TICK)), 2)
                 do_cancel((strat, token, "sell"), "pre-dump")           # replace any resting ask
                 try:
-                    oid = clob.place(token, "sell", px, held, post_only=False) if clob else f"dry-dump-{int(now*1000)}"
-                    if not clob:
+                    oid = (clob.place(token, "sell", px, held, post_only=False)
+                           if clob and live_orders else f"dry-dump-{int(now*1000)}")
+                    if not (clob and live_orders):
                         log.info("[dry] DUMP %s sell %.1f sh %s @ %.2f (close-%ds)",
                                  strat, held, token[:10], px, int(close_ts - now))
                     if oid:
@@ -343,7 +387,7 @@ def main():
                         else:
                             want_sh = max(MIN_SHARES, min(want_sh, max_sh))
                     if want_px is not None and side == "buy":          # G7 global exposure cap
-                        if max(0.0, -day_cash) >= cap_inv_total:
+                        if exposure_cost >= cap_inv_total:               # (authoritative positions)
                             want_px = None
                     if want_px is not None and side == "buy":          # G13 per-token/window spend cap
                         if window_spend.get((token, close_ts), 0.0) + want_px * want_sh > 3 * cap_ord:
@@ -351,7 +395,8 @@ def main():
                     if want_px is not None and rejected_px.get((strat, token, side)) == want_px:
                         continue                                       # G14: do not respam a post-only-rejected px
                     if want_px is not None and side == "sell" and clob:  # G6 holdings only
-                        held = pos.get(token, 0.0)
+                        held_p = pos.get(token)
+                        held = held_p["sh"] if isinstance(held_p, dict) else 0.0
                         if held < MIN_SHARES:
                             want_px = None
                         else:
@@ -369,8 +414,9 @@ def main():
                         do_cancel(key, "reprice")
                         actions += 1
                     try:                                               # G3 wrapped placement
-                        oid = clob.place(token, side, want_px, want_sh) if clob else f"dry-{int(now*1000)}-{actions}"
-                        if not clob:
+                        oid = (clob.place(token, side, want_px, want_sh)
+                               if clob and live_orders else f"dry-{int(now*1000)}-{actions}")
+                        if not (clob and live_orders):
                             log.info("[dry] place %s %s %.1f sh %s @ %.2f", strat, side, want_sh, token[:10], want_px)
                         if oid:
                             resting[key] = {"id": oid, "price": want_px, "size": want_sh}
@@ -378,7 +424,7 @@ def main():
                             rejected_px.pop((strat, token, side), None)
                             if side == "buy":
                                 window_spend[(token, close_ts)] = window_spend.get((token, close_ts), 0.0) + want_px * want_sh
-                        elif clob:
+                        elif clob and live_orders:
                             log.error("FAIL-CLOSED: order accepted but no order id in response -> cancel_all + halt")
                             cancel_everything("no-oid")
                             return
@@ -389,14 +435,30 @@ def main():
                             log.warning("place %s %s@%.2f failed: %s", side, token[:10], want_px, e)
                     actions += 1
 
-            # ---- fills -> positions, realized-basis day stop (place mode) ----
+            # ---- AUTHORITATIVE data plane: positions + collateral balance ----
+            # (the trades feed is informational only - it multi-counts maker fills)
             if clob and now - last_fills > FILLS_EVERY_S:
                 last_fills = now
                 try:
-                    for t in clob.trades(after_ts=session_t0 - 60):
+                    pos = clob.positions()
+                    exposure_cost = sum(p["cost"] for p in pos.values())
+                    usdc_now = clob.usdc_balance()
+                    spent = (usdc_start - usdc_now) if usdc_start is not None else 0.0
+                    log.info("STATE positions=%d exposure(cost)=$%.2f usdc=$%.2f spent=$%.2f",
+                             len(pos), exposure_cost, usdc_now, spent)
+                    if spent >= cap_inv_total + stop:                  # G8: cash out beyond caps = halt
+                        log.error("DAY STOP: $%.2f left the wallet (cap %.0f + stop %.0f) "
+                                  "-> cancel all + HALT", spent, cap_inv_total, stop)
+                        cancel_everything("day-stop")
+                        halted = True
+                        return
+                except Exception as e:
+                    log.warning("data-plane poll failed: %s (keeping last state)", e)
+                try:
+                    for t in clob.trades(after_ts=session_t0 - 60):    # info/telegram only
                         try:
                             mt = float(t.get("match_time") or 0)
-                            if mt < session_t0 - 60:      # history guard: session only
+                            if mt < session_t0 - 60:
                                 continue
                             side, size = clob.my_fill(t)
                             if not side or size <= 0:
@@ -408,18 +470,6 @@ def main():
                             continue
                 except Exception as e:
                     log.warning("trades pull failed: %s", e)
-                day0 = now // 86400 * 86400
-                pos, day_cash = led.positions_and_cash(day0)
-                if day_cash > cap_inv_total:                           # G15 tripwire: feed implausible
-                    log.error("FAIL-CLOSED: ledger says +$%.0f net cash (implausible) -> halt", day_cash)
-                    cancel_everything("feed-implausible")
-                    return
-                if day_cash <= -(cap_inv_total + stop):                # G8 realized basis
-                    log.error("DAY LOSS STOP: net cash %+.2f beyond open-cap %+.2f + stop %.2f "
-                              "-> cancel all + HALT for the day", day_cash, -cap_inv_total, stop)
-                    cancel_everything("day-stop")
-                    halted = True
-                    return
             time.sleep(1.0)
     finally:
         if not halted:

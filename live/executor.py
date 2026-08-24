@@ -441,11 +441,12 @@ def main():
                 last_fills = now
                 try:
                     pos = clob.positions()
-                    exposure_cost = sum(p["cost"] for p in pos.values())
+                    session_tokens = {tok for (_s, tok) in desired}
+                    exposure_cost = sum(p["cost"] for t, p in pos.items() if t in session_tokens)
                     usdc_now = clob.usdc_balance()
                     spent = (usdc_start - usdc_now) if usdc_start is not None else 0.0
-                    log.info("STATE positions=%d exposure(cost)=$%.2f usdc=$%.2f spent=$%.2f",
-                             len(pos), exposure_cost, usdc_now, spent)
+                    log.info("STATE positions=%d (session-scope %d) exposure(cost)=$%.2f usdc=$%.2f spent=$%.2f",
+                             len(pos), len(session_tokens & set(pos)), exposure_cost, usdc_now, spent)
                     if spent >= cap_inv_total + stop:                  # G8: cash out beyond caps = halt
                         log.error("DAY STOP: $%.2f left the wallet (cap %.0f + stop %.0f) "
                                   "-> cancel all + HALT", spent, cap_inv_total, stop)

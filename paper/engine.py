@@ -61,7 +61,8 @@ def fair_up(now, ref, k: float = K_SKEW):
 class PaperWindow:
     def __init__(self, asset, slug, start, spread, fill_frac, max_inventory,
                  min_signal, mode="roundtrip", size_mode="fixed", min_order=5.0,
-                 requote=1.0, fee_bps=0.0, exit_first=False, xf_offset=0.02):
+                 requote=1.0, fee_bps=0.0, exit_first=False, xf_offset=0.02,
+                 pair_balance=False):
         self.asset = asset
         self.slug = slug
         self.start = start
@@ -72,6 +73,7 @@ class PaperWindow:
         self.min_signal = min_signal
         self.mode = mode            # "roundtrip" | "hold"
         self.exit_first = exit_first   # winner-style: entry-anchored asks + forced near-close exit
+        self.pair_balance = pair_balance   # pair mode: bid only the side we hold LESS of (forces sets)
         self.xf_offset = xf_offset     # ask = avg entry + this (never follows fair away)
         self.cost_up = self.cost_dn = 0.0    # cost basis per side (for entry-anchored asks)
         self.size_mode = size_mode  # "fixed" | "opp"
@@ -110,6 +112,10 @@ class PaperWindow:
         # bid only if we could still post a >= min_order-share order
         q["bid"] = (max(0.01, min(0.98, fair_tok - self.spread))
                     if self.max_inv - inv >= self.min_order else None)
+        if self.pair_balance and q["bid"] is not None:
+            other = self.inv_dn if is_up else self.inv_up
+            if inv > other + 25:          # this side is ahead: stop bidding it, let the other catch up
+                q["bid"] = None
         # ask only in roundtrip mode and only if we HOLD >= min_order shares.
         # exit_first: anchor the ask to OUR AVG ENTRY (+offset) so it does not chase
         # the model away from the flow -- the #1 reason vanilla asks never filled.

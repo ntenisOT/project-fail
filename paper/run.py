@@ -67,7 +67,7 @@ STRATEGIES = [
     # fair(token) = 1 - last price of the OTHER side  =>  bid fills only when
     # up+down < 1-spread (buy sets below face, maker), asks when sum > 1+spread.
     # Paired inventory settles at face value in engine.settle() by construction.
-    {"name": "pair_mm",     "mode": "roundtrip", "signal": "pair",    "confirm": [],                    "spread": 0.02, "size_mode": "fixed"},
+    {"name": "pair_mm",     "mode": "roundtrip", "signal": "pair",    "confirm": [],                    "spread": 0.02, "size_mode": "fixed", "pair_balance": True},
 ]
 NAMES = [s["name"] for s in STRATEGIES]
 F, MAXINV, MINSIG = 0.2, 200, 0.05
@@ -226,7 +226,7 @@ async def window_task():
                         w = PaperWindow(a, slug, base, s["spread"], s.get("f", F), s.get("maxinv", MAXINV),
                                         MINSIG if s["signal"] not in ("mid", "pair") else -1.0,
                                         mode=s["mode"], size_mode=s["size_mode"], requote=REQUOTE,
-                                        exit_first=s.get("xf", False))
+                                        exit_first=s.get("xf", False), pair_balance=s.get("pair_balance", False))
                         w.up_tok, w.down_tok = ids[0], ids[1]
                         S.win[s["name"]][a] = w
                     S.lock[a] = {"slug": slug, "up": ids[0], "dn": ids[1], "cost": 0.0, "profit": 0.0, "n": 0, "peak": 0.0}

@@ -270,15 +270,29 @@ def main():
     usdc_start = None
     if clob:
         try:
-            usdc_start = clob.usdc_balance()
-            log.info("session start USDC balance: $%.2f (day-stop baseline)", usdc_start)
+            bal_now = clob.usdc_balance()
+            day_key = time.strftime("%Y-%m-%d", time.gmtime())
+            base_file = "live/day_baseline.json"
+            stored = {}
+            try:
+                stored = json.load(open(base_file, encoding="utf-8"))
+            except (OSError, ValueError):
+                pass
+            if stored.get("day") == day_key:
+                usdc_start = float(stored["usdc_start"])      # F11: restart keeps the day's baseline
+                log.info("day baseline restored: $%.2f (today's stop survives restarts)", usdc_start)
+            else:
+                usdc_start = bal_now
+                json.dump({"day": day_key, "usdc_start": usdc_start}, open(base_file, "w", encoding="utf-8"))
+                log.info("day baseline set: $%.2f", usdc_start)
         except Exception as e:
             log.error("cannot read starting balance (%s) - refusing to run blind", e)
             return
     desired: dict[tuple, dict] = {}       # (strategy, token) -> latest intent
     resting: dict[tuple, dict] = {}       # (strategy, token, side) -> {id, price, size}
     pos: dict[str, dict] = {}             # token -> authoritative position (data-api)
-    exposure_cost = 0.0                    # $ cost of all open positions (G7 source)
+    exposure_cost = 0.0                    # $ cost of session positions (G7 source)
+    session_seen: set = set()              # F10: every token we EVER placed on this session
     if clob is None:
         pos.update({k: {"sh": v, "cost": v * 0.5, "value": v * 0.5}
                     for k, v in _test_positions().items()})   # log-only test injection
@@ -296,7 +310,7 @@ def main():
     halted = False
 
     def do_cancel(key, reason):
-        r = resting.pop(key, None)
+        r = resting.get(key)
         if not r:
             return True
         strat, token, side = key
@@ -304,9 +318,26 @@ def main():
             try:
                 clob.cancel(r["id"])                                   # G3 wrapped
             except Exception as e:
-                log.warning("cancel %s failed (%s) - dropped from book state", r["id"][:12], e)
+                # F7: cancel FAILED -> the order is still live. KEEP tracking it
+                # (retry next loop); after 3 failures sweep the whole book.
+                r["cancel_fails"] = r.get("cancel_fails", 0) + 1
+                log.warning("cancel %s failed #%d (%s) - order still tracked",
+                            r["id"][:12], r["cancel_fails"], e)
+                if r["cancel_fails"] >= 3:
+                    log.error("cancel failed 3x -> cancel_all sweep")
+                    try:
+                        clob.cancel_all()
+                        resting.clear()
+                    except Exception as e2:
+                        log.error("cancel_all sweep failed: %s", e2)
+                return False
         else:
             log.info("[dry] cancel %s %s %s@%.2f (%s)", strat, side, token[:10], r["price"], reason)
+        resting.pop(key, None)
+        # F9: cancelling a BUY refunds its G13 window budget (reprices no longer burn it)
+        if side == "buy" and r.get("close") is not None:
+            k = (token, r["close"])
+            window_spend[k] = max(0.0, window_spend.get(k, 0.0) - r["price"] * r["size"])
         led.order(strat, token, side, r["price"], r["size"], r["id"], f"cancel:{reason}")
         return True
 
@@ -341,7 +372,12 @@ def main():
                             it = json.loads(line)
                         except json.JSONDecodeError:
                             continue
-                        if it.get("strategy") in enabled and it.get("token"):
+                        if it.get("type") == "book" and it.get("token"):
+                            # F3: book snapshots feed G16/G17 (they carry no
+                            # "strategy", so the enabled filter was dropping them)
+                            books[it["token"]] = it
+                            pair_of.setdefault(it.get("slug", ""), {})[bool(it.get("side_up"))] = it["token"]
+                        elif it.get("strategy") in enabled and it.get("token"):
                             desired[(it["strategy"], it["token"])] = it
             except OSError:
                 pass
@@ -431,9 +467,13 @@ def main():
                 if (close_ts is None or not (close_ts - 45 <= now < close_ts - CLOSE_EARLY_S)
                         or held < MIN_SHARES or (token, close_ts) in dumped):
                     continue
-                ref = it.get("bid") or it.get("ask") or 0.5
-                px = round(max(0.02, min(0.98, round(ref / TICK) * TICK - 2 * TICK)), 2)
-                do_cancel((strat, token, "sell"), "pre-dump")           # replace any resting ask
+                b = books.get(token) or {}
+                ref = b.get("bid") if (b.get("bid") and now - float(b.get("ts", 0)) < 5) else it.get("bid")
+                if not ref:
+                    continue                       # F6: no live reference -> retry next loop (no latch)
+                px = round(max(0.02, min(0.98, round(float(ref) / TICK) * TICK - 2 * TICK)), 2)
+                if not do_cancel((strat, token, "sell"), "pre-dump"):
+                    continue                       # resting ask uncancellable -> retry next loop
                 try:
                     oid = (clob.place(token, "sell", px, held, post_only=False)
                            if clob and live_orders else f"dry-dump-{int(now*1000)}")
@@ -441,8 +481,9 @@ def main():
                         log.info("[dry] DUMP %s sell %.1f sh %s @ %.2f (close-%ds)",
                                  strat, held, token[:10], px, int(close_ts - now))
                     if oid:
-                        resting[(strat, token, "sell")] = {"id": oid, "price": px, "size": held}
-                        led.order(strat, token, "sell", px, held, oid, "dump")
+                        # F6: own key - the quote reconciler must NEVER cancel a dump
+                        resting[(strat, token, "dump")] = {"id": oid, "price": px, "size": held, "close": close_ts}
+                        led.order(strat, token, "dump", px, held, oid, "dump")
                         dumped.add((token, close_ts))
                 except Exception as e:
                     log.warning("dump place failed %s: %s", token[:10], e)
@@ -453,7 +494,7 @@ def main():
                 expired = (close_ts is not None and now >= close_ts - CLOSE_EARLY_S)  # G4
                 stale = now - float(it.get("ts", 0)) > STALE_INTENT_S
                 if expired or stale:
-                    for side in ("buy", "sell"):
+                    for side in ("buy", "sell", "dump"):
                         do_cancel((strat, token, side), "window-close" if expired else "stale-intent")
                     del desired[(strat, token)]
                     continue
@@ -478,8 +519,10 @@ def main():
                     if want_px is not None and side == "buy":          # G13 per-token/window spend cap
                         if window_spend.get((token, close_ts), 0.0) + want_px * want_sh > 3 * cap_ord:
                             want_px = None
-                    if want_px is not None and rejected_px.get((strat, token, side)) == want_px:
-                        continue                                       # G14: do not respam a post-only-rejected px
+                    if want_px is not None:
+                        rj = rejected_px.get((strat, token, side))
+                        if rj and rj[0] == want_px and now - rj[1] < 10.0:
+                            continue                # G14/F12: same px cooldown 10s, then retry
                     if want_px is not None and side == "sell" and clob:  # G6 holdings only
                         held_p = pos.get(token)
                         held = held_p["sh"] if isinstance(held_p, dict) else 0.0
@@ -497,7 +540,9 @@ def main():
                     if have and abs(have["price"] - want_px) < TICK / 2:
                         continue                                       # sub-tick: leave it alone
                     if have:
-                        do_cancel(key, "reprice")
+                        if not do_cancel(key, "reprice"):
+                            actions += 1
+                            continue                   # F7: old order still live - do NOT double up
                         actions += 1
                     try:                                               # G3 wrapped placement
                         oid = (clob.place(token, side, want_px, want_sh)
@@ -505,10 +550,11 @@ def main():
                         if not (clob and live_orders):
                             log.info("[dry] place %s %s %.1f sh %s @ %.2f", strat, side, want_sh, token[:10], want_px)
                         if oid:
-                            resting[key] = {"id": oid, "price": want_px, "size": want_sh}
+                            resting[key] = {"id": oid, "price": want_px, "size": want_sh, "close": close_ts}
                             led.order(strat, token, side, want_px, want_sh, oid, "place")
                             rejected_px.pop((strat, token, side), None)
                             if side == "buy":
+                                session_seen.add(token)
                                 window_spend[(token, close_ts)] = window_spend.get((token, close_ts), 0.0) + want_px * want_sh
                         elif clob and live_orders:
                             log.error("FAIL-CLOSED: order accepted but no order id in response -> cancel_all + halt")
@@ -516,7 +562,7 @@ def main():
                             return
                     except Exception as e:
                         if "post-only" in str(e) or "crosses book" in str(e):
-                            rejected_px[(strat, token, side)] = want_px    # G14: wait for a new px
+                            rejected_px[(strat, token, side)] = (want_px, now)   # F12: timed
                         else:
                             log.warning("place %s %s@%.2f failed: %s", side, token[:10], want_px, e)
                     actions += 1
@@ -527,12 +573,12 @@ def main():
                 last_fills = now
                 try:
                     pos = clob.positions()
-                    session_tokens = {tok for (_s, tok) in desired}
-                    exposure_cost = sum(p["cost"] for t, p in pos.items() if t in session_tokens)
+                    session_seen.update(tok for (_s, tok) in desired)
+                    exposure_cost = sum(p["cost"] for t, p in pos.items() if t in session_seen)
                     usdc_now = clob.usdc_balance()
                     spent = (usdc_start - usdc_now) if usdc_start is not None else 0.0
                     log.info("STATE positions=%d (session-scope %d) exposure(cost)=$%.2f usdc=$%.2f spent=$%.2f",
-                             len(pos), len(session_tokens & set(pos)), exposure_cost, usdc_now, spent)
+                             len(pos), len(session_seen & set(pos)), exposure_cost, usdc_now, spent)
                     if spent >= cap_inv_total + stop:                  # G8: cash out beyond caps = halt
                         log.error("DAY STOP: $%.2f left the wallet (cap %.0f + stop %.0f) "
                                   "-> cancel all + HALT", spent, cap_inv_total, stop)

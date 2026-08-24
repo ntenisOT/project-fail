@@ -38,7 +38,11 @@ def main():
     open(f"{SANDBOX}/paper/intents.jsonl", "w").close()
 
     env = dict(os.environ)
-    env.pop("PAPER_LIVE_INTENTS", None)
+    # F1: the subprocess must NEVER inherit live mode or credentials - on the
+    # deploy box that would fire a REAL cancel_all/orders. Force log-only.
+    env["LIVE_EXECUTOR_MODE"] = "log-only"
+    for k in ("POLY_PRIVATE_KEY", "POLY_FUNDER", "DEPLOY_REGION", "PAPER_LIVE_INTENTS"):
+        env.pop(k, None)
     p = subprocess.Popen([sys.executable, "-m", "live.executor"], cwd=SANDBOX,
                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                          text=True, encoding="utf-8", errors="replace", env=env)
@@ -63,11 +67,14 @@ def main():
         append(intent(base_live, TOK_A, 0.612, None))       # T7 place @0.61 after reset
         time.sleep(2.5)
         open(f"{SANDBOX}/paper/KILL", "w").close()          # T8 KILL -> cancel + exit
-        p.wait(timeout=15)
+        out = p.communicate(timeout=20)[0]                  # drain pipe (no wait-deadlock)
+    except subprocess.TimeoutExpired:
+        p.kill()
+        out = p.communicate()[0]
     finally:
         if p.poll() is None:
             p.kill()
-    out = p.communicate()[0]
+            out = p.communicate()[0]
     L = out.splitlines()
 
     def n(sub):

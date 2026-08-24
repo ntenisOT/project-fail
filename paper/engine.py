@@ -129,8 +129,10 @@ class PaperWindow:
             return
         inv = self.inv_up if is_up else self.inv_dn
         q["fair"] = fair_tok
-        # bid only if we could still post a >= min_order-share order
-        q["bid"] = (max(0.01, min(0.98, fair_tok - self.spread))
+        # bid only if we could still post a >= min_order-share order.
+        # Quantize to the 0.01 tick (floor) - unpostable sub-tick prices were
+        # granting phantom precision to fills.
+        q["bid"] = (max(0.01, min(0.98, int((fair_tok - self.spread) * 100) / 100.0))
                     if self.max_inv - inv >= self.min_order else None)
         if self.live_sim and q["bid"] is not None:
             if self.win_spend[is_up] >= 15.0:                  # G13 mirror: $15/token/window
@@ -155,9 +157,13 @@ class PaperWindow:
             if self.exit_first:
                 cost = self.cost_up if is_up else self.cost_dn
                 avg = cost / inv if inv > 0 else fair_tok
-                q["ask"] = max(0.02, min(0.99, avg + self.xf_offset))
+                ask = avg + self.xf_offset
             else:
-                q["ask"] = max(0.02, min(0.99, fair_tok + self.spread))
+                ask = fair_tok + self.spread
+            ask = max(0.02, min(0.99, -int(-ask * 100) / 100.0))   # ceil to tick
+            if q["bid"] is not None and ask <= q["bid"]:
+                ask = min(0.99, round(q["bid"] + 0.01, 2))   # never a crossed self-book (F14)
+            q["ask"] = ask
         else:
             q["ask"] = None
 
@@ -196,27 +202,31 @@ class PaperWindow:
                 fill = min(self.max_inv - inv, clip, size)      # order-sized, full participation
                 q["bid_sh"] = clip - fill
                 if fill > 0:
-                    self.win_spend[is_up] += fill * price
+                    self.win_spend[is_up] += fill * q["bid"]   # F4: spend at OUR price
             else:
                 fill = min(self.max_inv - inv, self._fill_size(size, q["fair"]))
             if fill > 0:      # partial fills of a posted order are valid at any size
-                cost = fill * price * (1 + self.fee)
+                # F4: a resting bid fills AT THE BID - the sim was granting us the
+                # aggressor's (better) print price, inverting adverse selection.
+                exec_px = q["bid"]
+                cost = fill * exec_px * (1 + self.fee)
                 self.cash -= cost
                 self.deployed += cost
                 self.peak = max(self.peak, self.deployed)
                 if is_up:
                     self.inv_up += fill
-                    self.cost_up += fill * price
+                    self.cost_up += fill * exec_px
                 else:
                     self.inv_dn += fill
-                    self.cost_dn += fill * price
+                    self.cost_dn += fill * exec_px
                 self.buys += 1
-                rec = {"action": "buy", "price": price, "size": fill, "signed_cash": -cost}
+                rec = {"action": "buy", "price": exec_px, "size": fill, "signed_cash": -cost}
         elif (self.mode == "roundtrip" and (not is_sell) and q["ask"] is not None
               and price >= q["ask"] and inv > 0):                        # buy lifts our ask -> SELL
             fill = min(inv, self._fill_size(size, q["fair"]))
             if fill > 0:
-                proceeds = fill * price * (1 - self.fee)
+                exec_px = q["ask"]                       # F4: maker sell fills AT THE ASK
+                proceeds = fill * exec_px * (1 - self.fee)
                 self.cash += proceeds
                 self.deployed -= proceeds
                 if is_up:
@@ -226,7 +236,7 @@ class PaperWindow:
                     self.cost_dn *= (1 - fill / self.inv_dn) if self.inv_dn else 0.0
                     self.inv_dn -= fill
                 self.sells += 1
-                rec = {"action": "sell", "price": price, "size": fill, "signed_cash": proceeds}
+                rec = {"action": "sell", "price": exec_px, "size": fill, "signed_cash": proceeds}
 
         self._refresh(now, is_up, fair_tok)
         return rec

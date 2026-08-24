@@ -21,7 +21,7 @@ def main():
     if not pk or pk.startswith("PASTE_"):
         print("FAIL: POLY_PRIVATE_KEY not set in .env")
         sys.exit(1)
-    print(f"config: funder {funder[:6]}...{funder[-4:] if funder else ''} | signature_type {sig}")
+    print(f"config: funder {(funder[:6] + '...' + funder[-4:]) if funder else '(none/EOA)'} | signature_type {sig}")
 
     from py_clob_client_v2 import ClobClient
     proxy_kw = {"signature_type": sig, "funder": funder} if funder else {}

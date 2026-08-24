@@ -233,23 +233,32 @@ async def window_task():
             rolled = ref is not None and now >= ref.end
             if rolled and not ref.settled:
                 endtw = S.twap[a].at(ref.end) or S.twap[a].now()
-                outcome = 1 if (endtw is not None and S.wref[a]["twap"] and endtw >= S.wref[a]["twap"]) else 0
-                for n in NAMES:
-                    w = S.win[n].get(a)
-                    if w and not w.settled:
-                        w.settled = True
-                        S.ledger.record_settlement(now, n, a, w.slug, w.settle(outcome))
-                lk = S.lock.get(a)
-                if lk and lk["n"] > 0:
-                    S.ledger.record_settlement(now, "lock_arb", a, lk["slug"],
-                        {"cash": lk["profit"], "residual": 0.0, "pnl": lk["profit"], "capital": lk["peak"],
-                         "buys": lk["n"], "sells": lk["n"], "resid_shares": 0.0, "n_fills": lk["n"], "outcome_up": outcome})
-                sp = S.split.get(a)
-                if sp and sp["n"] > 0:
-                    S.ledger.record_settlement(now, "split_sell", a, sp["slug"],
-                        {"cash": sp["profit"], "residual": 0.0, "pnl": sp["profit"], "capital": sp["peak"],
-                         "buys": sp["n"], "sells": sp["n"], "resid_shares": 0.0, "n_fills": sp["n"], "outcome_up": outcome})
-                log.info("settled %s %s outcome=%d", a, ref.slug, outcome)
+                if endtw is None or not S.wref[a]["twap"]:
+                    # F2: refs missing (feed gap) -> outcome UNKNOWABLE. Mark settled
+                    # WITHOUT recording rather than fabricating DOWN for 45 arms.
+                    log.warning("settle SKIPPED %s %s: missing TWAP refs (feed gap)", a, ref.slug)
+                    for n in NAMES:
+                        w = S.win[n].get(a)
+                        if w and not w.settled:
+                            w.settled = True
+                else:
+                    outcome = 1 if endtw >= S.wref[a]["twap"] else 0
+                    for n in NAMES:
+                        w = S.win[n].get(a)
+                        if w and not w.settled:
+                            w.settled = True
+                            S.ledger.record_settlement(now, n, a, w.slug, w.settle(outcome))
+                    lk = S.lock.get(a)
+                    if lk and lk["n"] > 0:
+                        S.ledger.record_settlement(now, "lock_arb", a, lk["slug"],
+                            {"cash": lk["profit"], "residual": 0.0, "pnl": lk["profit"], "capital": lk["peak"],
+                             "buys": lk["n"], "sells": lk["n"], "resid_shares": 0.0, "n_fills": lk["n"], "outcome_up": outcome})
+                    sp = S.split.get(a)
+                    if sp and sp["n"] > 0:
+                        S.ledger.record_settlement(now, "split_sell", a, sp["slug"],
+                            {"cash": sp["profit"], "residual": 0.0, "pnl": sp["profit"], "capital": sp["peak"],
+                             "buys": sp["n"], "sells": sp["n"], "resid_shares": 0.0, "n_fills": sp["n"], "outcome_up": outcome})
+                    log.info("settled %s %s outcome=%d", a, ref.slug, outcome)
             if ref is None or rolled:
                 ids = await loop.run_in_executor(None, gamma_tokens, prefix, base)
                 if ids:
@@ -257,7 +266,7 @@ async def window_task():
                     S.wref[a] = {"twap": S.twap[a].at(base), "binance": S.binance.get(a), "deribit": S.deribit.get(a)}
                     for s in STRATEGIES:
                         w = PaperWindow(a, slug, base, s["spread"], s.get("f", F), s.get("maxinv", MAXINV),
-                                        MINSIG if s["signal"] not in ("mid", "pair") else -1.0,
+                                        MINSIG if s["signal"] not in ("mid", "pair", "pair_hl") else -1.0,
                                         mode=s["mode"], size_mode=s["size_mode"], requote=REQUOTE,
                                         exit_first=s.get("xf", False), pair_balance=s.get("pair_balance", False),
                                         late_floor=s.get("late_floor", False), live_sim=s.get("live_sim", False))
@@ -272,6 +281,10 @@ async def window_task():
                 toks.add(w.up_tok); toks.add(w.down_tok)
         S.tok_map = tok_map
         if toks != S.tokens:
+            for dead in S.tokens - toks:         # F13: evict dead tokens' cached state
+                S.best_ask.pop(dead, None)
+                S.best_bid.pop(dead, None)
+                S.last_price.pop(dead, None)
             S.tokens = toks; S.tokens_changed.set()
         await asyncio.sleep(5)
 
@@ -280,9 +293,15 @@ def check_split(a):
     sp = S.split.get(a)
     if not sp:
         return
+    w = S.win[NAMES[0]].get(a)
+    if w is None or w.settled:
+        return                                   # F5: no post-settlement accrual
     bu, bd = S.best_bid.get(sp["up"]), S.best_bid.get(sp["dn"])
     if bu is None or bd is None:
         return
+    if sp.get("last_state") == (bu, bd):
+        return                                   # F5: same resting book -> one capture only
+    sp["last_state"] = (bu, bd)
     s = bu + bd
     # mint $1 -> SELL both sides at the bids = taker on both legs
     fee = TAKER_RATE * (bu * (1 - bu) + bd * (1 - bd))
@@ -299,9 +318,15 @@ def check_lock(a):
     lk = S.lock.get(a)
     if not lk:
         return
+    w = S.win[NAMES[0]].get(a)
+    if w is None or w.settled:
+        return                                   # F5: no post-settlement accrual
     ua, da = S.best_ask.get(lk["up"]), S.best_ask.get(lk["dn"])
     if ua is None or da is None:
         return
+    if lk.get("last_state") == (ua, da):
+        return                                   # F5: same resting book -> one capture only
+    lk["last_state"] = (ua, da)
     s = ua + da
     # both legs lift the ask = TAKER: fee = 0.07*p*(1-p) per share on each leg
     fee = TAKER_RATE * (ua * (1 - ua) + da * (1 - da))
@@ -323,8 +348,12 @@ def handle_event(it):
         bids = it.get("bids") or []
         if asks:
             S.best_ask[tok] = min(float(x["price"]) for x in asks)
+        else:
+            S.best_ask.pop(tok, None)            # F13: side pulled -> level gone
         if bids:
             S.best_bid[tok] = max(float(x["price"]) for x in bids)
+        else:
+            S.best_bid.pop(tok, None)
         info = S.tok_map.get(tok)
         if info and (asks or bids):
             check_lock(info[0])
@@ -394,11 +423,11 @@ async def market_task():
     while True:
         if not S.tokens:
             await asyncio.sleep(1); continue
+        S.tokens_changed.clear()                 # F15: clear FIRST; a roll mid-handshake re-sets it
         toks = list(S.tokens)
         try:
             async with websockets.connect(MKT_WS, ping_interval=None, open_timeout=12) as ws:
                 await ws.send(json.dumps({"assets_ids": toks, "type": "market"}))
-                S.tokens_changed.clear()
                 while not S.tokens_changed.is_set():
                     try:
                         d = json.loads(await asyncio.wait_for(ws.recv(), timeout=20))

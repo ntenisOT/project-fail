@@ -95,6 +95,14 @@ STRATEGIES = [
     # PARITY RULE: an arm goes live only when its lv_ twin is green in paper.
     {"name": "lv_neutral",  "mode": "roundtrip", "signal": "mid",     "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "live_sim": True},
     {"name": "lv_pair",     "mode": "roundtrip", "signal": "pair",    "confirm": [],                    "spread": 0.02, "size_mode": "fixed", "pair_balance": True, "xf": True, "live_sim": True},
+    # fq_*: FAST-PIPELINE twins of the live candidates - identical live mechanics
+    # but requote 0.15s instead of 1.0s (probe-measured in-process ws->order
+    # latency). The maker-side counterpart of lock_fast/split_fast: measures
+    # what the executor rebuild would buy the quoting arms.
+    {"name": "fq_twap_con", "mode": "roundtrip", "signal": "twap",    "confirm": ["binance", "deribit"],"spread": 0.03, "size_mode": "fixed", "live_sim": True, "requote": 0.15},
+    {"name": "fq_neutral",  "mode": "roundtrip", "signal": "mid",     "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "live_sim": True, "requote": 0.15},
+    {"name": "fq_pair",     "mode": "roundtrip", "signal": "pair",    "confirm": [],                    "spread": 0.02, "size_mode": "fixed", "pair_balance": True, "xf": True, "live_sim": True, "requote": 0.15},
+    {"name": "fq_hl_pair",  "mode": "roundtrip", "signal": "pair_hl", "confirm": [],                    "spread": 0.02, "size_mode": "fixed", "pair_balance": True, "xf": True, "live_sim": True, "requote": 0.15},
     {"name": "lv_ta_pair",  "mode": "roundtrip", "signal": "pair",    "confirm": [],                    "spread": 0.02, "size_mode": "fixed", "pair_balance": True, "xf": True, "late_floor": True, "live_sim": True},
     # pair_mm: trades the SUM, not the direction (the measured winner style).
     # fair(token) = 1 - last price of the OTHER side  =>  bid fills only when
@@ -275,7 +283,7 @@ async def window_task():
                     for s in STRATEGIES:
                         w = PaperWindow(a, slug, base, s["spread"], s.get("f", F), s.get("maxinv", MAXINV),
                                         MINSIG if s["signal"] not in ("mid", "pair", "pair_hl") else -1.0,
-                                        mode=s["mode"], size_mode=s["size_mode"], requote=REQUOTE,
+                                        mode=s["mode"], size_mode=s["size_mode"], requote=s.get("requote", REQUOTE),
                                         exit_first=s.get("xf", False), pair_balance=s.get("pair_balance", False),
                                         late_floor=s.get("late_floor", False), live_sim=s.get("live_sim", False))
                         w.up_tok, w.down_tok = ids[0], ids[1]

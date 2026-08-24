@@ -245,15 +245,23 @@ class Lockbot:
                 log.warning("LEGGED %s: %s sh too small to unwind - held to settle (max $1)",
                             asset, naked_sh)
                 return
-            try:
-                await asyncio.to_thread(self.clob.place, naked_tok, "sell", px,
-                                        naked_sh, False, True)
-                self.rec(asset, slug, au, ad, naked_sh, net, "legged-unwound")
-                log.warning("LEGGED %s: unwound %.1f sh @ %.2f (event %d/%d)",
-                            asset, naked_sh, px, self.legged_today, MAX_LEGGED_PER_DAY)
-            except Exception as e:
-                self.rec(asset, slug, au, ad, naked_sh, net, "legged-STUCK")
-                log.error("LEGGED %s: unwind FAILED (%s) - shares stuck, will settle", asset, e)
+            last_err = None
+            for attempt in range(4):
+                if attempt:                          # fill->sellable lag measured live
+                    await asyncio.sleep(2.0 * attempt)   # 2s, 4s, 6s backoff
+                try:
+                    await asyncio.to_thread(self.clob.place, naked_tok, "sell", px,
+                                            naked_sh, False, True)
+                    self.rec(asset, slug, au, ad, naked_sh, net, "legged-unwound")
+                    log.warning("LEGGED %s: unwound %d sh @ %.2f on attempt %d (event %d/%d)",
+                                asset, naked_sh, px, attempt + 1,
+                                self.legged_today, MAX_LEGGED_PER_DAY)
+                    return
+                except Exception as e:
+                    last_err = e
+            self.rec(asset, slug, au, ad, naked_sh, net, "legged-STUCK")
+            log.error("LEGGED %s: unwind FAILED 4x (%s) - shares stuck, will settle",
+                      asset, last_err)
         else:
             self.rec(asset, slug, au, ad, 0.0, net, "missed-both")
 

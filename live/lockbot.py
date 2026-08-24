@@ -58,7 +58,8 @@ CAP_LEG = float(os.environ.get("LOCKBOT_CAP_LEG", "5.0"))       # $ per leg
 CAP_WINDOW = float(os.environ.get("LOCKBOT_CAP_WINDOW", "15.0"))  # $ per window
 CAP_DAY = float(os.environ.get("LOCKBOT_CAP_DAY", "60.0"))        # $ per day
 MIN_SHARES = 5.0
-FRESH_S = 2.0
+FRESH_S = 0.4       # both asks this fresh or no fire (stale side = adverse fill)
+PERSIST_S = 0.15    # state must SURVIVE this long - ghosts/mid-sweep states filter out
 COOLDOWN_S = 2.0
 MAX_LEGGED_PER_DAY = 3
 
@@ -110,6 +111,7 @@ class Lockbot:
         self.day_key = time.strftime("%Y-%m-%d", time.gmtime())
         self.legged_today = 0
         self.cooldown: dict[str, tuple] = {}    # asset -> (state, ts)
+        self.pend: dict[str, tuple] = {}        # asset -> (state, first-seen ts)
 
     def rec(self, asset, slug, up_px, dn_px, sh, net, result):
         try:
@@ -189,9 +191,19 @@ class Lockbot:
         au, ad = bu.ask, bd.ask
         fee = TAKER_RATE * (au * (1 - au) + ad * (1 - ad))
         net = 1.0 - (au + ad) - fee
-        if net <= MARGIN:
-            return
         state = (au, ad)
+        if net <= MARGIN:
+            self.pend.pop(asset, None)
+            return
+        # persistence gate (mirrors paper lock_fast): the 2 live legged events
+        # both fired on a mid-sweep state - the moving side's ask was gone by
+        # arrival. A state that survives 150ms is one we can actually complete.
+        pend = self.pend.get(asset)
+        if not pend or pend[0] != state:
+            self.pend[asset] = (state, now)
+            return
+        if now - pend[1] < PERSIST_S:
+            return
         cd = self.cooldown.get(asset)
         if cd and cd[0] == state and now - cd[1] < COOLDOWN_S:       # L8
             return

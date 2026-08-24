@@ -23,26 +23,24 @@ def main():
         sys.exit(1)
     print(f"config: funder {funder[:6]}...{funder[-4:] if funder else ''} | signature_type {sig}")
 
-    from py_clob_client.client import ClobClient
-    kw = {"key": pk, "chain_id": 137}
-    if funder:
-        kw.update({"signature_type": sig, "funder": funder})
+    from py_clob_client_v2 import ClobClient
+    proxy_kw = {"signature_type": sig, "funder": funder} if funder else {}
     try:
-        c = ClobClient(HOST, **kw)
+        c = ClobClient(HOST, 137, key=pk, **proxy_kw)
         addr = c.get_address()
         print(f"1) key loads, signer address derived: {addr[:6]}...{addr[-4:]}  OK")
     except Exception as e:
         print(f"1) FAIL constructing client: {e.__class__.__name__}: {e}")
         sys.exit(1)
     try:
-        creds = c.create_or_derive_api_creds()
-        c.set_api_creds(creds)
-        print("2) CLOB API credentials derived + accepted  OK")
+        creds = c.create_or_derive_api_key()
+        c = ClobClient(HOST, 137, key=pk, creds=creds, **proxy_kw)
+        print("2) CLOB v2 API credentials derived + accepted  OK")
     except Exception as e:
         print(f"2) FAIL deriving API creds: {e.__class__.__name__}: {e}")
         sys.exit(1)
     try:
-        from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
+        from py_clob_client_v2 import BalanceAllowanceParams, AssetType
         bal = c.get_balance_allowance(BalanceAllowanceParams(asset_type=AssetType.COLLATERAL))
         usdc = float(bal.get("balance", 0)) / 1e6
         allow = bal.get("allowance")
@@ -53,8 +51,7 @@ def main():
     except Exception as e:
         print(f"3) WARN balance/allowance read: {e.__class__.__name__}: {e}")
     try:
-        from py_clob_client.clob_types import OpenOrderParams
-        oo = c.get_orders(OpenOrderParams())
+        oo = c.get_orders()
         print(f"4) open-orders endpoint (L2 auth): {len(oo or [])} resting orders  OK")
     except Exception as e:
         print(f"4) WARN open orders: {e.__class__.__name__}: {e}")

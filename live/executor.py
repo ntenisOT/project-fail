@@ -126,39 +126,44 @@ class Ledger:
 
 
 class Clob:
-    """Thin wrapper; only constructed in place mode. All calls raise -> callers wrap."""
+    """Thin wrapper over py_clob_client_v2 (CLOB v2 order format - the old
+    py_clob_client is archived; its orders get 'invalid order version').
+    Construction mirrors project-magic's proven two-stage pattern: L1 client
+    (key only) derives API creds, then the signed client gets key+creds
+    (+proxy funder). Only constructed in place mode."""
     def __init__(self):
-        from py_clob_client.client import ClobClient
+        from py_clob_client_v2 import ClobClient
         key = os.environ["POLY_PRIVATE_KEY"]
         funder = os.environ.get("POLY_FUNDER") or None
         sig = int(os.environ.get("POLY_SIGNATURE_TYPE", "2"))
-        kw = {"key": key, "chain_id": 137}
-        if funder:
-            kw.update({"signature_type": sig, "funder": funder})
-        self.c = ClobClient(HOST, **kw)
-        self.c.set_api_creds(self.c.create_or_derive_api_creds())
+        proxy_kw = {"signature_type": sig, "funder": funder} if funder else {}
+        l1 = ClobClient(HOST, 137, key=key, **proxy_kw)
+        creds = l1.create_or_derive_api_key()
+        self.c = ClobClient(HOST, 137, key=key, creds=creds, **proxy_kw)
         self.addr = (self.c.get_address() or "").lower()
-        log.info("CLOB client ready (addr %s...%s)", self.addr[:6], self.addr[-4:])
+        log.info("CLOB v2 client ready (addr %s...%s)", self.addr[:6], self.addr[-4:])
 
-    def place(self, token, side, price, size):
-        from py_clob_client.clob_types import OrderArgs, OrderType
-        from py_clob_client.order_builder.constants import BUY, SELL
-        args = OrderArgs(price=round(price, 2), size=round(size, 1),
-                         side=BUY if side == "buy" else SELL, token_id=token)
-        r = self.c.post_order(self.c.create_order(args), OrderType.GTC)
+    def place(self, token, side, price, size, post_only=True):
+        """post_only=True: exchange REJECTS would-cross orders instead of taking,
+        guaranteeing maker-only resting quotes (matches the paper model).
+        Dumps pass post_only=False - they are meant to cross."""
+        from py_clob_client_v2 import OrderArgs, OrderType
+        args = OrderArgs(token_id=token, price=round(price, 2), size=round(size, 1),
+                         side="BUY" if side == "buy" else "SELL")
+        r = self.c.post_order(self.c.create_order(args), OrderType.GTC, post_only=post_only)
         if isinstance(r, dict) and not r.get("success", True):
             raise RuntimeError(f"post_order rejected: {r.get('errorMsg', r)}")
-        return (r or {}).get("orderID")
+        return (r or {}).get("orderID") or (r or {}).get("order_id")
 
     def cancel(self, oid):
-        self.c.cancel(oid)
+        fn = getattr(self.c, "cancel", None) or getattr(self.c, "cancel_order")
+        fn(oid)
 
     def cancel_all(self):
         self.c.cancel_all()
 
     def trades(self):
-        from py_clob_client.clob_types import TradeParams
-        return self.c.get_trades(TradeParams(maker_address=self.addr)) or []
+        return self.c.get_trades() or []
 
     def my_side(self, t: dict) -> str:
         """Trade rows report the TAKER side; flip it when we were the maker."""
@@ -276,7 +281,7 @@ def main():
                 px = round(max(0.02, min(0.98, round(ref / TICK) * TICK - 2 * TICK)), 2)
                 do_cancel((strat, token, "sell"), "pre-dump")           # replace any resting ask
                 try:
-                    oid = clob.place(token, "sell", px, held) if clob else f"dry-dump-{int(now*1000)}"
+                    oid = clob.place(token, "sell", px, held, post_only=False) if clob else f"dry-dump-{int(now*1000)}"
                     if not clob:
                         log.info("[dry] DUMP %s sell %.1f sh %s @ %.2f (close-%ds)",
                                  strat, held, token[:10], px, int(close_ts - now))

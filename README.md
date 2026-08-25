@@ -142,9 +142,10 @@ per UTC day** (`live/day_baseline.json` — trips on any wallet drift it didn't
 cause, incl. manual trading on the same wallet), action budget, KILL, rotation-
 safe reader, close-dump, placement-time spend cap with cancel refunds, post-only
 throttle (10 s cooldown), ledger tripwire, pair-recycler + lock-taker (dormant).
-Enabled strategies: `paper/live.json`. A fresh legacy quote-intent probe measured
-546 ms median / 928 ms p90 before REST. That delay came from the one-second file
-poll; the focused paper runner neither emits intents nor starts this executor.
+The tracked `paper/live.json` enables no strategies. A fresh legacy quote-intent
+probe measured 546 ms median / 928 ms p90 before REST. That delay came from the
+one-second file poll; the focused paper runner neither emits intents nor starts
+this executor.
 
 ### `live/mintbot.py` — experimental mintbot (in-process; shadow only)
 Per window per asset: `splitPosition` mints $20 of sets in the first 60 s →

@@ -121,7 +121,9 @@ fresh Ireland GET p90 as a conservative cancel/replace proxy. Existing orders ca
 still fill while a delayed cancellation is in flight, and stale post-only
 replacements are rejected. Once one token fills, its exact open-leg price caps
 or floors the opposite-token quote; the reported pair sums are FIFO-matched
-fills rather than same-time quote sums.
+fills rather than same-time quote sums. Any market-WebSocket disconnect
+invalidates the active window because missed trades cannot be reconstructed;
+heartbeats report rolling server-event p50/p90/max lag and reconnect count.
 
 This is substantially less optimistic than the retired print-skimming model,
 but still cannot model private cancellations ahead of us, exchange order
@@ -244,6 +246,7 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 20 | 08-25 03:xx | bound WebSocket close handshakes to 100 ms and remove mintbot's empty-token one-second poll |
 | 21 | 08-25 03:xx | replace rejected asymmetric-stop mint paper arm with one-leg cycle completion; bound transient WebSocket retry from 100 ms |
 | 22 | 08-25 04:xx | retire outcome-dependent carry; compare mint-cycle tail against 40-second depth-and-fee taker cleanup |
+| 23 | 08-25 04:xx | invalidate reconnect-tainted windows; increase burst queue to 64 frames and measure server-event lag directly |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

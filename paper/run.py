@@ -13,6 +13,7 @@ import time
 
 import websockets
 
+from live.feed_health import FeedHealth
 from paper import envload, report
 from paper.ledger import Ledger
 from paper.market_metadata import ActiveMarket, fetch_active_market
@@ -73,6 +74,7 @@ class State:
         self.notify = notifier()
         self.events: collections.Counter[str] = collections.Counter()
         self.resolution_errors: collections.Counter[str] = collections.Counter()
+        self.feed_health = FeedHealth()
 
 
 S = State()
@@ -184,6 +186,7 @@ def handle_event(event: dict[str, object]) -> None:
     event_type = str(event.get("event_type") or "?")
     S.events[event_type] += 1
     now = time.time()
+    S.feed_health.observe(event, now)
     S.books.apply(event, now)
     if event_type != "last_trade_price":
         return
@@ -219,6 +222,7 @@ async def market_task() -> None:
             S.books.clear()
             async with websockets.connect(
                 MKT_WS, ping_interval=None, open_timeout=12, close_timeout=0.1,
+                max_queue=64,
             ) as ws:
                 connected_at = time.monotonic()
                 await ws.send(json.dumps({"assets_ids": tokens, "type": "market"}))
@@ -245,6 +249,12 @@ async def market_task() -> None:
                         if isinstance(event, dict):
                             handle_event(event)
         except Exception as exc:
+            if connected_at is not None:
+                S.feed_health.reconnect()
+                now = time.time()
+                for windows in S.active.values():
+                    for window in windows.values():
+                        window.invalidate(now)
             if connected_at is not None and time.monotonic() - connected_at >= 5:
                 retry_delay = 0.1
             wait = retry_delay
@@ -273,8 +283,9 @@ async def heartbeat_task() -> None:
         }
         orders = sum(len(window.orders) for windows in S.active.values()
                      for window in windows.values())
-        log.info("hb | events=%s fills=%s active_orders=%d pending_resolution=%d errors=%s",
-                 dict(S.events), active, orders, len(S.pending), dict(S.resolution_errors))
+        log.info("hb | events=%s fills=%s active_orders=%d pending_resolution=%d "
+                 "feed=%s errors=%s", dict(S.events), active, orders, len(S.pending),
+                 S.feed_health.snapshot(), dict(S.resolution_errors))
 
 
 async def report_task() -> None:

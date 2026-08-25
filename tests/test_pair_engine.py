@@ -65,6 +65,16 @@ class FocusedPairTests(unittest.TestCase):
         self.assertFalse(window.full_window)
         self.assertFalse(window.orders)
 
+    def test_feed_gap_invalidates_window_and_closes_orders(self) -> None:
+        window = PairWindow(PairConfig("carry", "accumulate", 0.01, 0),
+                            "btc", "btc-updown-5m-0", 0, "up", "down", 0)
+        window.on_books(1.0, book(0.48, 0, 0.52, 5), book(0.49, 0, 0.51, 5))
+        self.assertTrue(window.orders)
+        window.invalidate(2.0)
+        self.assertFalse(window.full_window)
+        self.assertFalse(window.orders)
+        self.assertIsNone(window.on_trade(2.1, True, 0.48, 5, "SELL"))
+
     def test_entry_cutoff_cancels_balanced_quotes_but_completes_an_open_leg(self) -> None:
         config = PairConfig("cutoff", "accumulate", 0.01, 0, new_pair_cutoff_s=240)
         up, down = book(0.48, 0, 0.52, 5), book(0.49, 0, 0.51, 5)

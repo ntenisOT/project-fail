@@ -46,6 +46,8 @@ generation demonstrates all of the following:
 - Unmatched inventory and tail losses remain inside explicit caps.
 - Delayed actions revalidate current holdings; negative simulated inventory
   invalidates the generation instead of manufacturing short sales.
+- Any market-feed reconnect invalidates the active window; rolling server-event
+  lag must remain bounded rather than hiding a slow consumer behind buffering.
 - Queue-ahead consumption, quote residence, post/cancel rate, and fill rate are
   credible rather than print-skimming assumptions.
 - One-tick price improvement increases completed cycles and neutral PnL versus

@@ -393,6 +393,13 @@ class PairWindow:
         return {"action": order_side, "price": order.price, "size": fill,
                 "signed_cash": signed_cash, "outcome_up": int(side_up)}
 
+    def invalidate(self, now: float) -> None:
+        """Stop scoring after a feed gap that can hide queue-consuming trades."""
+        self.full_window = False
+        self.pending = None
+        for key in list(self.orders):
+            self._close_order(key, now, cancelled=True)
+
     def settle(self, now: float, outcome_up: int) -> tuple[dict[str, float | int], dict[str, float]]:
         self.pending = None
         for key in list(self.orders):

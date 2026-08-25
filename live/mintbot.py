@@ -39,6 +39,7 @@ import time
 import urllib.request
 
 from live.market_book import BestAskCache
+from live.feed_health import FeedHealth
 from live.mint_quotes import Quote, guarded_pair_prices, plan_pair_quotes, should_reprice
 from paper import envload
 
@@ -135,6 +136,7 @@ class Mintbot:
         self.quote_counts = collections.Counter()
         self.last_feed_log = 0.0
         self.market_feed_at = 0.0
+        self.feed_health = FeedHealth()
 
     def spawn(self, coro):
         t = asyncio.create_task(coro)
@@ -409,7 +411,8 @@ class Mintbot:
                 self.books.clear()
                 async with websockets.connect(MKT_WS, ping_interval=None,
                                               open_timeout=12,
-                                              close_timeout=0.1) as ws:
+                                              close_timeout=0.1,
+                                              max_queue=64) as ws:
                     connected_at = time.monotonic()
                     await ws.send(json.dumps({"assets_ids": toks, "type": "market"}))
                     last_ping = time.monotonic()
@@ -434,6 +437,7 @@ class Mintbot:
                         self.market_feed_at = received_at
                         for it in items if isinstance(items, list) else [items]:
                             if isinstance(it, dict):
+                                self.feed_health.observe(it, received_at)
                                 self.feed_counts[str(it.get("event_type", "?"))] += 1
                                 self.books.apply(it, received_at)
                         if time.monotonic() - self.last_feed_log >= 60:
@@ -446,12 +450,15 @@ class Mintbot:
                                 key: value for key, value in self.quote_counts.items()
                                 if not key.startswith("rest_")
                             }
-                            log.info("feed events=%s quotes=%s residence=%.1fs under15=%.0f%%",
-                                     dict(self.feed_counts), quote_events, rest_s, under_pct)
+                            log.info("feed events=%s lag=%s quotes=%s residence=%.1fs "
+                                     "under15=%.0f%%", dict(self.feed_counts),
+                                     self.feed_health.snapshot(), quote_events, rest_s,
+                                     under_pct)
                             self.last_feed_log = time.monotonic()
             except SystemExit:
                 raise
             except Exception as e:
+                self.feed_health.reconnect()
                 if connected_at is not None and time.monotonic() - connected_at >= 5:
                     retry_delay = 0.1
                 wait = retry_delay

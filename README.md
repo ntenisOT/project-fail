@@ -378,7 +378,7 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 56 | 08-25 12:17 | first corrected-minimum cohort: two profitable sell pairs were overwhelmed by one unmatched five-share winning liability; hedge encountered both depth and price blocks |
 | 57 | 08-25 12:33 | measurement-only reset: retain all parameters and record the best executable fee-inclusive repair sum after the hedge timer |
 | 58 | 08-25 12:54 | retain the board; attribute stale and delayed events only when their exchange timestamp overlaps an actual order, pending action, or unpaired leg |
-| 59 | 08-25 13:xx | retire the repeatedly unproductive Basket98 arm; compare one-pair versus four-pair mint churn and enforce market share minimums on maker posts |
+| 59 | 08-25 13:11 | retire the repeatedly unproductive Basket98 arm; compare one-pair versus four-pair mint churn and enforce market share minimums on maker posts |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

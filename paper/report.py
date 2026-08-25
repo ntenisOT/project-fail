@@ -15,6 +15,8 @@ class Snapshot:
     trades: int
     volume: float
     pnl: float
+    pair_edge: float
+    unpaired_pnl: float
     win_rate: float
     bankroll: float
     roc: float
@@ -77,8 +79,13 @@ def snapshot_one(db: sqlite3.Connection, strategy: str) -> Snapshot:
     ).fetchone()[0])
     bankroll = _bankroll([(float(row[0]), str(row[1]), float(row[3])) for row in rows])
     closed = metrics.get("closed_orders", 0.0)
+    pair_edge = (metrics.get("buy_pair_shares", 0.0)
+                 - metrics.get("buy_pair_cost", 0.0)
+                 + metrics.get("sell_pair_proceeds", 0.0)
+                 - metrics.get("sell_pair_shares", 0.0))
     return Snapshot(
         strategy=strategy, windows=windows, trades=trades, volume=volume, pnl=pnl,
+        pair_edge=pair_edge, unpaired_pnl=pnl - pair_edge,
         win_rate=sum(float(row[2]) > 0 for row in rows) / windows if windows else 0.0,
         bankroll=bankroll, roc=pnl / bankroll if bankroll else 0.0,
         buy_sum=_sum_or_none(metrics.get("buy_pair_cost", 0.0),
@@ -113,7 +120,8 @@ def text(db_path: str = "paper/paper.db") -> str:
     last = float(db.execute("SELECT COALESCE(max(ts),0) FROM settlements").fetchone()[0])
     out = [
         f"FOCUSED PAIR PAPER | official outcomes | last settle {time.strftime('%H:%M:%S', time.gmtime(last))} UTC",
-        f"{'strategy':<14}{'wnd':>5}{'trd':>6}{'vol$':>8}{'win%':>6}{'pnl$':>9}{'bank$':>8}"
+        f"{'strategy':<14}{'wnd':>5}{'trd':>6}{'vol$':>8}{'win%':>6}{'pnl$':>9}"
+        f"{'edge$':>8}{'dir$':>8}{'bank$':>8}"
         f"{'ROC':>7}{'buySum':>8}{'sellSum':>9}{'unmat':>7}{'post/w':>8}{'rest':>7}"
         f"{'qAhead':>8}{'act':>8}{'reject':>8}",
     ]
@@ -121,7 +129,8 @@ def text(db_path: str = "paper/paper.db") -> str:
         out.append(
             f"{row.strategy:<14}{row.windows:>5}{row.trades:>6}"
             f"{row.volume:>8.0f}{row.win_rate*100:>5.0f}%"
-            f"{row.pnl:>+9.2f}{row.bankroll:>8.1f}"
+            f"{row.pnl:>+9.2f}{row.pair_edge:>+8.2f}{row.unpaired_pnl:>+8.2f}"
+            f"{row.bankroll:>8.1f}"
             f"{row.roc*100:>+6.1f}%{_format_sum(row.buy_sum):>8}"
             f"{_format_sum(row.sell_sum):>9}{row.unmatched:>7.1f}"
             f"{row.posts_per_window:>8.1f}{row.rest_seconds:>6.1f}s"
@@ -130,6 +139,7 @@ def text(db_path: str = "paper/paper.db") -> str:
         )
     out.extend((
         "buySum/sellSum are FIFO-matched opposite-token fills; unmat is end inventory.",
+        "edge is hedged pair economics; dir is PnL left after edge (inventory/outcome).",
         "Queue-ahead depth is consumed before a maker fill; rebates are excluded.",
         "act is measured simulated action activation; reject is stale post-only prevention.",
     ))

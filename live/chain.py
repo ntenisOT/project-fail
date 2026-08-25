@@ -1,9 +1,9 @@
 """Minimal Polygon chain access for the minter: raw JSON-RPC + eth_account
 (already a py_clob_client_v2 dependency) - no web3.py needed.
 
-Safety model: every state-changing call runs eth_estimateGas FIRST - a wrong
-encoding or failing condition reverts there, gas-free, before any money moves.
-The setup script only ever uses $1-$2 amounts until the round-trip proves out.
+Safety model: every enabled state-changing call runs eth_estimateGas first.
+Direct split/merge is disabled because CLOB V2 requires a verified collateral-
+adapter route; no fallback broadcasts the legacy transaction shape.
 """
 from __future__ import annotations
 
@@ -36,11 +36,12 @@ RPCS = ([os.environ["POLYGON_RPC_URL"]] if os.environ.get("POLYGON_RPC_URL") els
     "https://1rpc.io/matic",
 ]
 
-# canonical Polymarket/Polygon contracts
+# Canonical Polymarket CLOB V2 / Polygon contracts (docs, 2026-08-25).
 CTF = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045"          # ConditionalTokens
-USDC_E = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"        # bridged (collateral)
-USDC_NATIVE = "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"   # Circle-native (NOT collateral)
-CTF_EXCHANGE = "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E"  # CLOB settlement
+PUSD = "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB"          # V2 collateral
+USDC_E = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"        # onramp input, not collateral
+USDC_NATIVE = "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"
+CTF_EXCHANGE = "0xE111180000d2663C0091e4f400237545B87B996B"    # V2 CLOB settlement
 NEG_RISK_ADAPTER = "0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296"
 
 
@@ -80,7 +81,8 @@ def selector(sig: str) -> str:
 
 def encode_call(sig: str, args: list) -> str:
     """Static args + at most ONE trailing uint256[] dynamic arg."""
-    head, tail = [], []
+    head: list[str | None] = []
+    tail: list[str] = []
     types = sig[sig.index("(") + 1:-1].split(",") if sig[-2] != "(" else []
     if sum(1 for t in types if t == "uint256[]") > 1 or any(
             t not in ("address", "bytes32", "uint256", "bool", "uint256[]") for t in types):
@@ -95,7 +97,7 @@ def encode_call(sig: str, args: list) -> str:
         else:                                       # address/bytes32/uint256
             head.append(_w(a))
     off = 32 * n
-    out = []
+    out: list[str] = []
     for h in head:
         if h is None:
             out.append(_w(off))
@@ -124,7 +126,11 @@ def ctf_balance(owner: str, position_id: int) -> float:
 
 
 def position_ids(condition_id: str) -> tuple[int, int]:
-    """ERC1155 ids for outcome slots 1 and 2 (Up/Down) under USDC.e."""
+    """CLOB token IDs retain the underlying USDC.e CTF position-id basis.
+
+    CLOB V2 funds adapter operations with pUSD; this read helper does not imply
+    that direct USDC.e CTF split/merge remains a supported trading route.
+    """
     ids = []
     for index_set in (1, 2):
         coll = call(CTF, encode_call(
@@ -187,18 +193,16 @@ def send(key: str, to: str, data: str, desc: str) -> str:
 def approve(key, token, spender, amount_usd):
     return send(key, token,
                 encode_call("approve(address,uint256)", [spender, int(amount_usd * 1e6)]),
-                f"approve {amount_usd:.2f} USDC -> {spender[:10]}")
+                f"approve {amount_usd:.2f} collateral -> {spender[:10]}")
 
 
 def split(key, condition_id, amount_usd):
-    return send(key, CTF, encode_call(
-        "splitPosition(address,bytes32,bytes32,uint256[],uint256)",
-        [USDC_E, "0" * 64, condition_id, [1, 2], int(amount_usd * 1e6)]),
-        f"splitPosition ${amount_usd:.2f}")
+    raise PreflightError(
+        "CLOB V2 split disabled: port and verify CtfCollateralAdapter before broadcasting"
+    )
 
 
 def merge(key, condition_id, amount_usd):
-    return send(key, CTF, encode_call(
-        "mergePositions(address,bytes32,bytes32,uint256[],uint256)",
-        [USDC_E, "0" * 64, condition_id, [1, 2], int(amount_usd * 1e6)]),
-        f"mergePositions ${amount_usd:.2f}")
+    raise PreflightError(
+        "CLOB V2 merge disabled: port and verify CtfCollateralAdapter before broadcasting"
+    )

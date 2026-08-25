@@ -1,16 +1,15 @@
-"""Mintbot v2: the winners' mechanic, rebuilt after the 6-agent review.
+"""Experimental mint-inventory market maker; shadow-only until its edge is proven.
 Per 5m window: splitPosition mints N sets at $1.00 flat, maker asks on BOTH
-sides track fair with a JOINT-SUM FLOOR (never sell a $1 set below $1+margin),
-matched leftovers MERGE back to $1 before close. Maker fee: zero.
+sides track fair with a quoted-pair sum floor, and matched leftovers merge
+before close. The floor does not guarantee paired fills. Maker fee: zero.
 
-Run it YOURSELF:
+Run the control-plane soak:
 
     MINTBOT_MODE=shadow  python -m live.mintbot   # no chain tx, no orders
-    MINTBOT_MODE=place   python -m live.mintbot   # REAL. Needs MINTER_* in
-                                                  # .env, DEPLOY_REGION=eu-west-1,
-                                                  # and live/minter_approve run once
+    MINTBOT_MODE=place   python -m live.mintbot   # hard-refused until V2 adapter,
+                                                  # fill reconciliation, and edge pass
 
-Guards (review-hardened):
+Inactive place-path guards (place mode is additionally hard-disabled):
   M1  geo interlock (place only on eu-west-1)
   M2  KILL file -> cancel ALL asks + exit; startup sweep cancels orphans;
       a finally-block cancels asks on ANY exit path
@@ -20,16 +19,17 @@ Guards (review-hardened):
   M5  close at T-20s: cancel asks (2 attempts), re-poll positions, merge
       int(min(held)); balance-revert -> auto-redeem path, NOT a chain failure
   M6  3 INFRA merge failures -> stop minting entirely (no virtual fallback)
-  M7  preflight: exchange approval AND USDC.e allowance >= 8x MINT_USD AND
+  M7  preflight: V2 exchange approval AND pUSD allowance >= 8x MINT_USD AND
       balance >= 4x MINT_USD
-  M8  quote sanity: both books fresh <3s, px in [0.05,0.95], joint sum floor
-      px_up+px_dn >= 1.005
+  M8  quote sanity: delta-correct books fresh <3s, guarded prices, old pair
+      verified gone before batch replacement, and quoted sum >= 1.005
   M9  positions feed: a token ABSENT from the snapshot is UNKNOWN (not zero);
       closing windows are never fill-updated
 """
 from __future__ import annotations
 
 import asyncio
+import collections
 import json
 import logging
 import os
@@ -37,6 +37,8 @@ import sqlite3
 import time
 import urllib.request
 
+from live.market_book import BestAskCache
+from live.mint_quotes import Quote, plan_pair_quotes, should_reprice
 from paper import envload
 
 envload.load()
@@ -75,51 +77,50 @@ def gamma_market(prefix, base):
     return None
 
 
-class Book:
-    __slots__ = ("ask", "ts")
-
-    def __init__(self):
-        self.ask = None
-        self.ts = 0.0
-
-
 class Mintbot:
     def __init__(self):
         self.clob = None
         self.key = os.environ.get("MINTER_PRIVATE_KEY")
         self.addr = os.environ.get("MINTER_ADDRESS")
         if MODE == "place":
+            raise SystemExit(
+                "PLACE DISABLED: CLOB V2 collateral migration is corrected, but "
+                "authenticated fill/order reconciliation and strategy edge are unproven"
+            )
             if os.environ.get("DEPLOY_REGION") != "eu-west-1":       # M1
                 raise SystemExit("M1 geo interlock: place mode only on eu-west-1")
             if not self.key or not self.addr:
                 raise SystemExit("MINTER_PRIVATE_KEY/MINTER_ADDRESS missing")
-            from live import chain
-            ap = chain.call(chain.CTF, chain.encode_call(
-                "isApprovedForAll(address,address)", [self.addr, chain.CTF_EXCHANGE]))
-            allowance = int(chain.call(chain.USDC_E, chain.encode_call(
-                "allowance(address,address)", [self.addr, chain.CTF])), 16) / 1e6
-            balance = chain.erc20_balance(chain.USDC_E, self.addr)
-            if int(ap, 16) != 1:                                     # M7
-                raise SystemExit("M7: run live/minter_approve first (exchange approval)")
-            if allowance < 8 * MINT_USD:
-                raise SystemExit(f"M7: USDC.e allowance ${allowance:.0f} < 8x MINT_USD - "
-                                 "run live/minter_approve (it grants a large allowance)")
-            if balance < 4 * MINT_USD:
-                raise SystemExit(f"M7: USDC.e balance ${balance:.2f} < 4x MINT_USD")
+            from eth_account import Account
+            if Account.from_key(self.key).address.lower() != self.addr.lower():
+                raise SystemExit("MINTER_PRIVATE_KEY does not own MINTER_ADDRESS")
             from live.executor import Clob
             self.clob = Clob(key=self.key, funder=None, sig=0)
             try:
-                self.clob.cancel_all()                               # M2 startup sweep
+                self.clob.cancel_all_verified()                      # M2 startup sweep
                 log.info("startup cancel_all: book swept clean")
             except Exception as e:
-                log.warning("startup cancel_all: %s", e)
+                raise SystemExit(f"startup cancel_all not proven: {e}") from e
+            from live import chain
+            ap = chain.call(chain.CTF, chain.encode_call(
+                "isApprovedForAll(address,address)", [self.addr, chain.CTF_EXCHANGE]))
+            allowance = int(chain.call(chain.PUSD, chain.encode_call(
+                "allowance(address,address)", [self.addr, chain.CTF])), 16) / 1e6
+            balance = chain.erc20_balance(chain.PUSD, self.addr)
+            if int(ap, 16) != 1:                                     # M7
+                raise SystemExit("M7: run live/minter_approve first (exchange approval)")
+            if allowance < 8 * MINT_USD:
+                raise SystemExit(f"M7: pUSD allowance ${allowance:.0f} < 8x MINT_USD - "
+                                 "run live/minter_approve (it grants a large allowance)")
+            if balance < 4 * MINT_USD:
+                raise SystemExit(f"M7: pUSD balance ${balance:.2f} < 4x MINT_USD")
         self.db = sqlite3.connect(DB)
         self.db.execute("""CREATE TABLE IF NOT EXISTS mint_windows(
             ts REAL, asset TEXT, slug TEXT, minted REAL, sold_up REAL, sold_dn REAL,
             sold_usd REAL, merged REAL, mode TEXT, note TEXT)""")
         self.db.commit()
         self.state: dict[str, dict] = {}
-        self.books: dict[str, Book] = {}
+        self.books = BestAskCache()
         self.tok_asset: dict[str, tuple] = {}
         self.resub = asyncio.Event()
         self.day_minted = 0.0
@@ -129,6 +130,9 @@ class Mintbot:
         self.pos_fresh = 0.0
         self.tasks: set = set()               # hard refs: tasks must never be GC'd
         self.opening: set = set()             # assets with an open_window in flight
+        self.feed_counts = collections.Counter()
+        self.quote_counts = collections.Counter()
+        self.last_feed_log = 0.0
 
     def spawn(self, coro):
         t = asyncio.create_task(coro)
@@ -184,7 +188,8 @@ class Mintbot:
             st = {"asset": asset, "slug": slug, "base": base, "close": base + 300,
                   "cond": cond, "up": up, "dn": dn, "minted": 0.0,
                   "sold": {True: 0.0, False: 0.0}, "sold_usd": 0.0,
-                  "asks": {True: None, False: None}, "last_q": {True: 0.0, False: 0.0}}
+                  "asks": {True: None, False: None}, "last_q": {True: 0.0, False: 0.0},
+                  "quote_lock": asyncio.Lock(), "pair_placed_at": 0.0}
             if MODE == "place":
                 self.day_minted += MINT_USD                          # M3 pessimistic
                 try:
@@ -208,7 +213,7 @@ class Mintbot:
             if old:                                        # prune dead tokens
                 for t in (old["up"], old["dn"]):
                     self.tok_asset.pop(t, None)
-                    self.books.pop(t, None)
+                    self.books.drop(t)
             self.tok_asset[up] = (asset, True)
             self.tok_asset[dn] = (asset, False)
             self.state[asset] = st
@@ -226,16 +231,7 @@ class Mintbot:
     async def close_window(self, st):
         from live import chain
         if MODE == "place" and self.clob:
-            for side in (True, False):                     # M5: cancel, 2 attempts
-                ask = st["asks"].get(side)
-                if ask and ask[1]:
-                    for _ in range(2):
-                        try:
-                            await asyncio.to_thread(self.clob.cancel, ask[1])
-                            break
-                        except Exception:
-                            await asyncio.sleep(1)
-                st["asks"][side] = None
+            await self.cancel_pair(st)                     # M5: verified batch cancel
             await asyncio.sleep(8)                         # let last fills index
             try:
                 self.pos = await asyncio.to_thread(self.clob.positions)
@@ -304,12 +300,7 @@ class Mintbot:
                     elif sold < st["sold"][side] - 0.01:
                         st["sold"][side] = sold            # snap-back, no $ booked
 
-    # ---- quoting: async task, order I/O off the loop, joint-sum floor ------
-    def on_book(self, tok, asks):
-        b = self.books.setdefault(tok, Book())
-        b.ask = min((float(x["price"]) for x in asks), default=None) if asks else None
-        b.ts = time.time()
-
+    # ---- quoting: paired batches, no old/new cross-pair transition --------
     async def quoter_task(self):
         while True:
             await asyncio.sleep(REQUOTE_S)
@@ -319,49 +310,81 @@ class Mintbot:
                         or now < st["base"] + 3 or now > st["close"] - 25):
                     continue
                 bu, bd = self.books.get(st["up"]), self.books.get(st["dn"])
-                if (not bu or not bd or bu.ask is None or bd.ask is None
-                        or now - bu.ts > FRESH_S or now - bd.ts > FRESH_S):   # M8
+                if (not bu or not bd or bu.price is None or bd.price is None
+                        or now - bu.received_at > FRESH_S
+                        or now - bd.received_at > FRESH_S):             # M8
+                    if any(st["asks"].values()):
+                        await self.cancel_pair(st)
+                        self.quote_counts["stale_pause"] += 1
+                        log.warning("quote paused %s: market feed stale", st["asset"])
                     continue
-                fair_u, fair_d = 1.0 - bd.ask, 1.0 - bu.ask
+                fair_u, fair_d = 1.0 - bd.price, 1.0 - bu.price
                 px_u = max(0.05, min(0.95, round(fair_u + SPREAD, 2)))
                 px_d = max(0.05, min(0.95, round(fair_d + SPREAD, 2)))
                 if px_u + px_d < SUM_FLOOR:                # M8 joint floor
                     bump = (SUM_FLOOR - px_u - px_d) / 2
                     px_u = min(0.95, round(px_u + bump + 0.005, 2))
                     px_d = min(0.95, round(px_d + bump + 0.005, 2))
-                for side, px in ((True, px_u), (False, px_d)):
-                    await self.requote(st, side, px)
+                plan = plan_pair_quotes(
+                    minted=st["minted"], sold_up=st["sold"][True],
+                    sold_down=st["sold"][False], price_up=px_u, price_down=px_d,
+                    sum_floor=SUM_FLOOR, clip_shares=MIN_SHARES,
+                )
+                await self.requote_pair(st, plan)
 
-    async def requote(self, st, side, px):
-        held = st["minted"] - st["sold"][side]
-        sh = float(int(min(held, MINT_USD)))
-        if sh < MIN_SHARES or px * sh < 1.0:
-            return
-        cur = st["asks"].get(side)
-        if cur and cur[0] == px and cur[1] is not None:
-            return
-        tok = st["up"] if side else st["dn"]
-        if MODE == "place" and self.clob:
-            if cur and cur[1]:
-                try:
-                    await asyncio.to_thread(self.clob.cancel, cur[1])
-                except Exception:
-                    pass
-            st["asks"][side] = None                        # truth until proven resting
+    async def _cancel_pair_unlocked(self, st):
+        had_pair = any(st["asks"].values())
+        order_ids = [ask[1] for ask in st["asks"].values() if ask and ask[1] != "shadow"]
+        if MODE == "place" and self.clob and order_ids:
+            await asyncio.to_thread(self.clob.cancel_many_verified, order_ids)
+        st["asks"] = {True: None, False: None}
+        self.quote_counts["pair_cancel"] += int(had_pair)
+
+    async def cancel_pair(self, st):
+        async with st["quote_lock"]:
+            await self._cancel_pair_unlocked(st)
+
+    async def requote_pair(self, st, plan: tuple[Quote, ...]):
+        async with st["quote_lock"]:
+            current = st["asks"]
+            if not plan:
+                if any(current.values()):
+                    await self._cancel_pair_unlocked(st)
+                    self.quote_counts["imbalance_pause"] += 1
+                    log.warning("quote paused %s: asymmetric or insufficient inventory",
+                                st["asset"])
+                return
+            if all(current[q.side_up] for q in plan):
+                old = (current[True][0], current[False][0])
+                target = (plan[0].price, plan[1].price)
+                if not should_reprice(old, target, time.time() - st["pair_placed_at"]):
+                    return
+            await self._cancel_pair_unlocked(st)            # old pair is proven gone first
+            if st.get("closing"):
+                return                                     # close raced the API await
+            if MODE != "place" or not self.clob:
+                for quote in plan:
+                    st["asks"][quote.side_up] = (quote.price, "shadow")
+                st["pair_placed_at"] = time.time()
+                self.quote_counts["pair_post"] += 1
+                log.info("[shadow] ASK PAIR %s %.0f sh @ %.2f/%.2f", st["asset"],
+                         plan[0].size, plan[0].price, plan[1].price)
+                return
+            orders = [
+                (st["up"] if quote.side_up else st["dn"], "sell", quote.price, quote.size)
+                for quote in plan
+            ]
             try:
-                oid = await asyncio.to_thread(
-                    self.clob.place, tok, "sell", px, sh, True)
-                if oid:
-                    st["asks"][side] = (px, oid)
-            except Exception as e:
-                if "post-only" not in str(e):
-                    log.warning("quote %s %s@%.2f: %s", st["asset"],
-                                "U" if side else "D", px, e)
-        else:
-            if not cur or cur[0] != px:
-                st["asks"][side] = (px, "shadow")
-                log.info("[shadow] ASK %s %s %.0f sh @ %.2f", st["asset"],
-                         "Up" if side else "Dn", sh, px)
+                order_ids = await asyncio.to_thread(self.clob.place_many, orders, True)
+            except Exception as exc:
+                # A timeout or partial batch response is unknown money state. A
+                # verified wallet sweep is the only safe continuation.
+                await asyncio.to_thread(self.clob.cancel_all_verified)
+                raise RuntimeError(f"pair placement failed closed: {exc}") from exc
+            for quote, order_id in zip(plan, order_ids):
+                st["asks"][quote.side_up] = (quote.price, order_id)
+            st["pair_placed_at"] = time.time()
+            self.quote_counts["pair_post"] += 1
 
     # ---- feed -------------------------------------------------------------
     async def ws_task(self):
@@ -375,17 +398,30 @@ class Mintbot:
                 async with websockets.connect(MKT_WS, ping_interval=None,
                                               open_timeout=12) as ws:
                     await ws.send(json.dumps({"assets_ids": toks, "type": "market"}))
+                    last_ping = time.monotonic()
                     log.info("ws subscribed %d tokens (mode=%s mint=$%.0f spread=%.2f)",
                              len(toks), MODE, MINT_USD, SPREAD)
                     while not self.resub.is_set():
+                        elapsed = time.monotonic() - last_ping
+                        if elapsed >= 10:
+                            await ws.send("PING")
+                            last_ping = time.monotonic()
                         try:
-                            raw = await asyncio.wait_for(ws.recv(), timeout=5)
+                            raw = await asyncio.wait_for(ws.recv(), timeout=min(5, max(0.1, 10-elapsed)))
                         except asyncio.TimeoutError:
                             continue                       # re-check resub fast
+                        if raw == "PONG":
+                            continue
                         items = json.loads(raw)
+                        received_at = time.time()
                         for it in items if isinstance(items, list) else [items]:
-                            if it.get("event_type") == "book":
-                                self.on_book(it.get("asset_id"), it.get("asks") or [])
+                            if isinstance(it, dict):
+                                self.feed_counts[str(it.get("event_type", "?"))] += 1
+                                self.books.apply(it, received_at)
+                        if time.monotonic() - self.last_feed_log >= 60:
+                            log.info("feed events=%s quotes=%s", dict(self.feed_counts),
+                                     dict(self.quote_counts))
+                            self.last_feed_log = time.monotonic()
             except SystemExit:
                 raise
             except Exception as e:
@@ -395,24 +431,21 @@ class Mintbot:
     async def cancel_everything(self):
         if not (MODE == "place" and self.clob):
             return
-        for st in self.state.values():
-            for side in (True, False):
-                ask = st["asks"].get(side)
-                if ask and ask[1]:
-                    try:
-                        await asyncio.to_thread(self.clob.cancel, ask[1])
-                    except Exception:
-                        pass
         try:
-            await asyncio.to_thread(self.clob.cancel_all)
+            await asyncio.to_thread(self.clob.cancel_all_verified)
+            for st in self.state.values():
+                st["asks"] = {True: None, False: None}
         except Exception as e:
-            log.warning("exit cancel_all: %s", e)
+            log.error("exit cancel_all not proven: %s", e)
+            raise
         log.info("exit: all asks cancelled (minted sets merge/redeem on their own)")
 
     async def main(self):
-        log.info("mintbot v2 starting: mode=%s mint=$%.0f/window day-cap=$%.0f "
+        log.info("experimental mintbot starting: mode=%s mint=$%.0f/window day-cap=$%.0f "
                  "spread=%.2f sum-floor=%.3f", MODE, MINT_USD, MINT_DAY_CAP,
                  SPREAD, SUM_FLOOR)
+        if MODE == "shadow":
+            log.warning("shadow validates feeds/quote decisions only; it does not simulate fills or PnL")
         try:
             await asyncio.gather(self.roll_task(), self.ws_task(),
                                  self.positions_task(), self.quoter_task())
@@ -425,5 +458,5 @@ if __name__ == "__main__":
         raise SystemExit(f"MINTBOT_MODE must be shadow|place, got {MODE}")
     try:
         asyncio.run(Mintbot().main())
-    except (SystemExit, KeyboardInterrupt) as e:
-        log.warning("%s", e)
+    except KeyboardInterrupt:
+        log.warning("stopped by user")

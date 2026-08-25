@@ -1,5 +1,9 @@
 # Go-live readiness — per-strategy graduation from paper to live
 
+> **Current status (2026-08-25): NO-GO.** This is a legacy checklist, not a
+> readiness claim. `README.md` and the current code are authoritative; the
+> `lv_` simulator is not execution parity and the mint edge is unproven.
+
 Paper stays the default. A strategy goes live only through the double opt-in
 below, one strategy at a time, smallest possible size first.
 
@@ -11,10 +15,12 @@ paper/run.py  ──►  paper/live_gate.py  ──►  paper/intents.jsonl  ─
  all simulated      double opt-in)           no keys, no orders)       places/cancels, final risk)
 ```
 
-- This repo **never** holds keys, signs, or submits orders.
-- The executor consumes `paper/intents.jsonl`, diffs desired quotes vs its
-  resting orders, and places/cancels through its own credentials and final
-  risk checks. Enabling anything live is a manual user action.
+- Paper and log-only modes hold no keys and submit no orders. `live/executor.py`
+  and `live/mintbot.py` can sign and submit in explicit place mode, so they are
+  money-path code and remain behind the closed manual launch gate.
+- The executor consumes `paper/intents.jsonl`, diffs desired quotes against its
+  tracked resting orders, then applies its own risk checks. That tracking is not
+  yet sufficient evidence of exchange-state parity; place mode remains NO-GO.
 
 ## Verified market facts (2026-08-23, from gamma + CLOB metadata)
 
@@ -28,13 +34,15 @@ paper/run.py  ──►  paper/live_gate.py  ──►  paper/intents.jsonl  ─
   YES+NO < ~0.965 to profit after fees.
 - Limit orders: **minimum 5 shares** to post, tick 0.01. Partial fills of a
   posted order are valid at any size. Market orders: $1 minimum.
-- Redemption of held winners ≈ 2h after settlement (budget$ column models this).
+- Recent observed auto-redemption was roughly 5-10 minutes after settlement;
+  treat this as deployment-specific and remeasure before sizing bankroll.
   A complete YES+NO set merges to $1 instantly (lock_arb capital recycles).
 
 ## Fill model v2 (what the paper numbers now assume)
 
-- Fills execute against **posted quotes up to `PAPER_REQUOTE` (1.0s) stale** →
-  adverse selection / pick-off risk is now simulated, not ignored.
+- Execution-shaped twins hold posted quotes for 0.60s; `sq_*` uses 1.0s as a
+  tail-stress case. Both simulate stale-quote pick-off, but neither models CLOB
+  POST acknowledgement or exchange-state reconciliation.
 - Quotes only post with ≥5-share capacity (bid) / ≥5-share inventory (ask).
 - Maker fee 0 (matches metadata). f=0.2 queue-share assumption unchanged.
 - Known bias: cancels apply lazily at the next print, so v2 is slightly
@@ -50,7 +58,7 @@ paper/run.py  ──►  paper/live_gate.py  ──►  paper/intents.jsonl  ─
 - [ ] Start runner with `PAPER_LIVE_INTENTS=1` (otherwise nothing is emitted)
 - [ ] Run the bundled executor yourself: `python -m live.executor` (log-only first;
       set LIVE_EXECUTOR_MODE=place in .env when ready for real orders)
-- [ ] Confirm USDC allowance for the CTF exchange is set (Polymarket UI / executor)
+- [ ] Confirm current CLOB V2 pUSD and outcome-token approvals (not legacy USDC.e/V1 exchange)
 - [ ] Dry pass: watch intents for 15 min with executor in log-only mode; check
       quote churn vs CLOB rate limits before letting it place
 - [ ] Kill switch drill: `touch paper/KILL` stops intents instantly — verify once
@@ -74,7 +82,7 @@ non-georestricted region (~1-5 ms RTT). Same region we used for project-magic.
 git clone https://github.com/ntenisOT/project-fail && cd project-fail
 python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
 # copy .env by hand (scp) - NEVER commit it. Fill keys locally on the box.
-python -m live.latency          # measure real RTT -> set PAPER_REQUOTE in .env
+python -m live.latency          # read-only GET RTT only; do not infer order latency
 python -m live.balance          # confirm funds visible
 tmux new -d -s paper 'python -m paper.run'            # 13-arm paper + intents
 python -m live.executor         # log-only session first, watch [dry] churn
@@ -83,7 +91,7 @@ tmux new -d -s exec 'python -m live.executor'         # YOU run this = live
 # instant stop from anywhere:  touch paper/KILL
 ```
 
-Calibration rule: whatever p50 `live.latency` reports on the box, set
-PAPER_REQUOTE to ~2xRTT+50ms and restart the paper runner - then the sim's
-adverse-selection assumption matches the deployment, and paper-vs-live fill
-comparison becomes apples-to-apples.
+`live.latency` measures network RTT, not the file executor or order
+acknowledgement. Do not derive `PAPER_REQUOTE_S` from `2xRTT+50ms`; use measured
+intent-to-order timing for the actual pipeline and retain queue/fill-model
+limitations explicitly.

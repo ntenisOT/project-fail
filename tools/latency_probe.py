@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Read-only latency probe (run on the deploy box). Measures:
-  1) REST RTT to clob.polymarket.com  (the order-flight path)
-  2) ws connect + book-event arrival cadence on one live token
-  3) prints the end-to-end budget for today's pipeline vs an in-process one
-No credentials, no orders, no state touched."""
+"""Read-only latency probe for the deployed quote pipeline.
+
+Measures CLOB GET RTT, market-feed cadence, and the actual age of new quote
+intents when observed by a one-second executor-style poll. It deliberately does
+not call order endpoints, so POST acknowledgement and cancel/replace time remain
+unknown rather than being invented from GET latency.
+"""
 import asyncio
 import json
 import re
@@ -36,6 +38,25 @@ def live_token():
         if it.get("type") == "book" and it.get("token"):
             return it["token"]
     return None
+
+
+def intent_poll_age(seconds=20.0, poll_s=1.0):
+    """Observe new quote intents using the executor's current polling cadence."""
+    ages = []
+    with open("paper/intents.jsonl", encoding="utf-8") as source:
+        source.seek(0, 2)
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            time.sleep(min(poll_s, max(0.0, end - time.monotonic())))
+            observed_at = time.time()
+            for raw in source.readlines():
+                try:
+                    item = json.loads(raw)
+                    if item.get("strategy") and item.get("ts"):
+                        ages.append(max(0.0, observed_at - float(item["ts"])) * 1000)
+                except (TypeError, ValueError):
+                    continue
+    return sorted(ages)
 
 
 async def ws_probe(token, seconds=8.0):
@@ -78,12 +99,15 @@ def main():
             print(f"ws connect ms    : {t_conn:.0f} | no events in window (quiet token)")
     else:
         print("no live token found in intents.jsonl - ws probe skipped")
-    print()
-    print("END-TO-END BUDGET (detect -> order at exchange), using median RTT:")
-    print(f"  today's pipeline : book throttle 0-1000 (mean 500) + executor poll 0-1000 (mean 500)")
-    print(f"                     + REST flight ~{med:.0f}  =>  mean ~{1000 + med:.0f} ms, worst ~{2000 + med:.0f} ms")
-    print(f"  in-process ws    : event arrival ~30-80 + decide ~5 + REST flight ~{med:.0f}")
-    print(f"                     =>  ~{65 + med:.0f}-{85 + med + 50:.0f} ms")
+    ages = intent_poll_age()
+    if ages:
+        p50 = statistics.median(ages)
+        p90 = ages[min(len(ages) - 1, int(len(ages) * 0.9))]
+        print(f"intent -> 1s poll : median {p50:.0f} | p90 {p90:.0f} | n={len(ages)}")
+        print(f"new-order lower bound (poll + GET RTT proxy): median {p50 + med:.0f} ms")
+    else:
+        print("intent -> 1s poll : no new strategy intents observed")
+    print("POST acknowledgement and cancel+replace latency are unmeasured; GET RTT is only a lower-bound proxy.")
 
 
 if __name__ == "__main__":

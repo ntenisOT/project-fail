@@ -86,16 +86,16 @@ class PaperWindow:
         self.max_inv = max_inventory
         self.min_signal = min_signal
         self.mode = mode            # "roundtrip" | "hold"
-        self.exit_first = exit_first   # winner-style: entry-anchored asks + forced near-close exit
+        self.exit_first = exit_first   # experiment: entry-anchored asks + forced near-close exit
         self.pair_balance = pair_balance   # pair mode: bid only the side we hold LESS of (forces sets)
         self.late_floor = late_floor       # last 90s: never bid the lottery zone (<10c)
-        # live_sim: mirror the LIVE EXECUTOR mechanics exactly - $5 clip orders
+        # live_sim: approximate selected executor constraints - $5 clip orders
         # (min 5 shares), fills consume the ORDER size (not an f-skim of flow),
         # G13 $15/token/window spend cap, $50 inventory-cost cap. The parity
-        # rule: an arm goes live only after its lv_ twin is green in paper.
+        # It does not model exchange acknowledgements or position reconciliation.
         self.live_sim = live_sim
         self.win_spend = {True: 0.0, False: 0.0}   # per-side $ bought this window (G13 mirror)
-        # mint_basis: the winners' mechanic - inventory arrives via CTF
+        # mint_basis: an experimental inventory path where sets arrive via CTF
         # splitPosition at EXACTLY $1.00/set (no spread paid, no adverse entry).
         # No bids ever; asks track fair+spread per side; at settle the matched
         # leftover pairs MERGE back to $1 and only single-side residue rides

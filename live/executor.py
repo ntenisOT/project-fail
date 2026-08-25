@@ -168,8 +168,61 @@ class Clob:
             raise RuntimeError(f"post_order rejected: {r.get('errorMsg', r)}")
         return (r or {}).get("orderID") or (r or {}).get("order_id")
 
+    def place_many(self, orders, post_only=True):
+        """Submit a quote set in one batch and require every order id."""
+        from py_clob_client_v2 import OrderArgs, OrderType, PostOrdersV2Args
+        batch = []
+        for token, side, price, size in orders:
+            args = OrderArgs(token_id=token, price=round(price, 2), size=round(size, 1),
+                             side="BUY" if side == "buy" else "SELL")
+            batch.append(PostOrdersV2Args(order=self.c.create_order(args),
+                                          orderType=OrderType.GTC))
+        responses = self.c.post_orders(batch, post_only=post_only)
+        if not isinstance(responses, list) or len(responses) != len(batch):
+            raise RuntimeError(f"batch order response shape is unknown: {responses!r}")
+        order_ids = []
+        for response in responses:
+            if not isinstance(response, dict) or not response.get("success", True):
+                raise RuntimeError(f"batch order rejected: {response!r}")
+            order_id = response.get("orderID") or response.get("order_id")
+            if not order_id:
+                raise RuntimeError(f"batch order has no order id: {response!r}")
+            order_ids.append(order_id)
+        return order_ids
+
     def cancel(self, oid):
         self.c.cancel_orders([oid])          # v2: takes a list of order hashes
+
+    def _open_order_ids(self):
+        rows = self.c.get_open_orders()
+        order_ids = set()
+        for row in rows:
+            if isinstance(row, dict):
+                order_id = row.get("id") or row.get("orderID") or row.get("order_id")
+                if order_id:
+                    order_ids.add(str(order_id))
+        return order_ids
+
+    def cancel_many_verified(self, order_ids):
+        wanted = {str(order_id) for order_id in order_ids if order_id}
+        if not wanted:
+            return
+        self.c.cancel_orders(sorted(wanted))
+        for attempt in range(3):
+            remaining = wanted & self._open_order_ids()
+            if not remaining:
+                return
+            time.sleep(0.15 * (attempt + 1))
+        raise RuntimeError(f"orders still open after cancel: {sorted(remaining)}")
+
+    def cancel_all_verified(self):
+        self.c.cancel_all()
+        for attempt in range(3):
+            remaining = self._open_order_ids()
+            if not remaining:
+                return
+            time.sleep(0.15 * (attempt + 1))
+        raise RuntimeError(f"orders still open after cancel_all: {len(remaining)}")
 
     def cancel_all(self):
         self.c.cancel_all()
@@ -304,7 +357,6 @@ def main():
     window_spend: dict[tuple, float] = {}  # (token, close_ts) -> $ of BUY orders PLACED (G13:
     rejected_px: dict[tuple, float] = {}   # feed-independent cap; counts at placement, cannot
                                            # be blinded by a broken fills feed)
-    day_cash = 0.0
     read_pos = 0
     last_fills = 0.0
     halted = False

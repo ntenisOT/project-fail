@@ -15,5 +15,6 @@ __pycache__/
 .claude/
 # runtime artifacts of the live pipeline
 live/live.db
+live/mintbot.db
 paper/intents.jsonl
 tests/_exec_sandbox/

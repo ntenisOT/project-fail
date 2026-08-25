@@ -114,31 +114,35 @@ distribution, residual imbalance, or pairing delay.
 
 ---
 
-## 3. Focused pair-inventory experiment (four strategies)
+## 3. Focused pair-inventory experiment (five strategies)
 
 The legacy 49-arm board was retired after every execution-shaped pair/mint arm
 remained negative. V2-corrected forensics then identified the clean leader as a
-paired-bid accumulator. Strict inside-$0.98 won the first price-priority screen;
-the current board tests whether completed-pair surplus can safely fund later
-inventory balancing, matching the leader's observed basket-average economics:
+paired-bid accumulator. Strict inside-$0.98 won the first price-priority screen.
+Basket99 later reached winner-like pair cost/completion timing but left
+outcome-risk residue. The current board isolates cap, clip scale, and fee-aware
+final completion:
 
 | Strategy | Mechanic |
 |---|---|
 | `strict98` | Strict control: improve both bids one tick; every completed pair costs ≤$0.98 |
 | `basket98` | Keep the cumulative completed-pair average ≤$0.98 |
-| `basket985` | Keep the cumulative completed-pair average ≤$0.985 |
-| `basket99` | Keep the cumulative completed-pair average ≤$0.99 |
+| `basket99` | Five-share maker baseline; keep cumulative completed-pair average ≤$0.99 |
+| `basket99x10` | Ten-share maker twin with a 40-share inventory ceiling |
+| `basket99tk10` | Ten-share twin; after T+120, cross displayed depth only when explicit taker fees preserve the ≤$0.99 basket average and the $1 minimum |
 
-All four arms wait until T+30 seconds and until both token feeds have caught up
+All five arms wait until T+30 seconds and until both token feeds have caught up
 before starting a pair. This deliberately gives up the subscription-backlog
-period; a stale causal update after exposure begins invalidates the asset-window.
+period; a stale causal update freezes decisions and labels exposed settlement
+economics `lagged` rather than removing the window.
 
 The simulator reconstructs public price levels from authoritative snapshots and
 `price_change` deltas. Joining the best price puts the displayed level size in
 front of our hypothetical order; trades consume that queue before we receive a
-fill. Same-price quotes retain queue position, repricing loses it. All strategies
-use five-share clips, maker fees/rebates are excluded, and official resolved
-Gamma outcomes settle each window. A window whose first usable paired books
+fill. Same-price quotes retain queue position, repricing loses it. The five- and
+ten-share arms are reported independently, maker fees/rebates are excluded, and
+official resolved Gamma outcomes settle each window. A window whose first usable
+paired books
 arrive more than ten seconds late is observed but not scored. Actions activate
 after a configurable 65 ms delay: approximately twice fresh Ireland GET p90,
 but still only a lower-bound proxy because authenticated POST/cancel is
@@ -311,6 +315,7 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 43 | 08-25 08:34 | persist invalid-window exposure and trigger lag; report FIFO pair d50/d90; a wrong all-asset bootstrap was caught before T+30 and replaced by the verified BTC-only runner |
 | 44 | 08-25 08:47 | stop censoring measured public-feed tails: freeze decisions, retain resting exposure and delayed ordered trades, then report clean versus lagged economics separately |
 | 45 | 08-25 08:54 | include delayed trade/fill awareness in the lagged quality class after Gen44 observed a 1.716 s trade tail that causal-book-only labeling would have missed |
+| 46 | 08-25 09:11 | replace the nearly redundant Basket985 arm with 5-share versus 10-share Basket99 twins and a fee-aware T+120 taker-completion twin; retain strict and Basket98 controls |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

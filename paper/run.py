@@ -55,6 +55,10 @@ STRATEGIES = (
     PairConfig("strict98", "accumulate", 0.02,
                action_latency_s=ACTION_LATENCY_S, buy_sum_ceiling=0.98,
                improve_ticks=1, require_both_to_start=True, new_pair_start_s=30),
+    PairConfig("basket98", "accumulate", 0.02,
+               action_latency_s=ACTION_LATENCY_S, buy_sum_ceiling=0.98,
+               improve_ticks=1, require_both_to_start=True, basket_average_cap=True,
+               new_pair_start_s=30),
     PairConfig("basket99", "accumulate", 0.02,
                action_latency_s=ACTION_LATENCY_S, buy_sum_ceiling=0.99,
                improve_ticks=1, require_both_to_start=True, basket_average_cap=True,
@@ -412,7 +416,8 @@ async def main() -> None:
                              quote_task(), heartbeat_task(), report_task(), kill_task(),
                              asyncio.to_thread(
                                  S.notify.send,
-                                 "focused pair paper started (4 strategies, queue-aware, no orders)",
+                                 f"focused pair paper started ({len(names)} strategies, "
+                                 "queue-aware, no orders)",
                              ))
     finally:
         await asyncio.to_thread(S.ledger.close)

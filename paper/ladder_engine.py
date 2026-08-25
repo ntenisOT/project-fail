@@ -155,9 +155,9 @@ class LadderWindow:
             return None
         shares = sum(float(record["size"]) for record in records)
         signed_cash = sum(float(record["signed_cash"]) for record in records)
-        weighted_price = sum(
+        weighted_price = round(sum(
             float(record["price"]) * float(record["size"]) for record in records
-        ) / shares
+        ) / shares, 10)
         return {
             "action": records[0]["action"], "price": weighted_price,
             "size": shares, "signed_cash": signed_cash,

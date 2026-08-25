@@ -256,6 +256,7 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 30 | 08-25 05:xx | replace disproven T-60 cutoff with immediate fee-aware complementary-depth flattening |
 | 31 | 08-25 05:xx | start hedge reaction latency at local fill receipt while retaining exchange-time maker causality |
 | 32 | 08-25 05:xx | combine initial complete-set inventory with balanced maker sell-and-replenish churn |
+| 33 | 08-25 05:xx | phase inventory sell and replenishment cycles so crossed partial fills cannot deadlock accounting |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

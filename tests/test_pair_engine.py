@@ -233,7 +233,7 @@ class FocusedPairTests(unittest.TestCase):
     def test_inventory_churn_sells_sets_then_replenishes_below_one(self) -> None:
         config = PairConfig(
             "inventory", "inventory", 0.01, action_latency_s=0,
-            initial_sets=5, max_inventory=5,
+            initial_sets=10, max_inventory=10,
         )
         window = PairWindow(config, "btc", "btc-updown-5m-0", 0, "up", "down", 0)
         up, down = book(0.48, 0, 0.52, 0), book(0.48, 0, 0.52, 0)

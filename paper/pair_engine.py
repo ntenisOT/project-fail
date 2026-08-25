@@ -140,9 +140,21 @@ class PairWindow:
         books = {True: up, False: down}
         desired: dict[tuple[bool, str], float] = {}
         can_start_pair = now < self.start + self.config.new_pair_cutoff_s
+        replenishing = (self.config.mode == "inventory"
+                        and min(self.inventory.values()) < self.config.max_inventory - 0.1)
+        inventory_can_buy = (
+            self.config.mode != "inventory"
+            or self.buy_pairs.open_side is not None
+            or (replenishing and self.sell_pairs.open_side is None)
+        )
+        inventory_can_sell = (
+            self.config.mode != "inventory"
+            or self.sell_pairs.open_side is not None
+            or (not replenishing and self.buy_pairs.open_side is None)
+        )
         up_bid, down_bid = up.best_bid, down.best_bid
         if (self.config.mode != "mint"
-                and (self.config.mode != "inventory" or self.sell_pairs.open_side is None)
+                and inventory_can_buy
                 and up_bid is not None and down_bid is not None):
             open_side = self.buy_pairs.open_side
             improved_bids = {
@@ -169,7 +181,7 @@ class PairWindow:
 
         up_ask, down_ask = up.best_ask, down.best_ask
         if (self.config.mode in ("churn", "mint", "inventory")
-                and (self.config.mode != "inventory" or self.buy_pairs.open_side is None)
+                and inventory_can_sell
                 and up_ask is not None and down_ask is not None):
             open_side = self.sell_pairs.open_side
             improved_asks = {

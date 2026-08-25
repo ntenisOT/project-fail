@@ -34,7 +34,6 @@ class RestingOrder:
 class PendingRequote:
     ready_at: float
     decided_at: float
-    desired: dict[tuple[bool, str], float]
 
 
 class PairLots:
@@ -163,11 +162,14 @@ class PairWindow:
         self.pending = None
         self.action_seconds += max(0.0, now - pending.decided_at)
         self.action_batches += 1
+        complete = (up.best_bid is not None and down.best_bid is not None
+                    and up.best_ask is not None and down.best_ask is not None)
+        desired = self._desired(up, down) if complete else {}
         books = {True: up, False: down}
         for key in list(self.orders):
-            if key not in pending.desired or self.orders[key].price != pending.desired[key]:
+            if key not in desired or self.orders[key].price != desired[key]:
                 self._close_order(key, now, cancelled=True)
-        for key, price in pending.desired.items():
+        for key, price in desired.items():
             if key in self.orders:
                 continue
             side, order_side = key
@@ -199,7 +201,7 @@ class PairWindow:
         if current == desired:
             return
         self.pending = PendingRequote(
-            now + self.config.action_latency_s, now, desired,
+            now + self.config.action_latency_s, now,
         )
         self._activate_pending(now, up, down)
 
@@ -222,7 +224,12 @@ class PairWindow:
             executable = max(0.0, size - consumed)
         else:
             executable = order.size
-        fill = min(order.size, executable)
+        capacity = (self.config.max_inventory - self.inventory[side_up]
+                    if order_side == "buy" else self.inventory[side_up])
+        if capacity <= 0:
+            self._close_order(key, now, cancelled=True)
+            return None
+        fill = min(order.size, executable, max(0.0, capacity))
         if fill <= 0:
             return None
         order.size -= fill
@@ -250,6 +257,9 @@ class PairWindow:
         self.pending = None
         for key in list(self.orders):
             self._close_order(key, now, cancelled=True)
+        if (min(self.inventory.values()) < -1e-8
+                or max(self.inventory.values()) > self.config.max_inventory + 1e-8):
+            raise RuntimeError(f"inventory invariant violated in {self.slug}: {self.inventory}")
         residual = self.inventory[True] * outcome_up + self.inventory[False] * (1 - outcome_up)
         paired = min(self.inventory.values())
         fills = self.buys + self.sells

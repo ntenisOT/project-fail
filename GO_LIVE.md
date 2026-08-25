@@ -43,6 +43,8 @@ generation demonstrates all of the following:
 - A first-leg fill constrains the later opposite-token quote; simultaneous quote
   sums are not accepted as evidence of realized pair economics.
 - Unmatched inventory and tail losses remain inside explicit caps.
+- Delayed actions revalidate current holdings; negative simulated inventory
+  invalidates the generation instead of manufacturing short sales.
 - Queue-ahead consumption, quote residence, post/cancel rate, and fill rate are
   credible rather than print-skimming assumptions.
 - The 600 ms decision-cadence twin does not destroy the edge. This is a queue-

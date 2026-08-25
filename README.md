@@ -223,6 +223,7 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 11 | 22:15 | **mintbot v2: 15 mint-stack review fixes**; paper mints 20 sets; order-sized sells restored; budget fix |
 | 12 | 08-25 02:xx | four queue-aware pair/inventory hypotheses; official outcomes; measured 65 ms action delay |
 | 13 | 08-25 02:4x | open-leg price constrains later pair completion; outcome side persisted per fill |
+| 14 | 08-25 02:5x | delayed actions revalidate fills/holdings; negative inventory hard-fails; worst-outcome PnL |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

@@ -2,51 +2,14 @@
 
 from __future__ import annotations
 
-import dataclasses
 import math
-from typing import Literal
 
 from live.mint_quotes import guarded_pair_prices, plan_pair_quotes, should_reprice
+from paper.buy_completion import plan_buy_completion
 from paper.order_book import OrderBook
 from paper.pair_lots import PairLots
+from paper.pair_types import PairConfig, PendingRequote, RestingOrder
 from paper.taker import crypto_maker_rebate, sweep
-
-
-@dataclasses.dataclass(frozen=True)
-class PairConfig:
-    name: str
-    mode: Literal["accumulate", "churn", "mint", "inventory"]
-    requote_s: float
-    action_latency_s: float = 0.065
-    buy_sum_ceiling: float = 0.99
-    sell_sum_floor: float = 1.01
-    clip_shares: float = 5.0
-    max_inventory: float = 20.0
-    mint_sets: float = 20.0
-    initial_sets: float = 0.0
-    new_pair_cutoff_s: float = 300.0
-    buy_taker_after_s: float | None = None
-    taker_hedge_after_s: float | None = None
-    taker_pair_sum_floor: float | None = None
-    improve_ticks: int = 0
-    new_pair_start_s: float = 0.0
-    mint_anchor_spread: float | None = None
-    require_both_to_start: bool = False
-    basket_average_cap: bool = False
-
-
-@dataclasses.dataclass
-class RestingOrder:
-    price: float
-    size: float
-    queue_ahead: float
-    placed_at: float
-
-
-@dataclasses.dataclass
-class PendingRequote:
-    ready_at: float
-    decided_at: float
 
 
 def _tick_price(value: float, tick: float, round_up: bool) -> float:
@@ -314,45 +277,28 @@ class PairWindow:
 
     def _hedge_buy_pair(self, now: float, up: OrderBook,
                         down: OrderBook) -> list[dict[str, float | str]]:
-        after = self.config.buy_taker_after_s
-        open_side = self.buy_pairs.open_side
-        if (after is None or open_side is None or self.buy_opened_at is None
-                or now < max(self.start + after, self.buy_opened_at)
-                + self.config.action_latency_s):
-            return []
-        hedge_side = not open_side
-        shares = min(
-            self.buy_pairs.open_shares,
-            self.config.max_inventory - self.inventory[hedge_side],
+        plan = plan_buy_completion(
+            now - self.start, None if self.buy_opened_at is None else
+            self.buy_opened_at - self.start,
+            self.config, self.buy_pairs, self.inventory, up, down,
         )
-        legs = sweep(up if hedge_side else down, "buy", shares)
-        if not legs:
+        if plan is None:
             return []
-        total_cost = sum(leg.price * leg.shares + leg.fee for leg in legs)
-        cap = (
-            self.buy_pairs.completion_price_cap(
-                self.config.buy_sum_ceiling, shares,
-            )
-            if self.config.basket_average_cap else
-            self.config.buy_sum_ceiling - self.buy_pairs.worst_open_price(True)
-        )
-        if total_cost / shares > cap + 1e-9:
-            return []
-        self._close_order((hedge_side, "buy"), now, cancelled=True)
+        self._close_order((plan.side, "buy"), now, cancelled=True)
         records: list[dict[str, float | str]] = []
-        for leg in legs:
+        for leg in plan.legs:
             cost = leg.price * leg.shares + leg.fee
-            self.inventory[hedge_side] += leg.shares
+            self.inventory[plan.side] += leg.shares
             self.cash -= cost
             self.filled_shares += leg.shares
             self.taker_fees += leg.fee
             self.buys += 1
             self._record_buy_pair(
-                now, now, hedge_side, leg.shares, cost / leg.shares,
+                now, now, plan.side, leg.shares, cost / leg.shares,
             )
             records.append({
                 "action": "taker_buy", "price": leg.price, "size": leg.shares,
-                "signed_cash": -cost, "outcome_up": int(hedge_side),
+                "signed_cash": -cost, "outcome_up": int(plan.side),
             })
         self._update_peak()
         return records

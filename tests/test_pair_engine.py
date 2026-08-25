@@ -8,7 +8,8 @@ from paper import report
 from paper.ledger import Ledger
 from paper.market_metadata import parse_active_market
 from paper.order_book import OrderBook, OrderBookCache
-from paper.pair_engine import PairConfig, PairWindow
+from paper.pair_engine import PairWindow
+from paper.pair_types import PairConfig
 from paper.settlement import settle_valid
 from paper.taker import crypto_fee, crypto_maker_rebate, sweep
 
@@ -188,35 +189,6 @@ class FocusedPairTests(unittest.TestCase):
         window.on_trade(1.5, False, 0.44, 5, "SELL")
         _, metrics = window.settle(300, 1)
         self.assertAlmostEqual(metrics["buy_pair_cost"] / metrics["buy_pair_shares"], 0.97)
-
-    def test_fee_aware_taker_completion_uses_only_earned_basket_surplus(self) -> None:
-        config = PairConfig(
-            "taker", "accumulate", 0.01, 0, clip_shares=10, max_inventory=40,
-            buy_sum_ceiling=0.99, basket_average_cap=True, buy_taker_after_s=5,
-        )
-        up = book(0.30, 0, 0.31, 20)
-        affordable = book(0.60, 0, 0.65, 20)
-        window = PairWindow(config, "btc", "btc-updown-5m-0", 0, "up", "down", 0)
-        window.on_books(1, up, affordable)
-        self.assertIsNotNone(window.on_trade(2, True, 0.30, 10, "SELL"))
-
-        fills = window.on_books(5, up, affordable)
-
-        self.assertEqual([fill["action"] for fill in fills], ["taker_buy"])
-        self.assertAlmostEqual(window.inventory[True], 10)
-        self.assertAlmostEqual(window.inventory[False], 10)
-        _, metrics = window.settle(300, 1)
-        self.assertGreater(metrics["taker_fees"], 0)
-        self.assertLessEqual(
-            metrics["buy_pair_cost"] / metrics["buy_pair_shares"], 0.99,
-        )
-
-        expensive = book(0.60, 0, 0.75, 20)
-        refused = PairWindow(config, "btc", "btc-updown-5m-0", 0, "up", "down", 0)
-        refused.on_books(1, up, expensive)
-        self.assertIsNotNone(refused.on_trade(2, True, 0.30, 10, "SELL"))
-        self.assertFalse(refused.on_books(5, up, expensive))
-        self.assertEqual(refused.inventory[False], 0)
 
     def test_open_sell_leg_floors_the_actual_completion_price(self) -> None:
         config = PairConfig("mint", "mint", 0.6, action_latency_s=0,

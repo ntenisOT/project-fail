@@ -26,7 +26,8 @@ from paper.ledger_writer import LedgerWriter
 from paper.market_metadata import ActiveMarket, fetch_active_market
 from paper.notify import notifier
 from paper.order_book import OrderBookCache
-from paper.pair_engine import PairConfig, PairWindow
+from paper.pair_engine import PairWindow
+from paper.pair_types import PairConfig
 from paper.settlement import settle_valid
 from tools.market_windows import ASSET_PREFIX, fetch_gamma_window
 

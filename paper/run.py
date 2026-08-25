@@ -210,7 +210,9 @@ def handle_event(event: dict[str, object]) -> None:
         S.events["last_trade_missing_timestamp"] += 1
         return
     for name, window in (S.active.get(asset) or {}).items():
-        fill = window.on_trade(traded_at, side_up, price, size, taker_side)
+        fill = window.on_trade(
+            traded_at, side_up, price, size, taker_side, received_at=now,
+        )
         if fill:
             S.ledger.record_fill(traded_at, name, asset, window.slug, fill)
 

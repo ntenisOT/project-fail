@@ -354,7 +354,9 @@ class PairWindow:
         return records
 
     def on_trade(self, now: float, side_up: bool, price: float, size: float,
-                 taker_side: str) -> dict[str, float | str] | None:
+                 taker_side: str, received_at: float | None = None,
+                 ) -> dict[str, float | str] | None:
+        known_at = now if received_at is None else received_at
         if taker_side.upper() not in ("BUY", "SELL"):
             return None
         order_side = "buy" if taker_side.upper() == "SELL" else "sell"
@@ -397,7 +399,7 @@ class PairWindow:
             self.inventory[side_up] -= fill
             self.cash += notional
             self.sells += 1
-            self._record_sell_pair(now, side_up, fill, order.price)
+            self._record_sell_pair(known_at, side_up, fill, order.price)
             signed_cash = notional
         if order.size <= 1e-9:
             self._close_order(key, now, cancelled=False)

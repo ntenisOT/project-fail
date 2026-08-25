@@ -254,6 +254,7 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 28 | 08-25 04:xx | reject dominated timed taker completion; stop new mint pairs at T-60 while completing open legs |
 | 29 | 08-25 04:xx | raise the bounded market-frame burst buffer after queue-64 slow-consumer disconnects |
 | 30 | 08-25 05:xx | replace disproven T-60 cutoff with immediate fee-aware complementary-depth flattening |
+| 31 | 08-25 05:xx | start hedge reaction latency at local fill receipt while retaining exchange-time maker causality |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

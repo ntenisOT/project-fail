@@ -139,8 +139,11 @@ still fill while a delayed cancellation is in flight, and stale post-only
 replacements are rejected. Once one token fills, its exact open-leg price caps
 or floors the opposite-token quote; the reported pair sums are FIFO-matched
 fills rather than same-time quote sums. Any market-WebSocket disconnect
-invalidates the active window because missed trades cannot be reconstructed;
-heartbeats report rolling server-event p50/p90/max lag and reconnect count.
+invalidates the active window because missed trades cannot be reconstructed. A
+`book` or `price_change` event arriving more than `PAPER_MAX_EVENT_LAG_MS`
+(400 ms by default) late also invalidates only its affected asset-window;
+heartbeats report rolling server-event p50/p90/max lag, stale-event count, and
+reconnect count.
 
 This is substantially less optimistic than the retired print-skimming model,
 but still cannot model private cancellations ahead of us, exchange order
@@ -235,7 +238,7 @@ No place-mode or approval command is published while the launch gate is closed.
 `MINTER_PRIVATE_KEY`, `MINTER_ADDRESS` (mint EOA) · `DEPLOY_REGION=eu-west-1`
 (legacy topology label, **not** an eligibility check) · `TELEGRAM_*` (reports) ·
 `PAPER_SUMMARY_MINS`, `PAPER_ASSETS`,
-`PAPER_ACTION_LATENCY_MS` ·
+`PAPER_ACTION_LATENCY_MS`, `PAPER_MAX_EVENT_LAG_MS` ·
 optional `POLYGON_RPC_URL`,
 `MINT_USD`, `MINT_DAY_CAP`, `MINT_SPREAD`, `LIVE_EXECUTOR_MODE`, `MINTBOT_MODE`.
 

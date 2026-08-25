@@ -16,6 +16,15 @@ def event_time_s(event: Mapping[str, object]) -> float | None:
     return timestamp / 1000 if timestamp >= 100_000_000_000 else timestamp
 
 
+def stale_market_event(event: Mapping[str, object], received_at: float,
+                       max_lag_s: float) -> bool:
+    """Fail closed when a causal book update is missing or arrives too late."""
+    if event.get("event_type") not in ("book", "price_change"):
+        return False
+    event_at = event_time_s(event)
+    return event_at is None or received_at - event_at > max_lag_s
+
+
 class FeedHealth:
     def __init__(self, sample_size: int = 4096) -> None:
         self.lag_ms: collections.deque[float] = collections.deque(maxlen=sample_size)

@@ -13,7 +13,12 @@ import time
 
 import websockets
 
-from live.feed_health import FeedHealth, MARKET_WS_MAX_QUEUE, event_time_s
+from live.feed_health import (
+    FeedHealth,
+    MARKET_WS_MAX_QUEUE,
+    event_time_s,
+    stale_market_event,
+)
 from live.window_clock import boundary_aligned_delay
 from paper import envload, report
 from paper.ledger_writer import LedgerWriter
@@ -30,6 +35,11 @@ log = logging.getLogger("paper.run")
 ACTION_LATENCY_S = float(os.environ.get("PAPER_ACTION_LATENCY_MS", "65")) / 1000
 if not 0.01 <= ACTION_LATENCY_S <= 0.5:
     raise RuntimeError("PAPER_ACTION_LATENCY_MS must be between 10 and 500")
+MAX_MARKET_EVENT_LAG_S = float(
+    os.environ.get("PAPER_MAX_EVENT_LAG_MS", "400")
+) / 1000
+if not 0.05 <= MAX_MARKET_EVENT_LAG_S <= 5:
+    raise RuntimeError("PAPER_MAX_EVENT_LAG_MS must be between 50 and 5000")
 DECISION_CADENCE_S = 0.01
 
 ASSETS = dict(ASSET_PREFIX)
@@ -183,12 +193,39 @@ def _quote_windows(asset: str, now: float) -> None:
             S.ledger.record_fill(now, name, asset, window.slug, fill)
 
 
+def _affected_assets(event: dict[str, object]) -> set[str]:
+    tokens: set[str] = set()
+    token = str(event.get("asset_id") or "")
+    if token:
+        tokens.add(token)
+    rows = event.get("price_changes") or []
+    if isinstance(rows, list):
+        tokens.update(
+            str(row.get("asset_id") or "")
+            for row in rows if isinstance(row, dict)
+        )
+    return {S.token_map[token][0] for token in tokens if token in S.token_map}
+
+
+def _invalidate_stale_market_event(event: dict[str, object], now: float) -> None:
+    if not stale_market_event(event, now, MAX_MARKET_EVENT_LAG_S):
+        return
+    assets = _affected_assets(event)
+    if not assets:
+        return
+    S.events["stale_market_event"] += 1
+    for asset in assets:
+        for window in (S.active.get(asset) or {}).values():
+            window.invalidate(now)
+
+
 def handle_event(event: dict[str, object]) -> None:
     event_type = str(event.get("event_type") or "?")
     S.events[event_type] += 1
     now = time.time()
     S.feed_health.observe(event, now)
     S.books.apply(event, now)
+    _invalidate_stale_market_event(event, now)
     if event_type != "last_trade_price":
         return
     token = str(event.get("asset_id") or "")
@@ -318,9 +355,10 @@ async def main() -> None:
         raise SystemExit("paper KILL present")
     names = [config.name for config in STRATEGIES]
     log.info("focused pair paper starting | strategies=%s | queue-ahead fills | "
-             "action-latency=%dms | decision cadence=%dms | "
+             "action-latency=%dms | max-market-lag=%dms | decision cadence=%dms | "
              "official Gamma outcomes | assets=%s",
              names, round(ACTION_LATENCY_S * 1000),
+             round(MAX_MARKET_EVENT_LAG_S * 1000),
              round(DECISION_CADENCE_S * 1000), list(ASSETS))
     try:
         await asyncio.gather(window_task(), settlement_task(), market_task(),

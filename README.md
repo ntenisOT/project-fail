@@ -146,8 +146,8 @@ completion, and the smallest mint falsification controls:
 | Strategy | Mechanic |
 |---|---|
 | `basket99` | Five-share maker baseline; keep cumulative completed-pair average ≤$0.99 |
-| `basket99t270` | Basket99 twin that waits until T+270, then takes only a displayed complement whose fee-inclusive cost preserves the rolling $0.99 cap |
 | `basket99t270d` | T+270 twin that may round a 4.90–4.999-share complement to the five-share market minimum, leaving at most 0.1 opposite-token dust and exceeding the per-token cap by at most that dust |
+| `basket99x50` | Same five-share maker clips and rolling cap as baseline, but a 50-share inventory ceiling; tests whether repeated small cycles amortize market-minimum residue without changing order size |
 | `mintcycle5` | One five-share complete-set pair per window; tests whether repeated mint churn compounds residue risk |
 | `mintrepair5p95` | Five-set repair twin that accepts a fee-inclusive pair as low as $0.95 after 60 seconds; it deliberately pays for tail-risk reduction and remains an A/B until that insurance cost is measured |
 | `mintrepair5p100` | Five-set mint twin that gives maker completion 60 seconds, then reduces executable residual depth only when the fee-inclusive pair remains non-loss-making; near-minimum dust may round up by at most 0.1 share |
@@ -404,6 +404,7 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 65 | 08-25 16:56 | let the dust twin exceed its per-token inventory cap by at most 0.1 share after Gen64 proved saturation made it inert; replace the redundant T+180 arm with a $1.00 mint-repair floor A/B |
 | 66 | 08-25 17:29 | accept only the configured dust allowance at settlement and isolate a broken paper arm instead of killing the cohort; retain the $0.95/$1.00 A/B because the second $0.95 repair capped a $2.30 unmatched loss at $0.19 |
 | 67 | 08-25 17:40 | preserve every strategy parameter; after another 1013 with shallow application queues, add frame/event counts, JSON parse peaks, and event-loop scheduling lag to localize transport backpressure without guessing at a latency constant |
+| 68 | 08-25 18:05 | retire the redundant plain T+270 arm because the dust twin is its bounded superset; add one 50-share-cap Basket99 arm with unchanged five-share clips to test winner-like repetition and minimum-size amortization separately from order size |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

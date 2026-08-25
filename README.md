@@ -153,8 +153,10 @@ invalidates the active window because missed trades cannot be reconstructed. A
 token streams catch up. Existing hypothetical exchange orders remain exposed and
 ordered delayed trades can still fill them; this models measured latency instead
 of censoring it. Settlement reports split these windows into `lagged` and `clean`
-economics. Heartbeats report rolling server-event p50/p90/max lag, stale-event
-count, and reconnect count. The ledger separately persists every truly invalid
+economics. A delayed `last_trade_price` does not freeze a fresh book, but its
+late fill awareness independently marks exposed windows `lagged`. Heartbeats
+report rolling server-event p50/p90/max lag, stale/delayed-trade event counts,
+and reconnect count. The ledger separately persists every truly invalid
 strategy-window, its reason, fills, peak committed capital, cash, and residual
 inventory. Reports include the cohort validity rate so rejected windows cannot
 silently disappear from the denominator. Completed opposite-token fills retain
@@ -308,6 +310,7 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 42 | 08-25 08:15 | score feed validity per strategy and include resting-bid collateral in capital; continue the BTC basket control |
 | 43 | 08-25 08:34 | persist invalid-window exposure and trigger lag; report FIFO pair d50/d90; a wrong all-asset bootstrap was caught before T+30 and replaced by the verified BTC-only runner |
 | 44 | 08-25 08:47 | stop censoring measured public-feed tails: freeze decisions, retain resting exposure and delayed ordered trades, then report clean versus lagged economics separately |
+| 45 | 08-25 08:54 | include delayed trade/fill awareness in the lagged quality class after Gen44 observed a 1.716 s trade tail that causal-book-only labeling would have missed |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

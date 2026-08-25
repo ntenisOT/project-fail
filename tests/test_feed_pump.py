@@ -5,9 +5,8 @@ import time
 from live.feed_pump import (
     FeedPump,
     FeedPumpStats,
-    planned_boundary_refresh_allowed,
     subscription_messages,
-    subscription_transition,
+    websocket_frame_depth,
 )
 from live.loop_health import EventLoopHealth
 
@@ -67,29 +66,25 @@ def test_subscription_rotation_adds_before_removing() -> None:
     ]
 
 
-def test_planned_refresh_requires_a_new_uncommitted_window() -> None:
-    assert planned_boundary_refresh_allowed(301.0, [300.0], has_commitment=False)
-    assert not planned_boundary_refresh_allowed(301.0, [], has_commitment=False)
-    assert not planned_boundary_refresh_allowed(301.0, [300.0], has_commitment=True)
-    assert not planned_boundary_refresh_allowed(311.0, [300.0], has_commitment=False)
-    assert not planned_boundary_refresh_allowed(299.0, [300.0], has_commitment=False)
+def test_websocket_internal_frame_depth_is_reported_and_reset() -> None:
+    class Receiver:
+        frames = [object()] * 17
 
+    class Socket:
+        recv_messages = Receiver()
 
-def test_subscription_transition_preserves_committed_exposure() -> None:
-    planned, messages = subscription_transition(
-        {"old-up", "old-down"}, {"new-up", "new-down"}, now=301.0,
-        window_starts=[300.0], has_commitment=False,
-    )
-    assert planned and messages == []
+    stats = FeedPumpStats()
+    depth = websocket_frame_depth(Socket())
+    assert depth == 17
+    stats.observe_ws_depth(depth)
 
-    planned, messages = subscription_transition(
-        {"old-up", "old-down"}, {"new-up", "new-down"}, now=301.0,
-        window_starts=[300.0], has_commitment=True,
-    )
-    assert not planned
-    assert messages == subscription_messages(
-        {"old-up", "old-down"}, {"new-up", "new-down"},
-    )
+    snapshot = stats.snapshot(reset_interval=True)
+    assert snapshot["ws_hwm"] == snapshot["interval_ws_hwm"] == 17
+    assert snapshot["ws_samples"] == snapshot["interval_ws_samples"] == 1
+    assert snapshot["ws_unavailable"] == 0
+    after = stats.snapshot()
+    assert after["ws_hwm"] == 17
+    assert after["interval_ws_hwm"] == after["interval_ws_samples"] == 0
 
 
 def test_event_loop_health_retains_lifetime_and_resets_interval_peak() -> None:

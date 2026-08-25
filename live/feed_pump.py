@@ -10,7 +10,6 @@ from typing import Protocol, Sequence
 
 EVENT_QUEUE_CAPACITY = 8192
 PROCESS_YIELD_EVERY = 64
-BOUNDARY_REFRESH_GRACE_S = 10.0
 
 
 class WebSocketLike(Protocol):
@@ -22,28 +21,16 @@ class FeedBacklogError(RuntimeError):
     pass
 
 
-def planned_boundary_refresh_allowed(
-    now: float, window_starts: Sequence[float], has_commitment: bool,
-) -> bool:
-    """Refresh only before a new-window decision can create exposure."""
-    return (
-        bool(window_starts)
-        and not has_commitment
-        and all(0 <= now - start <= BOUNDARY_REFRESH_GRACE_S
-                for start in window_starts)
-    )
-
-
-def subscription_transition(
-    current: set[str], target: set[str], *, now: float,
-    window_starts: Sequence[float], has_commitment: bool,
-) -> tuple[bool, list[dict[str, str | Sequence[str]]]]:
-    """Choose a planned reconnect or a safe in-place token rotation."""
-    if current == target:
-        return False, []
-    if planned_boundary_refresh_allowed(now, window_starts, has_commitment):
-        return True, []
-    return False, subscription_messages(current, target)
+def websocket_frame_depth(ws: object) -> int | None:
+    """Read the websockets client's internal frame-buffer depth when exposed."""
+    receiver = getattr(ws, "recv_messages", None)
+    frames = getattr(receiver, "frames", None)
+    if frames is None:
+        return None
+    try:
+        return len(frames)
+    except TypeError:
+        return None
 
 
 class FeedPumpStats:
@@ -61,6 +48,12 @@ class FeedPumpStats:
         self.frame_event_max = 0
         self.parse_max_ms = 0.0
         self.interval_parse_max_ms = 0.0
+        self.ws_frame_high_water = 0
+        self.interval_ws_frame_high_water = 0
+        self.ws_frame_samples = 0
+        self.interval_ws_frame_samples = 0
+        self.ws_depth_unavailable = 0
+        self.interval_ws_depth_unavailable = 0
 
     def observe_depth(self, depth: int) -> None:
         self.high_water = max(self.high_water, depth)
@@ -81,6 +74,18 @@ class FeedPumpStats:
         self.parse_max_ms = max(self.parse_max_ms, parse_ms)
         self.interval_parse_max_ms = max(self.interval_parse_max_ms, parse_ms)
 
+    def observe_ws_depth(self, depth: int | None) -> None:
+        if depth is None:
+            self.ws_depth_unavailable += 1
+            self.interval_ws_depth_unavailable += 1
+            return
+        self.ws_frame_samples += 1
+        self.interval_ws_frame_samples += 1
+        self.ws_frame_high_water = max(self.ws_frame_high_water, depth)
+        self.interval_ws_frame_high_water = max(
+            self.interval_ws_frame_high_water, depth,
+        )
+
     def snapshot(self, *, reset_interval: bool = False) -> dict[str, int | float]:
         snapshot = {
             "hwm": self.high_water,
@@ -94,6 +99,12 @@ class FeedPumpStats:
             "frame_event_max": self.frame_event_max,
             "parse_max_ms": round(self.parse_max_ms, 3),
             "interval_parse_max_ms": round(self.interval_parse_max_ms, 3),
+            "ws_hwm": self.ws_frame_high_water,
+            "interval_ws_hwm": self.interval_ws_frame_high_water,
+            "ws_samples": self.ws_frame_samples,
+            "interval_ws_samples": self.interval_ws_frame_samples,
+            "ws_unavailable": self.ws_depth_unavailable,
+            "interval_ws_unavailable": self.interval_ws_depth_unavailable,
         }
         if reset_interval:
             self.interval_high_water = 0
@@ -101,6 +112,9 @@ class FeedPumpStats:
             self.interval_frames = 0
             self.interval_frame_events = 0
             self.interval_parse_max_ms = 0.0
+            self.interval_ws_frame_high_water = 0
+            self.interval_ws_frame_samples = 0
+            self.interval_ws_depth_unavailable = 0
         return snapshot
 
 
@@ -136,6 +150,7 @@ class FeedPump:
     async def _read(self, ws: WebSocketLike, stop: asyncio.Event) -> None:
         last_ping = time.monotonic()
         while not stop.is_set():
+            self.stats.observe_ws_depth(websocket_frame_depth(ws))
             elapsed = time.monotonic() - last_ping
             if elapsed >= 10:
                 await ws.send("PING")
@@ -146,6 +161,7 @@ class FeedPump:
                 )
             except asyncio.TimeoutError:
                 continue
+            self.stats.observe_ws_depth(websocket_frame_depth(ws))
             if raw == "PONG":
                 continue
             parse_started = time.monotonic()

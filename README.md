@@ -390,6 +390,7 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 58 | 08-25 12:54 | retain the board; attribute stale and delayed events only when their exchange timestamp overlaps an actual order, pending action, or unpaired leg |
 | 59 | 08-25 13:11 | retire the repeatedly unproductive Basket98 arm; compare one-pair versus four-pair mint churn and enforce market share minimums on maker posts |
 | 60 | 08-25 13:40 | preserve the strategy board; add share-weighted maker fill age and signed 1/5/15-second midpoint markouts before testing repricing or a signal gate |
+| 61 | 08-25 14:55 | preserve all trading behavior; collect the official 60-second Chainlink TWAP causally at T+30 and audit exact-opening coverage before designing any signal gate |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

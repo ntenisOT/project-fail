@@ -319,6 +319,8 @@ class FocusedPairTests(unittest.TestCase):
             output = report.text(path)
             self.assertIn("carry", output)
             self.assertIn("0.970", output)
+            self.assertIn("asset breakdown", output)
+            self.assertIn("btc", output)
             ledger.close()
 
 

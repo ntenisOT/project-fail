@@ -34,6 +34,17 @@ class Snapshot:
     pre_activation_trades: int
 
 
+@dataclasses.dataclass(frozen=True)
+class AssetSnapshot:
+    strategy: str
+    asset: str
+    windows: int
+    pnl: float
+    neutral_pnl: float
+    worst_pnl: float
+    unmatched: float
+
+
 def _metrics(db: sqlite3.Connection, strategy: str) -> dict[str, float]:
     totals: dict[str, float] = {}
     rows = db.execute("SELECT data FROM window_metrics WHERE strategy=?", (strategy,))
@@ -49,7 +60,7 @@ def _metrics(db: sqlite3.Connection, strategy: str) -> dict[str, float]:
 
 
 def _bankroll(rows: list[tuple[float, str, float]]) -> float:
-    """Conservative peak: each window's peak capital remains locked for 10m."""
+    """Conservative peak: each window's peak capital remains locked for 15m."""
     events: list[tuple[float, float]] = []
     for settled_at, slug, capital in rows:
         try:
@@ -119,6 +130,19 @@ def snapshot_one(db: sqlite3.Connection, strategy: str) -> Snapshot:
     )
 
 
+def asset_snapshots(db: sqlite3.Connection) -> list[AssetSnapshot]:
+    rows = db.execute(
+        """SELECT strategy,asset,count(*),sum(pnl),
+                  sum(cash + resid_shares/2),
+                  sum(cash + min(residual,resid_shares-residual)),
+                  sum(abs(2*residual-resid_shares))
+           FROM settlements GROUP BY strategy,asset ORDER BY strategy,asset"""
+    )
+    return [AssetSnapshot(str(strategy), str(asset), int(windows), float(pnl),
+                          float(neutral), float(worst), float(unmatched))
+            for strategy, asset, windows, pnl, neutral, worst, unmatched in rows]
+
+
 def _format_sum(value: float | None) -> str:
     return "-" if value is None else f"{value:.3f}"
 
@@ -155,6 +179,15 @@ def text(db_path: str = "paper/paper.db") -> str:
             f"{row.queue_consumed:>8.0f}{row.action_ms:>6.0f}ms"
             f"{row.post_only_rejects:>8}{row.pre_activation_trades:>8}"
         )
+    out.extend((
+        "asset breakdown; pnl/neutral/worst keep directional luck and concentration visible",
+        f"{'strategy':<14}{'asset':<6}{'wnd':>5}{'pnl$':>10}"
+        f"{'neutral$':>10}{'worst$':>10}{'unmat':>8}",
+    ))
+    for asset_row in asset_snapshots(db):
+        out.append(f"{asset_row.strategy:<14}{asset_row.asset:<6}{asset_row.windows:>5}"
+                   f"{asset_row.pnl:>+10.2f}{asset_row.neutral_pnl:>+10.2f}"
+                   f"{asset_row.worst_pnl:>+10.2f}{asset_row.unmatched:>8.1f}")
     out.extend((
         "buySum/sellSum are FIFO-matched opposite-token fills; unmat is end inventory.",
         "edge is FIFO-paired economics; neutral marks every end token at 50 cents.",

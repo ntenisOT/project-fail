@@ -249,6 +249,7 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 23 | 08-25 04:xx | invalidate reconnect-tainted windows; increase burst queue to 64 frames and measure server-event lag directly |
 | 24 | 08-25 04:xx | match trades at exchange event time and reject delayed prints that predate simulated order activation |
 | 25 | 08-25 04:xx | align paper and mintbot discovery wakeups to exact five-minute boundaries instead of fixed-loop phase |
+| 26 | 08-25 04:xx | replace unconditional 40-second taker cleanup with a fee-net pair-floor guard |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

@@ -161,6 +161,21 @@ class FocusedPairTests(unittest.TestCase):
         self.assertAlmostEqual(metrics["taker_fees"], fee)
         self.assertAlmostEqual(metrics["unmatched_end"], 0)
 
+    def test_mint_hedge_refuses_a_pair_below_the_net_floor(self) -> None:
+        config = PairConfig(
+            "hedge", "mint", 0.01, action_latency_s=0,
+            mint_sets=5, sell_sum_floor=1.005, taker_hedge_after_s=5,
+        )
+        window = PairWindow(config, "btc", "btc-updown-5m-0", 0, "up", "down", 0)
+        up = book(0.58, 5, 0.60, 0)
+        window.on_books(1.0, up, book(0.43, 5, 0.44, 0))
+        window.on_trade(1.1, True, 0.60, 5, "BUY")
+        down = book(0.30, 5, 0.31, 0)
+        window.on_books(2.0, up, down)
+        self.assertFalse(window.on_books(6.1, up, down))
+        self.assertEqual(window.inventory, {True: 0, False: 5})
+        self.assertEqual(window.taker_fees, 0)
+
     def test_mint_cycle_anchors_and_completes_asymmetric_fill(self) -> None:
         config = PairConfig(
             "mint", "mint", 0.5, action_latency_s=0,

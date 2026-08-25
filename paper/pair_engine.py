@@ -1,4 +1,4 @@
-"""Queue-aware, maker-only complete-set inventory simulation."""
+"""Queue-aware complete-set inventory simulation."""
 
 from __future__ import annotations
 
@@ -301,6 +301,10 @@ class PairWindow:
         shares = min(self.sell_pairs.open_shares, self.inventory[hedge_side])
         legs = sweep(up if hedge_side else down, "sell", shares)
         if not legs:
+            return []
+        net_cash = sum(leg.price * leg.shares - leg.fee for leg in legs)
+        if (self.sell_pairs.worst_open_price(buying=False) + net_cash / shares
+                < self.config.sell_sum_floor - 1e-9):
             return []
         self._close_order((hedge_side, "sell"), now, cancelled=True)
         records: list[dict[str, float | str]] = []

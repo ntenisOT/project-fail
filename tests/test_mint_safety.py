@@ -29,6 +29,7 @@ class MintSafetyTests(unittest.TestCase):
             {"p50_ms": 10, "p90_ms": 10, "max_ms": 25, "reconnects": 1},
         )
         self.assertEqual(event_time_s({"timestamp": "1787631300040"}), 1787631300.04)
+        self.assertIsNone(event_time_s({}))
 
     def test_retired_lockbot_place_mode_is_fail_closed(self) -> None:
         original = lockbot.MODE

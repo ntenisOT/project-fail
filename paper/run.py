@@ -203,7 +203,10 @@ def handle_event(event: dict[str, object]) -> None:
             or not 0 < price < 1 or size <= 0):
         return
     asset, side_up = info
-    traded_at = event_time_s(event) or now
+    traded_at = event_time_s(event)
+    if traded_at is None:
+        S.events["last_trade_missing_timestamp"] += 1
+        return
     for name, window in (S.active.get(asset) or {}).items():
         fill = window.on_trade(traded_at, side_up, price, size, taker_side)
         if fill:

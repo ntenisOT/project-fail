@@ -74,6 +74,7 @@ class FocusedPairTests(unittest.TestCase):
                             "btc", "btc-updown-5m-0", 0, "up", "down", 0)
         window.on_books(10.01, book(0.48, 0, 0.52, 5), book(0.49, 0, 0.51, 5))
         self.assertFalse(window.full_window)
+        self.assertEqual(window.invalid_reason, "late_first_books")
         self.assertFalse(window.orders)
 
     def test_feed_gap_invalidates_window_and_closes_orders(self) -> None:
@@ -81,8 +82,9 @@ class FocusedPairTests(unittest.TestCase):
                             "btc", "btc-updown-5m-0", 0, "up", "down", 0)
         window.on_books(1.0, book(0.48, 0, 0.52, 5), book(0.49, 0, 0.51, 5))
         self.assertTrue(window.orders)
-        window.invalidate(2.0)
+        window.invalidate(2.0, "ws_reconnect")
         self.assertFalse(window.full_window)
+        self.assertEqual(window.invalid_reason, "ws_reconnect")
         self.assertFalse(window.orders)
         self.assertIsNone(window.on_trade(2.1, True, 0.48, 5, "SELL"))
 

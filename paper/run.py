@@ -180,7 +180,8 @@ async def settlement_task() -> None:
             sample = next(iter(pending.windows.values()))
             if not sample.full_window:
                 S.pending.remove(pending)
-                log.info("skipped partial startup window %s", sample.slug)
+                log.info("skipped invalid window %s reason=%s", sample.slug,
+                         sample.invalid_reason or "unknown")
                 continue
             for name, window in pending.windows.items():
                 settlement, metrics = window.settle(now, resolved.winner_up)
@@ -236,7 +237,7 @@ def _invalidate_stale_market_event(event: dict[str, object], now: float) -> None
             exposed = bool(window.orders or window.pending is not None
                            or window.buys or window.sells)
             if exposed:
-                window.invalidate(now)
+                window.invalidate(now, "stale_market_event")
 
 
 def handle_event(event: dict[str, object]) -> None:
@@ -318,7 +319,7 @@ async def market_task() -> None:
                 now = time.time()
                 for windows in S.active.values():
                     for window in windows.values():
-                        window.invalidate(now)
+                        window.invalidate(now, "ws_reconnect")
             if connected_at is not None and time.monotonic() - connected_at >= 5:
                 retry_delay = 0.1
             wait = retry_delay

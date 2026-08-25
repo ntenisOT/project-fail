@@ -134,6 +134,7 @@ class PairWindow:
         self.config, self.asset, self.slug = config, asset, slug
         self.start, self.end = start, start + 300
         self.full_window = (start if observed_at is None else observed_at) <= start + 10
+        self.invalid_reason = None if self.full_window else "partial_startup"
         self.first_books_at: float | None = None
         self.tokens = {True: up_token, False: down_token}
         starting_sets = config.mint_sets if config.mode == "mint" else config.initial_sets
@@ -400,6 +401,7 @@ class PairWindow:
             self.first_books_at = now
             if now > self.start + 10:
                 self.full_window = False
+                self.invalid_reason = "late_first_books"
         if not self.full_window or now < self.start or now >= self.end:
             return []
         self._activate_pending(now, up, down)
@@ -474,8 +476,10 @@ class PairWindow:
         return {"action": order_side, "price": order.price, "size": fill,
                 "signed_cash": signed_cash, "outcome_up": int(side_up)}
 
-    def invalidate(self, now: float) -> None:
+    def invalidate(self, now: float, reason: str = "feed_gap") -> None:
         """Stop scoring after a feed gap that can hide queue-consuming trades."""
+        if self.full_window:
+            self.invalid_reason = reason
         self.full_window = False
         self.pending = None
         for key in list(self.orders):

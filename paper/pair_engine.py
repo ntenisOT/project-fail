@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import math
 from typing import Literal
 
 from paper.order_book import OrderBook
@@ -36,6 +37,49 @@ class PendingRequote:
     desired: dict[tuple[bool, str], float]
 
 
+class PairLots:
+    """Match opposite-token fills and retain the exact open-leg prices."""
+
+    def __init__(self) -> None:
+        self.lots: dict[bool, list[list[float]]] = {True: [], False: []}
+        self.paired_shares = 0.0
+        self.paired_value = 0.0
+
+    @property
+    def open_side(self) -> bool | None:
+        sides = [side for side in (True, False) if self.lots[side]]
+        if len(sides) > 1:
+            raise RuntimeError("opposite unmatched pair lots")
+        return sides[0] if sides else None
+
+    def worst_open_price(self, buying: bool) -> float:
+        side = self.open_side
+        if side is None:
+            raise RuntimeError("no open pair lot")
+        prices = [lot[1] for lot in self.lots[side]]
+        return max(prices) if buying else min(prices)
+
+    def add(self, side: bool, shares: float, price: float) -> None:
+        remaining = shares
+        opposite = self.lots[not side]
+        while remaining > 1e-9 and opposite:
+            lot = opposite[0]
+            matched = min(remaining, lot[0])
+            self.paired_shares += matched
+            self.paired_value += matched * (price + lot[1])
+            remaining -= matched
+            lot[0] -= matched
+            if lot[0] <= 1e-9:
+                opposite.pop(0)
+        if remaining > 1e-9:
+            self.lots[side].append([remaining, price])
+
+
+def _tick_price(value: float, tick: float, round_up: bool) -> float:
+    units = math.ceil((value - 1e-9) / tick) if round_up else math.floor((value + 1e-9) / tick)
+    return round(units * tick, 10)
+
+
 class PairWindow:
     """Quotes both tokens while preserving pair balance and public queue depth."""
 
@@ -57,34 +101,51 @@ class PairWindow:
         self.rest_seconds = self.queue_consumed = self.filled_shares = 0.0
         self.action_seconds = 0.0
         self.action_batches = self.post_only_rejects = 0
-        self.buy_shares = {True: 0.0, False: 0.0}
-        self.buy_usd = {True: 0.0, False: 0.0}
-        self.sell_shares = {True: 0.0, False: 0.0}
-        self.sell_usd = {True: 0.0, False: 0.0}
+        self.buy_pairs = PairLots()
+        self.sell_pairs = PairLots()
 
     def _desired(self, up: OrderBook, down: OrderBook) -> dict[tuple[bool, str], float]:
         books = {True: up, False: down}
         desired: dict[tuple[bool, str], float] = {}
         up_bid, down_bid = up.best_bid, down.best_bid
-        if (self.config.mode != "mint" and up_bid is not None and down_bid is not None
-                and up_bid + down_bid <= self.config.buy_sum_ceiling):
-            for side in (True, False):
+        if self.config.mode != "mint" and up_bid is not None and down_bid is not None:
+            open_side = self.buy_pairs.open_side
+            buy_sides = (True, False) if open_side is None else (not open_side,)
+            for side in buy_sides:
                 inv, other = self.inventory[side], self.inventory[not side]
-                if inv <= other + 0.1 and inv + self.config.clip_shares <= self.config.max_inventory:
-                    price = books[side].best_bid
-                    assert price is not None
+                if inv > other + 0.1 or inv + self.config.clip_shares > self.config.max_inventory:
+                    continue
+                price = books[side].best_bid
+                assert price is not None
+                if open_side is None:
+                    if up_bid + down_bid > self.config.buy_sum_ceiling:
+                        continue
+                else:
+                    cap = (self.config.buy_sum_ceiling
+                           - self.buy_pairs.worst_open_price(buying=True))
+                    price = min(price, _tick_price(cap, books[side].tick, round_up=False))
+                if 0 < price < 1:
                     desired[(side, "buy")] = price
 
         up_ask, down_ask = up.best_ask, down.best_ask
         if (self.config.mode in ("churn", "mint")
-                and up_ask is not None and down_ask is not None
-                and up_ask + down_ask >= self.config.sell_sum_floor):
-            for side in (True, False):
+                and up_ask is not None and down_ask is not None):
+            open_side = self.sell_pairs.open_side
+            sell_sides = (True, False) if open_side is None else (not open_side,)
+            for side in sell_sides:
                 inv, other = self.inventory[side], self.inventory[not side]
                 if inv + 0.1 >= other and inv >= self.config.clip_shares:
                     price = books[side].best_ask
                     assert price is not None
-                    desired[(side, "sell")] = price
+                    if open_side is None:
+                        if up_ask + down_ask < self.config.sell_sum_floor:
+                            continue
+                    else:
+                        floor = (self.config.sell_sum_floor
+                                 - self.sell_pairs.worst_open_price(buying=False))
+                        price = max(price, _tick_price(floor, books[side].tick, round_up=True))
+                    if 0 < price < 1:
+                        desired[(side, "sell")] = price
         return desired
 
     def _close_order(self, key: tuple[bool, str], now: float, cancelled: bool) -> None:
@@ -172,28 +233,18 @@ class PairWindow:
             self.cash -= notional
             self.peak = max(self.peak, -self.cash)
             self.buys += 1
-            self.buy_shares[side_up] += fill
-            self.buy_usd[side_up] += notional
+            self.buy_pairs.add(side_up, fill, order.price)
             signed_cash = -notional
         else:
             self.inventory[side_up] -= fill
             self.cash += notional
             self.sells += 1
-            self.sell_shares[side_up] += fill
-            self.sell_usd[side_up] += notional
+            self.sell_pairs.add(side_up, fill, order.price)
             signed_cash = notional
         if order.size <= 1e-9:
             self._close_order(key, now, cancelled=False)
         return {"action": order_side, "price": order.price, "size": fill,
-                "signed_cash": signed_cash}
-
-    @staticmethod
-    def _pair_proxy(shares: dict[bool, float], usd: dict[bool, float]) -> tuple[float, float]:
-        paired = min(shares.values())
-        if paired <= 0:
-            return 0.0, 0.0
-        price_sum = sum(usd[side] / shares[side] for side in (True, False))
-        return paired, paired * price_sum
+                "signed_cash": signed_cash, "outcome_up": int(side_up)}
 
     def settle(self, now: float, outcome_up: int) -> tuple[dict[str, float | int], dict[str, float]]:
         self.pending = None
@@ -201,8 +252,6 @@ class PairWindow:
             self._close_order(key, now, cancelled=True)
         residual = self.inventory[True] * outcome_up + self.inventory[False] * (1 - outcome_up)
         paired = min(self.inventory.values())
-        buy_pair_shares, buy_pair_cost = self._pair_proxy(self.buy_shares, self.buy_usd)
-        sell_pair_shares, sell_pair_proceeds = self._pair_proxy(self.sell_shares, self.sell_usd)
         fills = self.buys + self.sells
         settlement = {
             "cash": self.cash, "residual": residual, "pnl": self.cash + residual,
@@ -218,7 +267,9 @@ class PairWindow:
             "action_seconds": self.action_seconds, "action_batches": self.action_batches,
             "post_only_rejects": self.post_only_rejects,
             "paired_end": paired, "unmatched_end": abs(self.inventory[True] - self.inventory[False]),
-            "buy_pair_shares": buy_pair_shares, "buy_pair_cost": buy_pair_cost,
-            "sell_pair_shares": sell_pair_shares, "sell_pair_proceeds": sell_pair_proceeds,
+            "buy_pair_shares": self.buy_pairs.paired_shares,
+            "buy_pair_cost": self.buy_pairs.paired_value,
+            "sell_pair_shares": self.sell_pairs.paired_shares,
+            "sell_pair_proceeds": self.sell_pairs.paired_value,
         }
         return settlement, metrics

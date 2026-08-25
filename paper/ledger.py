@@ -16,7 +16,7 @@ class Ledger:
             """
             CREATE TABLE IF NOT EXISTS fills(
               ts REAL, strategy TEXT, asset TEXT, slug TEXT,
-              action TEXT, price REAL, size REAL, signed_cash REAL);
+              action TEXT, price REAL, size REAL, signed_cash REAL, outcome_up INT);
             CREATE TABLE IF NOT EXISTS settlements(
               ts REAL, strategy TEXT, asset TEXT, slug TEXT, cash REAL, residual REAL,
               pnl REAL, capital REAL, buys INT, sells INT, resid_shares REAL,
@@ -25,6 +25,9 @@ class Ledger:
               ts REAL, strategy TEXT, asset TEXT, slug TEXT, data TEXT);
             """
         )
+        columns = {row[1] for row in self.db.execute("PRAGMA table_info(fills)")}
+        if "outcome_up" not in columns:
+            self.db.execute("ALTER TABLE fills ADD COLUMN outcome_up INT")
         self.db.commit()
 
     def record_metrics(self, ts, strategy, asset, slug, metrics) -> None:
@@ -39,8 +42,11 @@ class Ledger:
 
     def record_fill(self, ts, strategy, asset, slug, rec) -> None:
         self.db.execute(
-            "INSERT INTO fills VALUES(?,?,?,?,?,?,?,?)",
-            (ts, strategy, asset, slug, rec["action"], rec["price"], rec["size"], rec["signed_cash"]),
+            """INSERT INTO fills(
+                 ts,strategy,asset,slug,action,price,size,signed_cash,outcome_up
+               ) VALUES(?,?,?,?,?,?,?,?,?)""",
+            (ts, strategy, asset, slug, rec["action"], rec["price"], rec["size"],
+             rec["signed_cash"], rec["outcome_up"]),
         )
         self.db.commit()
 

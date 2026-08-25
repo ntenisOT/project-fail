@@ -111,7 +111,9 @@ Gamma outcomes settle each window. A partial startup window is observed but not
 scored. Actions activate after a configurable 65 ms delay: approximately twice
 fresh Ireland GET p90 as a conservative cancel/replace proxy. Existing orders can
 still fill while a delayed cancellation is in flight, and stale post-only
-replacements are rejected.
+replacements are rejected. Once one token fills, its exact open-leg price caps
+or floors the opposite-token quote; the reported pair sums are FIFO-matched
+fills rather than same-time quote sums.
 
 This is substantially less optimistic than the retired print-skimming model,
 but still cannot model private cancellations ahead of us, exchange order
@@ -219,6 +221,7 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 10 | 21:53 | mint_hl / mint_tw debut + mintbot v1 shadow |
 | 11 | 22:15 | **mintbot v2: 15 mint-stack review fixes**; paper mints 20 sets; order-sized sells restored; budget fix |
 | 12 | 08-25 02:xx | four queue-aware pair/inventory hypotheses; official outcomes; measured 65 ms action delay |
+| 13 | 08-25 02:4x | open-leg price constrains later pair completion; outcome side persisted per fill |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

@@ -129,7 +129,7 @@ def text(db_path: str = "paper/paper.db") -> str:
             f"{row.post_only_rejects:>8}"
         )
     out.extend((
-        "buySum/sellSum are matched-share proxies; unmat is end-of-window unmatched shares.",
+        "buySum/sellSum are FIFO-matched opposite-token fills; unmat is end inventory.",
         "Queue-ahead depth is consumed before a maker fill; rebates are excluded.",
         "act is measured simulated action activation; reject is stale post-only prevention.",
     ))

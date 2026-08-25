@@ -40,6 +40,8 @@ generation demonstrates all of the following:
 - The result is not explained by one asset, one outcome direction, or a handful
   of windows.
 - Paired buy sum is below $1 and, for churn, paired sell sum is above $1.
+- A first-leg fill constrains the later opposite-token quote; simultaneous quote
+  sums are not accepted as evidence of realized pair economics.
 - Unmatched inventory and tail losses remain inside explicit caps.
 - Queue-ahead consumption, quote residence, post/cancel rate, and fill rate are
   credible rather than print-skimming assumptions.

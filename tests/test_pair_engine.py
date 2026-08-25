@@ -59,6 +59,31 @@ class FocusedPairTests(unittest.TestCase):
             settled, _ = window.settle(300.0, outcome)
             self.assertAlmostEqual(float(settled["pnl"]), 0.15)
 
+    def test_open_buy_leg_caps_the_actual_completion_price(self) -> None:
+        window = PairWindow(PairConfig("carry", "accumulate", 0.6, action_latency_s=0),
+                            "btc", "btc-updown-5m-0", 0, "up", "down", 0)
+        window.on_books(1.0, book(0.80, 0, 0.82, 5), book(0.19, 0, 0.21, 5))
+        window.on_trade(1.1, True, 0.80, 5, "SELL")
+        window.on_books(1.7, book(0.70, 0, 0.72, 5), book(0.29, 0, 0.31, 5))
+        self.assertEqual(window.orders[(False, "buy")].price, 0.19)
+        window.on_trade(1.8, False, 0.19, 5, "SELL")
+        _, metrics = window.settle(300, 1)
+        self.assertAlmostEqual(metrics["buy_pair_cost"] / metrics["buy_pair_shares"], 0.99)
+
+    def test_open_sell_leg_floors_the_actual_completion_price(self) -> None:
+        config = PairConfig("mint", "mint", 0.6, action_latency_s=0,
+                            sell_sum_floor=1.005)
+        window = PairWindow(config, "btc", "btc-updown-5m-0", 0, "up", "down", 0)
+        window.on_books(1.0, book(0.18, 0, 0.20, 0), book(0.79, 0, 0.81, 0))
+        window.on_trade(1.1, True, 0.20, 5, "BUY")
+        window.on_books(1.7, book(0.78, 0, 0.80, 0), book(0.19, 0, 0.21, 0))
+        self.assertEqual(window.orders[(False, "sell")].price, 0.81)
+        window.on_trade(1.8, False, 0.81, 5, "BUY")
+        _, metrics = window.settle(300, 1)
+        self.assertAlmostEqual(
+            metrics["sell_pair_proceeds"] / metrics["sell_pair_shares"], 1.01
+        )
+
     def test_churn_buys_below_one_and_sells_above_one(self) -> None:
         window = PairWindow(PairConfig("churn", "churn", 0.6, action_latency_s=0),
                             "btc", "btc-updown-5m-0", 0, "up", "down", 0)
@@ -92,6 +117,10 @@ class FocusedPairTests(unittest.TestCase):
                 fill = window.on_trade(1.1, side, price, 5, "SELL")
                 assert fill is not None
                 ledger.record_fill(1.1, "carry", "btc", window.slug, fill)
+            outcomes = [row[0] for row in ledger.db.execute(
+                "SELECT outcome_up FROM fills ORDER BY rowid"
+            )]
+            self.assertEqual(outcomes, [1, 0])
             settled, metrics = window.settle(300.0, 1)
             ledger.record_settlement(300.0, "carry", "btc", window.slug, settled)
             ledger.record_metrics(300.0, "carry", "btc", window.slug, metrics)

@@ -236,6 +236,9 @@ bug is also fixed and covered by one focused test.
 - Gen54 persists lifetime feed counters outside each WebSocket connection. A
   real 3.292-second total-age tail remained visible after rolling lag returned
   to 45 ms, while local queue residence stayed at 3 ms and reconnects at zero.
+  Its official mint window completed all four clips at $1.03 for +$0.60
+  neutral/adverse PnL, with 4.9 s / 81.2 s completion d50/d90; the feed tail
+  makes this mechanism evidence rather than an edge estimate.
   The next board keeps `mintcycle20` as the control and replaces ladder with
   `minthedge60p95`: after 60 seconds, it may complete the remaining token through
   displayed depth only at a fee-inclusive pair sum of at least $0.95. This caps
@@ -248,10 +251,15 @@ least a 1–2 hour clean screen and a fresh roughly 21-hour/250-BTC-window cohor
 
 ### 9. No directional signal passes — rejected for now
 
-The latest six-hour `0x0ca4…` cohort looked directionally profitable, but the
-immediately preceding six hours had 41–49% correct calls before expiry and
-negative directional dollars. The public-tape favorite also flipped sign
-between regimes. This is not persistent out-of-sample evidence.
+The 05:55–11:50 UTC winner refresh found real directional leaning, but it failed
+the non-overlapping persistence gate. `0x0cb…` had +8.20 cents/share terminal
+markout on maker fills in the first minute and +10.37 cents/share on taker fills;
+in the preceding six hours those figures were only +0.76 and -1.70 cents/share.
+High-maker `0x21f4…` moved from -0.13 cents/share in the prior cohort to +5.25
+cents/share now. Both lost edge after the first minute; `0x0cb…` earned +$9,071
+at T+60 and gave back roughly $6,143 afterward. This can be regime-dependent
+mispricing capture, but it is not a stable copyable signal. The earlier
+`0x0ca4…` and public-tape screens also flipped between cohorts.
 
 Minimum taker gate:
 

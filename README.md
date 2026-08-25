@@ -118,13 +118,13 @@ from outcome alignment and screen public-tape signals after slippage and fees.
 order so aggregate token averages cannot disguise completion coverage, pair-cost
 distribution, residual imbalance, or pairing delay.
 
-Latest bounded refresh (2026-08-25 03:50–09:45 UTC, BTC): the previously clean
-`0xb27…` accumulator still completed 96.6% of acquired shares with 99.3% maker
-flow and 12 s / 57 s FIFO d50/d90, but its fee-inclusive average pair deteriorated
-to **$1.015** and terminal edge was **−$4,292**. `0x0ca…` made +$2,040 with only
-22.1% maker/maker pairs, 83.6% completion and 7,997 residual shares. The current
-top-ten trading addresses showed zero direct split/merge value. The corrected
-local ladder arm was subsequently rejected for repeated directional residue;
+Latest bounded refresh (2026-08-25 05:55–11:50 UTC, BTC): current leader
+`0xce50…` made +$4,667 but paired only 53.8% of bought shares and left 37,044
+residual shares. `0x0cb…` made +$2,929 with a fee-inclusive $1.020 average pair,
+54.9% completion, and 86,104 residual shares. High-maker `0x21f4…` completed
+89.9% with 24 s / 66 s FIFO d50/d90, but still paid $1.005 per pair; its profit
+was directional. None showed direct split/merge value at the trading address.
+The corrected local ladder arm was rejected for repeated directional residue;
 neither pure accumulation nor direct minting is a durable winner claim.
 
 ---

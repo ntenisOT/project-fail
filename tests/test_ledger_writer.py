@@ -27,6 +27,7 @@ class LedgerWriterTests(unittest.TestCase):
                 "btc", 1_700_000_000, 1_700_000_001.5,
                 "65000000000000000000000", 60,
             )
+            writer.record_resolved_window(3, "btc", "slug", 0)
             writer.close()
             with closing(sqlite3.connect(path)) as db:
                 self.assertEqual(db.execute("SELECT count(*) FROM fills").fetchone()[0], 1)
@@ -45,6 +46,12 @@ class LedgerWriterTests(unittest.TestCase):
                         "btc", 1_700_000_000.0, 1_700_000_001.5,
                         "65000000000000000000000", 60,
                     ),
+                )
+                self.assertEqual(
+                    db.execute(
+                        "SELECT ts,asset,slug,outcome_up FROM resolved_windows"
+                    ).fetchone(),
+                    (3.0, "btc", "slug", 0),
                 )
 
 

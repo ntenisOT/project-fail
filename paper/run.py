@@ -207,6 +207,9 @@ async def settlement_task() -> None:
             if resolved is None:
                 continue
             now = time.time()
+            S.ledger.record_resolved_window(
+                now, pending.asset, resolved.slug, resolved.winner_up,
+            )
             scored, skipped = settle_valid(pending.windows, now, resolved.winner_up)
             for skipped_row in skipped:
                 S.ledger.record_invalid_window(

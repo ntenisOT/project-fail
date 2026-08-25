@@ -46,9 +46,23 @@ def audit(db: sqlite3.Connection) -> ReferenceAudit:
         return ReferenceAudit(0, (), ())
     result: list[ReferenceSignal] = []
     misses: list[ReferenceMiss] = []
-    windows = db.execute(
-        "SELECT DISTINCT asset,slug,outcome_up FROM settlements ORDER BY slug"
-    ).fetchall()
+    resolved_exists = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='resolved_windows'"
+    ).fetchone()
+    if resolved_exists is None:
+        windows = db.execute(
+            "SELECT DISTINCT asset,slug,outcome_up FROM settlements ORDER BY slug"
+        ).fetchall()
+    else:
+        windows = db.execute(
+            """SELECT asset,slug,outcome_up FROM resolved_windows
+               UNION ALL
+               SELECT DISTINCT s.asset,s.slug,s.outcome_up FROM settlements s
+               WHERE NOT EXISTS (
+                 SELECT 1 FROM resolved_windows r
+                 WHERE r.asset=s.asset AND r.slug=s.slug)
+               ORDER BY slug"""
+        ).fetchall()
     for asset, slug, outcome_up in windows:
         try:
             start = int(str(slug).rsplit("-", 1)[1])

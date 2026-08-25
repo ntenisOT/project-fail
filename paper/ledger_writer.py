@@ -64,6 +64,10 @@ class LedgerWriter:
                           settlement: dict[str, Any]) -> None:
         self._put("record_settlement", ts, strategy, asset, slug, settlement)
 
+    def record_resolved_window(self, ts: float, asset: str, slug: str,
+                               outcome_up: int) -> None:
+        self._put("record_resolved_window", ts, asset, slug, outcome_up)
+
     def record_metrics(self, ts: float, strategy: str, asset: str, slug: str,
                        metrics: dict[str, object]) -> None:
         self._put("record_metrics", ts, strategy, asset, slug, metrics)

@@ -21,6 +21,8 @@ class Ledger:
               ts REAL, strategy TEXT, asset TEXT, slug TEXT, cash REAL, residual REAL,
               pnl REAL, capital REAL, buys INT, sells INT, resid_shares REAL,
               n_fills INT, outcome_up INT);
+            CREATE TABLE IF NOT EXISTS resolved_windows(
+              ts REAL, asset TEXT, slug TEXT PRIMARY KEY, outcome_up INT);
             CREATE TABLE IF NOT EXISTS window_metrics(
               ts REAL, strategy TEXT, asset TEXT, slug TEXT, data TEXT);
             CREATE TABLE IF NOT EXISTS invalid_windows(
@@ -88,5 +90,13 @@ class Ledger:
             "INSERT INTO settlements VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (ts, strategy, asset, slug, s["cash"], s["residual"], s["pnl"], s["capital"],
              s["buys"], s["sells"], s["resid_shares"], s["n_fills"], int(s["outcome_up"])),
+        )
+        self.db.commit()
+
+    def record_resolved_window(self, ts: float, asset: str, slug: str,
+                               outcome_up: int) -> None:
+        self.db.execute(
+            "INSERT INTO resolved_windows VALUES(?,?,?,?)",
+            (ts, asset, slug, int(outcome_up)),
         )
         self.db.commit()

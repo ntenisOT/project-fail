@@ -14,6 +14,9 @@ class ReferenceReportTests(unittest.TestCase):
             "CREATE TABLE settlements(asset TEXT,slug TEXT,outcome_up INT)"
         )
         db.execute(
+            "CREATE TABLE resolved_windows(asset TEXT,slug TEXT,outcome_up INT)"
+        )
+        db.execute(
             "CREATE TABLE fills(ts REAL,strategy TEXT,slug TEXT,outcome_up INT)"
         )
         db.execute(
@@ -22,9 +25,11 @@ class ReferenceReportTests(unittest.TestCase):
                value_e18 TEXT, window_s INT)"""
         )
         slug = f"btc-updown-5m-{start}"
-        db.execute("INSERT INTO settlements VALUES(?,?,?)", ("btc", slug, 1))
+        db.execute("INSERT INTO resolved_windows VALUES(?,?,?)", ("btc", slug, 1))
         late_slug = f"btc-updown-5m-{start + 300}"
-        db.execute("INSERT INTO settlements VALUES(?,?,?)", ("btc", late_slug, 0))
+        db.execute(
+            "INSERT INTO resolved_windows VALUES(?,?,?)", ("btc", late_slug, 0)
+        )
         db.execute(
             "INSERT INTO fills VALUES(?,?,?,?)",
             (start + 31, "mintcycle5", slug, 1),

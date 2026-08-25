@@ -8,7 +8,12 @@ from pathlib import Path
 
 from live import lockbot
 from live.chain import PreflightError, merge, split
-from live.feed_health import FeedHealth, event_time_s, stale_market_event
+from live.feed_health import (
+    FeedHealth,
+    event_time_s,
+    market_event_tokens,
+    stale_market_event,
+)
 from live.market_book import BestAskCache
 from live.mint_quotes import (
     guarded_pair_prices,
@@ -44,6 +49,14 @@ class MintSafetyTests(unittest.TestCase):
         self.assertTrue(stale_market_event({"event_type": "book"}, 1000.0, 0.4))
         self.assertFalse(stale_market_event(delta, 1000.3, 0.4))
         self.assertFalse(stale_market_event(trade, 1001.0, 0.4))
+        self.assertEqual(
+            market_event_tokens({
+                "event_type": "price_change", "price_changes": [
+                    {"asset_id": "up"}, {"asset_id": "down"}, {},
+                ],
+            }),
+            {"up", "down"},
+        )
 
     def test_retired_lockbot_place_mode_is_fail_closed(self) -> None:
         original = lockbot.MODE

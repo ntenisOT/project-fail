@@ -17,6 +17,7 @@ from live.feed_health import (
     FeedHealth,
     MARKET_WS_MAX_QUEUE,
     event_time_s,
+    market_event_tokens,
     stale_market_event,
 )
 from live.window_clock import boundary_aligned_delay
@@ -51,16 +52,19 @@ if requested:
 STRATEGIES = (
     PairConfig("strict98", "accumulate", 0.02,
                action_latency_s=ACTION_LATENCY_S, buy_sum_ceiling=0.98,
-               improve_ticks=1, require_both_to_start=True),
+               improve_ticks=1, require_both_to_start=True, new_pair_start_s=30),
     PairConfig("basket98", "accumulate", 0.02,
                action_latency_s=ACTION_LATENCY_S, buy_sum_ceiling=0.98,
-               improve_ticks=1, require_both_to_start=True, basket_average_cap=True),
+               improve_ticks=1, require_both_to_start=True, basket_average_cap=True,
+               new_pair_start_s=30),
     PairConfig("basket985", "accumulate", 0.02,
                action_latency_s=ACTION_LATENCY_S, buy_sum_ceiling=0.985,
-               improve_ticks=1, require_both_to_start=True, basket_average_cap=True),
+               improve_ticks=1, require_both_to_start=True, basket_average_cap=True,
+               new_pair_start_s=30),
     PairConfig("basket99", "accumulate", 0.02,
                action_latency_s=ACTION_LATENCY_S, buy_sum_ceiling=0.99,
-               improve_ticks=1, require_both_to_start=True, basket_average_cap=True),
+               improve_ticks=1, require_both_to_start=True, basket_average_cap=True,
+               new_pair_start_s=30),
 )
 MKT_WS = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 KILL = "paper/KILL"
@@ -86,6 +90,8 @@ class State:
         self.events: collections.Counter[str] = collections.Counter()
         self.resolution_errors: collections.Counter[str] = collections.Counter()
         self.feed_health = FeedHealth()
+        self.fresh_tokens: set[str] = set()
+        self.stale_assets: set[str] = set()
 
 
 S = State()
@@ -112,6 +118,11 @@ def _refresh_tokens() -> None:
         token_map[sample.tokens[False]] = (asset, False)
     S.token_map = token_map
     S.tokens = set(token_map)
+    S.fresh_tokens.intersection_update(S.tokens)
+    S.stale_assets = {
+        asset for asset, windows in S.active.items()
+        if windows and not set(next(iter(windows.values())).tokens.values()) <= S.fresh_tokens
+    }
     for token in old_tokens - S.tokens:
         S.books.drop(token)
     if S.tokens != old_tokens:
@@ -181,6 +192,8 @@ async def settlement_task() -> None:
 
 
 def _quote_windows(asset: str, now: float) -> None:
+    if asset in S.stale_assets:
+        return
     windows = S.active.get(asset) or {}
     if not windows:
         return
@@ -193,30 +206,37 @@ def _quote_windows(asset: str, now: float) -> None:
             S.ledger.record_fill(now, name, asset, window.slug, fill)
 
 
-def _affected_assets(event: dict[str, object]) -> set[str]:
-    tokens: set[str] = set()
-    token = str(event.get("asset_id") or "")
-    if token:
-        tokens.add(token)
-    rows = event.get("price_changes") or []
-    if isinstance(rows, list):
-        tokens.update(
-            str(row.get("asset_id") or "")
-            for row in rows if isinstance(row, dict)
-        )
+def _affected_assets(tokens: set[str]) -> set[str]:
     return {S.token_map[token][0] for token in tokens if token in S.token_map}
 
 
 def _invalidate_stale_market_event(event: dict[str, object], now: float) -> None:
-    if not stale_market_event(event, now, MAX_MARKET_EVENT_LAG_S):
+    if event.get("event_type") not in ("book", "price_change"):
         return
-    assets = _affected_assets(event)
+    tokens = market_event_tokens(event) & S.tokens
+    assets = _affected_assets(tokens)
     if not assets:
         return
-    S.events["stale_market_event"] += 1
+    stale = stale_market_event(event, now, MAX_MARKET_EVENT_LAG_S)
+    if stale:
+        S.events["stale_market_event"] += 1
+        S.fresh_tokens.difference_update(tokens)
+    else:
+        S.fresh_tokens.update(tokens)
     for asset in assets:
-        for window in (S.active.get(asset) or {}).values():
-            window.invalidate(now)
+        windows = S.active.get(asset) or {}
+        required = set(next(iter(windows.values())).tokens.values()) if windows else set()
+        if required <= S.fresh_tokens:
+            S.stale_assets.discard(asset)
+        else:
+            S.stale_assets.add(asset)
+        if not stale:
+            continue
+        for window in windows.values():
+            exposed = bool(window.orders or window.pending is not None
+                           or window.buys or window.sells)
+            if exposed:
+                window.invalidate(now)
 
 
 def handle_event(event: dict[str, object]) -> None:
@@ -328,8 +348,9 @@ async def heartbeat_task() -> None:
         orders = sum(len(window.orders) for windows in S.active.values()
                      for window in windows.values())
         log.info("hb | events=%s fills=%s active_orders=%d pending_resolution=%d "
-                 "feed=%s errors=%s", dict(S.events), active, orders, len(S.pending),
-                 S.feed_health.snapshot(), dict(S.resolution_errors))
+                 "feed_paused=%s feed=%s errors=%s", dict(S.events), active, orders,
+                 len(S.pending), sorted(S.stale_assets), S.feed_health.snapshot(),
+                 dict(S.resolution_errors))
 
 
 async def report_task() -> None:

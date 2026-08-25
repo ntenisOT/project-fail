@@ -25,6 +25,21 @@ def stale_market_event(event: Mapping[str, object], received_at: float,
     return event_at is None or received_at - event_at > max_lag_s
 
 
+def market_event_tokens(event: Mapping[str, object]) -> set[str]:
+    """Return token ids touched by a book snapshot or price-level update."""
+    tokens: set[str] = set()
+    token = str(event.get("asset_id") or "")
+    if token:
+        tokens.add(token)
+    rows = event.get("price_changes") or []
+    if isinstance(rows, list):
+        tokens.update(
+            str(row.get("asset_id") or "")
+            for row in rows if isinstance(row, dict) and row.get("asset_id")
+        )
+    return tokens
+
+
 class FeedHealth:
     def __init__(self, sample_size: int = 4096) -> None:
         self.lag_ms: collections.deque[float] = collections.deque(maxlen=sample_size)

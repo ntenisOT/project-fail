@@ -128,6 +128,10 @@ inventory balancing, matching the leader's observed basket-average economics:
 | `basket985` | Keep the cumulative completed-pair average ≤$0.985 |
 | `basket99` | Keep the cumulative completed-pair average ≤$0.99 |
 
+All four arms wait until T+30 seconds and until both token feeds have caught up
+before starting a pair. This deliberately gives up the subscription-backlog
+period; a stale causal update after exposure begins invalidates the asset-window.
+
 The simulator reconstructs public price levels from authoritative snapshots and
 `price_change` deltas. Joining the best price puts the displayed level size in
 front of our hypothetical order; trades consume that queue before we receive a
@@ -289,6 +293,8 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 37 | 08-25 06:xx | A/B strict complete-set inventory at join-best versus one-tick-inside prices |
 | 38 | 08-25 06:xx | replace V1-corrupted mint/churn thesis with V2-correct paired-bid accumulation; 2×2 price-priority test |
 | 39 | 08-25 07:xx | retain strict inside-$0.98 control; compare rolling basket-average caps after winner pairing-delay and sizing reconstruction |
+| 40 | 08-25 07:4x | reject four-asset and initial BTC-only samples after causal feed lag exceeded 400 ms without a disconnect |
+| 41 | 08-25 07:5x | pause through the repeatable subscription backlog; start BTC pairs at T+30 only after both token feeds catch up |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

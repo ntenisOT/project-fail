@@ -118,6 +118,15 @@ from outcome alignment and screen public-tape signals after slippage and fees.
 order so aggregate token averages cannot disguise completion coverage, pair-cost
 distribution, residual imbalance, or pairing delay.
 
+Latest bounded refresh (2026-08-25 03:50–09:45 UTC, BTC): the previously clean
+`0xb27…` accumulator still completed 96.6% of acquired shares with 99.3% maker
+flow and 12 s / 57 s FIFO d50/d90, but its fee-inclusive average pair deteriorated
+to **$1.015** and terminal edge was **−$4,292**. `0x0ca…` made +$2,040 with only
+22.1% maker/maker pairs, 83.6% completion and 7,997 residual shares. The current
+top-ten trading addresses showed zero direct split/merge value. Ladder mechanics
+remain worth testing; neither pure accumulation nor direct minting is a durable
+winner claim.
+
 ---
 
 ## 3. Focused pair-inventory experiment (five strategies)
@@ -134,8 +143,8 @@ fee-aware completion:
 | `basket98` | Keep the cumulative completed-pair average ≤$0.98 |
 | `basket99` | Five-share maker baseline; keep cumulative completed-pair average ≤$0.99 |
 | `basket99c180` | Basket99 twin that stops opening fresh pairs after T+180 but can finish an existing leg |
-| `basket99tk120` | Cutoff twin; from T+120, cross displayed depth only when explicit fees preserve the ≤$0.99 basket average and the $1 minimum |
-| `basket99tk180` | Same completion rule, delayed until T+180 to give maker quotes longer to fill |
+| `ladder99c180` | Two stable maker-bid levels per outcome (join best and one tick back), 15-second minimum residence, shared FIFO evidence, and the T+180 cutoff |
+| `mintcycle20` | Queue-aware $20 complete-set control: paired maker asks with a $1.005 joint floor, realistic 65 ms actions, and T+30/T+240 entry bounds |
 
 All five arms wait until T+30 seconds and until both token feeds have caught up
 before starting a pair. This deliberately gives up the subscription-backlog
@@ -334,6 +343,7 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 45 | 08-25 08:54 | include delayed trade/fill awareness in the lagged quality class after Gen44 observed a 1.716 s trade tail that causal-book-only labeling would have missed |
 | 46 | 08-25 09:11 | replace the nearly redundant Basket985 arm with 5-share versus 10-share Basket99 twins and a fee-aware T+120 taker-completion twin; retain strict and Basket98 controls |
 | 47 | 08-25 09:49 | reject the 10-share arms after five windows; keep 5-share Basket99 control and isolate a T+180 new-pair cutoff from fee-aware completion at T+120/T+180 |
+| 48 | 08-25 10:05 | retain Basket98/Basket99/cutoff controls; replace redundant taker twins with a stable two-level replenishing ladder and an honest queue-aware mint-cycle control |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

@@ -67,7 +67,7 @@ The headline leader's neutral inventory economics were approximately −$119;
 about +$2,159 came from terminal direction. The clean churn wallet completed 35
 ordered opposite-token cycles with about $514 cycle edge before rebates.
 
-### 4. The clean accumulator uses basket economics — confirmed
+### 4. The clean accumulator used basket economics, but is regime-dependent
 
 For `0xb27…` across 253 BTC markets:
 
@@ -83,6 +83,14 @@ For `0xb27…` across 253 BTC markets:
 This rejects a hard cap on every individual pair. Cheap completed pairs fund
 later balancing above the nominal cap. The rolling basket-cap implementation is
 directionally correct.
+
+A fresh 03:50–09:45 UTC BTC cohort prevents us from turning that historical
+mechanic into a permanent winner label. `0xb27…` retained 96.6% completion,
+99.3% maker flow and 12 s / 57 s FIFO d50/d90, but its average pair cost rose to
+$1.015 and terminal edge was -$4,292. Meanwhile `0x0ca…` earned +$2,040 with
+only 22.1% maker/maker pairing, 83.6% completion and 7,997 residual shares. The
+current winners are not a stable pure-inventory cohort; laddering needs a regime
+gate and must be evaluated on neutral/adverse economics, not copied by identity.
 
 ### 5. Our execution topology is not a scaled-down winner — open blocker
 
@@ -145,6 +153,12 @@ bug is also fixed and covered by one focused test.
   The ten-share taker-completion arm lost $3.23.
 - Gen46's five-share controls were positive over those five windows, but this is
   mechanism evidence only, not a profitability estimate.
+- Gen47 then isolated the late-entry mechanism. In its first clean differentiated
+  window, Basket99's fresh T+202 pair left directional residue (neutral -$0.56,
+  adverse -$2.80); the T+180 cutoff stayed balanced at +$0.15. Taker completion
+  improved that window to +$0.23 but paid $0.17 in fees, while its T+180 twin was
+  identical to the maker cutoff. A following window was invalidated on a real
+  WebSocket slow-consumer reconnect rather than silently scored.
 
 A 15-minute generation is realistic for rejecting a mechanism or catching a
 runtime defect. It is not realistic for estimating edge. Promotion requires at
@@ -236,7 +250,7 @@ state from orchestration only after the strategy survives.
 
 ## Focused verification
 
-- 27 focused pair/probe/executor tests pass after the latest change.
+- 38 focused pair/ladder/mint/probe tests pass after the latest change.
 - New exact FIFO wallet-pair test and existing winner/cycle tests pass.
 - Ruff, compilation, and changed-file mypy checks pass (third-party imports are
   ignored locally because the CLOB V2 package is installed only on Ireland).
@@ -245,14 +259,14 @@ state from orchestration only after the strategy survives.
 
 ## Next generation — precise scope
 
-1. Archive Gen46 and run the five-share Gen47 board: Basket98, unchanged
-   Basket99 control, a T+180 new-pair cutoff, and fee-aware completion at T+120
-   versus T+180.
-2. Use Gen47 only to decide completion mechanics. Do not tune cents based on a
-   handful of outcomes.
-3. In parallel, add a separate two-level maker-bid ladder with five-share clips,
-   repeated replenishment, and a rolling basket cap. Do not add it to
-   `pair_engine.py`.
+1. Archive Gen47 and run Gen48 with Basket98, unchanged Basket99, the
+   mechanistically favored T+180 cutoff control, a separate stable two-level bid
+   ladder, and one queue-aware mint-cycle control.
+2. Compare ladder mechanics before PnL: residence, posts, FIFO completion,
+   residual inventory, average pair, neutral PnL, and adverse floor.
+3. Treat the mint arm as a falsification control. It earns continued development
+   only if queue-aware paired asks produce positive neutral/adverse economics;
+   synthetic mintbot rows do not count.
 4. Target winner-shaped mechanics before PnL:
    - pair-completion coverage above 90%;
    - residual below 10% of acquired shares;

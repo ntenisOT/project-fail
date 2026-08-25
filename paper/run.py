@@ -67,16 +67,15 @@ STRATEGIES = (
                action_latency_s=ACTION_LATENCY_S, buy_sum_ceiling=0.99,
                improve_ticks=1, require_both_to_start=True, basket_average_cap=True,
                new_pair_start_s=30, new_pair_cutoff_s=180),
-    PairConfig("basket99tk120", "accumulate", 0.02,
+    PairConfig("ladder99c180", "accumulate", 0.02,
                action_latency_s=ACTION_LATENCY_S, buy_sum_ceiling=0.99,
-               improve_ticks=1, require_both_to_start=True, basket_average_cap=True,
+               require_both_to_start=True, basket_average_cap=True,
                new_pair_start_s=30, new_pair_cutoff_s=180,
-               buy_taker_after_s=120),
-    PairConfig("basket99tk180", "accumulate", 0.02,
-               action_latency_s=ACTION_LATENCY_S, buy_sum_ceiling=0.99,
-               improve_ticks=1, require_both_to_start=True, basket_average_cap=True,
-               new_pair_start_s=30, new_pair_cutoff_s=180,
-               buy_taker_after_s=180),
+               ladder_offsets=(0, -1), quote_hold_s=15),
+    PairConfig("mintcycle20", "mint", 0.5,
+               action_latency_s=ACTION_LATENCY_S, mint_sets=20,
+               sell_sum_floor=1.005, new_pair_start_s=30,
+               new_pair_cutoff_s=240, mint_anchor_spread=0.02),
 )
 MKT_WS = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 KILL = "paper/KILL"

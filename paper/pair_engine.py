@@ -20,11 +20,11 @@ def _tick_price(value: float, tick: float, round_up: bool) -> float:
 def _maker_price(book: OrderBook, order_side: str, improve_ticks: int) -> float:
     if order_side == "buy":
         assert book.best_bid is not None and book.best_ask is not None
-        return min(book.best_bid + improve_ticks * book.tick,
-                   book.best_ask - book.tick)
+        return round(min(book.best_bid + improve_ticks * book.tick,
+                         book.best_ask - book.tick), 10)
     assert book.best_bid is not None and book.best_ask is not None
-    return max(book.best_ask - improve_ticks * book.tick,
-               book.best_bid + book.tick)
+    return round(max(book.best_ask - improve_ticks * book.tick,
+                     book.best_bid + book.tick), 10)
 
 
 class PairWindow:

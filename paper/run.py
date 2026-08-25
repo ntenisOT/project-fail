@@ -22,6 +22,7 @@ from live.feed_health import (
 )
 from live.window_clock import boundary_aligned_delay
 from paper import envload, report
+from paper.ladder_engine import LadderWindow
 from paper.ledger_writer import LedgerWriter
 from paper.market_metadata import ActiveMarket, fetch_active_market
 from paper.notify import notifier
@@ -30,6 +31,8 @@ from paper.pair_engine import PairWindow
 from paper.pair_types import PairConfig
 from paper.settlement import settle_valid
 from tools.market_windows import ASSET_PREFIX, fetch_gamma_window
+
+PaperWindow = PairWindow | LadderWindow
 
 envload.load()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
@@ -83,12 +86,12 @@ KILL = "paper/KILL"
 class PendingWindow:
     asset: str
     start: int
-    windows: dict[str, PairWindow]
+    windows: dict[str, PaperWindow]
 
 
 class State:
     def __init__(self) -> None:
-        self.active: dict[str, dict[str, PairWindow]] = {}
+        self.active: dict[str, dict[str, PaperWindow]] = {}
         self.pending: list[PendingWindow] = []
         self.books = OrderBookCache()
         self.token_map: dict[str, tuple[str, bool]] = {}
@@ -106,14 +109,15 @@ class State:
 S = State()
 
 
-def _new_windows(market: ActiveMarket, observed_at: float) -> dict[str, PairWindow]:
-    return {
-        config.name: PairWindow(
+def _new_windows(market: ActiveMarket, observed_at: float) -> dict[str, PaperWindow]:
+    windows: dict[str, PaperWindow] = {}
+    for config in STRATEGIES:
+        window_type = LadderWindow if config.ladder_offsets else PairWindow
+        windows[config.name] = window_type(
             config, market.asset, market.slug, market.start,
             market.up_token, market.down_token, observed_at,
         )
-        for config in STRATEGIES
-    }
+    return windows
 
 
 def _refresh_tokens() -> None:

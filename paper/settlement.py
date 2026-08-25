@@ -5,7 +5,10 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Mapping
 
+from paper.ladder_engine import LadderWindow
 from paper.pair_engine import PairWindow
+
+PaperWindow = PairWindow | LadderWindow
 
 
 @dataclasses.dataclass(frozen=True)
@@ -29,7 +32,7 @@ class SkippedWindow:
 
 
 def settle_valid(
-    windows: Mapping[str, PairWindow], now: float, outcome_up: int,
+    windows: Mapping[str, PaperWindow], now: float, outcome_up: int,
 ) -> tuple[list[ScoredWindow], list[SkippedWindow]]:
     scored: list[ScoredWindow] = []
     skipped: list[SkippedWindow] = []

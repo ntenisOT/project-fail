@@ -27,6 +27,8 @@ class PairConfig:
     mint_anchor_spread: float | None = None
     require_both_to_start: bool = False
     basket_average_cap: bool = False
+    ladder_offsets: tuple[int, ...] = ()
+    quote_hold_s: float = 0.0
 
 
 @dataclasses.dataclass

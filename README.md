@@ -51,8 +51,8 @@ Remove the file before restarting anything.
 
 All read-only; run from anywhere with the SSH key.
 
-**Focused paper report** — PnL split into hedged pair edge versus directional
-inventory result, plus pair sums, queue depth, and quote residence:
+**Focused paper report** — PnL split into paired edge versus single-token churn
+and outcome inventory, plus worst-case PnL, pair sums, queue depth, and residence:
 ```bash
 ssh -i ~/.ssh/pm_deploy ubuntu@3.254.130.64 'cd ~/project-fail && ./.venv/bin/python -m paper.report'
 ```

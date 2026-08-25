@@ -145,6 +145,12 @@ class FocusedPairTests(unittest.TestCase):
             settled, metrics = window.settle(300.0, 1)
             ledger.record_settlement(300.0, "carry", "btc", window.slug, settled)
             ledger.record_metrics(300.0, "carry", "btc", window.slug, metrics)
+            ledger.record_fill(301, "carry", "btc", "btc-updown-5m-300", {
+                "action": "buy", "price": 0.5, "size": 100,
+                "signed_cash": -50, "outcome_up": 1,
+            })
+            snapshot = report.snapshot_one(ledger.db, "carry")
+            self.assertAlmostEqual(snapshot.volume, 4.85)
             output = report.text(path)
             self.assertIn("carry", output)
             self.assertIn("0.970", output)

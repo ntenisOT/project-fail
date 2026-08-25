@@ -1,7 +1,8 @@
 import asyncio
 import json
+import time
 
-from live.feed_pump import FeedPump, subscription_messages
+from live.feed_pump import FeedPump, FeedPumpStats, subscription_messages
 
 
 def test_feed_pump_drains_socket_before_ordered_processing_finishes() -> None:
@@ -25,18 +26,25 @@ def test_feed_pump_drains_socket_before_ordered_processing_finishes() -> None:
             return "PONG"
 
     def handle(event: dict[str, object]) -> None:
+        if not seen:
+            time.sleep(0.002)
         seen.append(int(str(event["sequence"])))
 
-    pump = FeedPump(handle, capacity=128)
+    stats = FeedPumpStats()
+    pump = FeedPump(handle, capacity=128, stats=stats)
     asyncio.run(pump.run(Socket(), stop))
 
     assert seen == list(range(100))
     assert pump.high_water == 100
     snapshot = pump.snapshot(reset_interval=True)
     assert snapshot["hwm"] == snapshot["interval_hwm"] == 100
-    assert snapshot["residence_max_ms"] >= 0
-    assert pump.snapshot()["interval_hwm"] == 0
-    assert pump.snapshot()["interval_residence_max_ms"] == 0
+    assert snapshot["residence_max_ms"] > 0
+    after = pump.snapshot()
+    assert after["hwm"] == snapshot["hwm"]
+    assert after["residence_max_ms"] == snapshot["residence_max_ms"]
+    assert after["interval_hwm"] == after["interval_residence_max_ms"] == 0
+    replacement = FeedPump(handle, capacity=128, stats=stats)
+    assert replacement.snapshot()["hwm"] == 100
 
 
 def test_subscription_rotation_adds_before_removing() -> None:

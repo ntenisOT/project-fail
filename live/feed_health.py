@@ -45,6 +45,7 @@ class FeedHealth:
         self.lag_ms: collections.deque[float] = collections.deque(maxlen=sample_size)
         self.reconnects = 0
         self.missing_timestamps = 0
+        self.out_of_range_timestamps = 0
         self.interval_max_ms = 0.0
         self.lifetime_max_ms = 0.0
 
@@ -59,6 +60,8 @@ class FeedHealth:
             self.lag_ms.append(lag)
             self.interval_max_ms = max(self.interval_max_ms, lag)
             self.lifetime_max_ms = max(self.lifetime_max_ms, lag)
+        else:
+            self.out_of_range_timestamps += 1
 
     def reconnect(self) -> None:
         self.reconnects += 1
@@ -72,6 +75,7 @@ class FeedHealth:
             "interval_max_ms": round(self.interval_max_ms),
             "lifetime_max_ms": round(self.lifetime_max_ms),
             "missing_timestamps": self.missing_timestamps,
+            "out_of_range_timestamps": self.out_of_range_timestamps,
             "reconnects": self.reconnects,
         }
         if reset_interval:

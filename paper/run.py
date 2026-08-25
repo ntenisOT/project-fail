@@ -22,7 +22,12 @@ from live.feed_health import (
 )
 from live.window_clock import boundary_aligned_delay
 from paper import envload, report
-from live.feed_pump import FeedPump, WebSocketLike, subscription_messages
+from live.feed_pump import (
+    FeedPump,
+    FeedPumpStats,
+    WebSocketLike,
+    subscription_messages,
+)
 from paper.ladder_engine import LadderWindow
 from paper.ledger_writer import LedgerWriter
 from paper.market_metadata import ActiveMarket, fetch_active_market
@@ -103,6 +108,7 @@ class State:
         self.resolution_errors: collections.Counter[str] = collections.Counter()
         self.feed_health = FeedHealth()
         self.feed_pump: FeedPump | None = None
+        self.feed_pump_stats = FeedPumpStats()
         self.fresh_tokens: set[str] = set()
         self.stale_assets: set[str] = set()
 
@@ -353,7 +359,7 @@ async def market_task() -> None:
                     "assets_ids": sorted(tokens), "type": "market",
                 }))
                 log.info("market ws subscribed %d tokens", len(tokens))
-                S.feed_pump = FeedPump(handle_event)
+                S.feed_pump = FeedPump(handle_event, stats=S.feed_pump_stats)
                 connection_stop = asyncio.Event()
                 pump_task = asyncio.create_task(S.feed_pump.run(ws, connection_stop))
                 rotate_task = asyncio.create_task(_rotate_subscriptions(ws, tokens))
@@ -405,8 +411,7 @@ async def heartbeat_task() -> None:
         }
         orders = sum(len(window.orders) for windows in S.active.values()
                      for window in windows.values())
-        feed_queue = (S.feed_pump.snapshot(reset_interval=True)
-                      if S.feed_pump is not None else {})
+        feed_queue = S.feed_pump_stats.snapshot(reset_interval=True)
         log.info("hb | events=%s fills=%s active_orders=%d pending_resolution=%d "
                  "feed_paused=%s feed=%s feed_queue=%s errors=%s",
                  dict(S.events), active, orders, len(S.pending),

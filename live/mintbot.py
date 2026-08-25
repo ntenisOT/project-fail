@@ -38,7 +38,7 @@ import sqlite3
 import time
 import urllib.request
 
-from live.feed_pump import FeedPump
+from live.feed_pump import FeedPump, FeedPumpStats
 from live.feed_health import FeedHealth, MARKET_WS_MAX_QUEUE, event_time_s
 from live.market_book import BestAskCache, fresh_ask_pair
 from live.mint_quotes import Quote, guarded_pair_prices, plan_pair_quotes, should_reprice
@@ -148,6 +148,7 @@ class Mintbot:
         self.last_feed_log = 0.0
         self.feed_health = FeedHealth()
         self.feed_pump: FeedPump | None = None
+        self.feed_pump_stats = FeedPumpStats()
 
     def spawn(self, coro):
         t = asyncio.create_task(coro)
@@ -434,8 +435,7 @@ class Mintbot:
             key: value for key, value in self.quote_counts.items()
             if not key.startswith("rest_")
         }
-        queue = (self.feed_pump.snapshot(reset_interval=True)
-                 if self.feed_pump else {})
+        queue = self.feed_pump_stats.snapshot(reset_interval=True)
         log.info("feed events=%s lag=%s queue=%s quotes=%s residence=%.1fs "
                  "under15=%.0f%%", dict(self.feed_counts),
                  self.feed_health.snapshot(reset_interval=True), queue,
@@ -463,7 +463,9 @@ class Mintbot:
                     await ws.send(json.dumps({"assets_ids": toks, "type": "market"}))
                     log.info("ws subscribed %d tokens (mode=%s mint=$%.0f spread=%.2f)",
                              len(toks), MODE, MINT_USD, SPREAD)
-                    self.feed_pump = FeedPump(self.on_market_event)
+                    self.feed_pump = FeedPump(
+                        self.on_market_event, stats=self.feed_pump_stats,
+                    )
                     await self.feed_pump.run(ws, self.resub)
             except SystemExit:
                 raise

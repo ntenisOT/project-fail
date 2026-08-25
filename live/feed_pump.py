@@ -21,6 +21,38 @@ class FeedBacklogError(RuntimeError):
     pass
 
 
+class FeedPumpStats:
+    """Connection-independent queue telemetry for a runner generation."""
+
+    def __init__(self) -> None:
+        self.high_water = 0
+        self.interval_high_water = 0
+        self.residence_max_ms = 0.0
+        self.interval_residence_max_ms = 0.0
+
+    def observe_depth(self, depth: int) -> None:
+        self.high_water = max(self.high_water, depth)
+        self.interval_high_water = max(self.interval_high_water, depth)
+
+    def observe_residence(self, residence_ms: float) -> None:
+        self.residence_max_ms = max(self.residence_max_ms, residence_ms)
+        self.interval_residence_max_ms = max(
+            self.interval_residence_max_ms, residence_ms,
+        )
+
+    def snapshot(self, *, reset_interval: bool = False) -> dict[str, int]:
+        snapshot = {
+            "hwm": self.high_water,
+            "interval_hwm": self.interval_high_water,
+            "residence_max_ms": round(self.residence_max_ms),
+            "interval_residence_max_ms": round(self.interval_residence_max_ms),
+        }
+        if reset_interval:
+            self.interval_high_water = 0
+            self.interval_residence_max_ms = 0.0
+        return snapshot
+
+
 def subscription_messages(
     current: set[str], target: set[str],
 ) -> list[dict[str, str | Sequence[str]]]:
@@ -40,13 +72,15 @@ class FeedPump:
     def __init__(
         self, handler: Callable[[dict[str, object]], None],
         capacity: int = EVENT_QUEUE_CAPACITY,
+        stats: FeedPumpStats | None = None,
     ) -> None:
         self.handler = handler
         self.queue: asyncio.Queue[tuple[dict[str, object], float]] = asyncio.Queue(capacity)
-        self.high_water = 0
-        self.interval_high_water = 0
-        self.residence_max_ms = 0.0
-        self.interval_residence_max_ms = 0.0
+        self.stats = stats or FeedPumpStats()
+
+    @property
+    def high_water(self) -> int:
+        return self.stats.high_water
 
     async def _read(self, ws: WebSocketLike, stop: asyncio.Event) -> None:
         last_ping = time.monotonic()
@@ -76,10 +110,7 @@ class FeedPump:
                     raise FeedBacklogError(
                         f"market event queue reached {self.queue.maxsize}",
                     ) from exc
-                self.high_water = max(self.high_water, self.queue.qsize())
-                self.interval_high_water = max(
-                    self.interval_high_water, self.queue.qsize(),
-                )
+                self.stats.observe_depth(self.queue.qsize())
 
     async def _process(self, stop: asyncio.Event) -> None:
         processed = 0
@@ -91,10 +122,7 @@ class FeedPump:
             except asyncio.TimeoutError:
                 continue
             residence_ms = max(0.0, (time.monotonic() - enqueued_at) * 1000)
-            self.residence_max_ms = max(self.residence_max_ms, residence_ms)
-            self.interval_residence_max_ms = max(
-                self.interval_residence_max_ms, residence_ms,
-            )
+            self.stats.observe_residence(residence_ms)
             self.handler(event)
             processed += 1
             if processed % PROCESS_YIELD_EVERY == 0:
@@ -115,13 +143,4 @@ class FeedPump:
             await asyncio.gather(*tasks, return_exceptions=True)
 
     def snapshot(self, *, reset_interval: bool = False) -> dict[str, int]:
-        snapshot = {
-            "hwm": self.high_water,
-            "interval_hwm": self.interval_high_water,
-            "residence_max_ms": round(self.residence_max_ms),
-            "interval_residence_max_ms": round(self.interval_residence_max_ms),
-        }
-        if reset_interval:
-            self.interval_high_water = 0
-            self.interval_residence_max_ms = 0.0
-        return snapshot
+        return self.stats.snapshot(reset_interval=reset_interval)

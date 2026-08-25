@@ -1,0 +1,27 @@
+from __future__ import annotations
+
+import sqlite3
+import unittest
+from contextlib import closing
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+from paper.ledger_writer import LedgerWriter
+
+
+class LedgerWriterTests(unittest.TestCase):
+    def test_background_writer_drains_before_close(self) -> None:
+        with TemporaryDirectory() as temp:
+            path = str(Path(temp) / "paper.db")
+            writer = LedgerWriter(path)
+            writer.record_fill(1, "test", "btc", "slug", {
+                "action": "sell", "price": 0.6, "size": 5,
+                "signed_cash": 3, "outcome_up": 1,
+            })
+            writer.close()
+            with closing(sqlite3.connect(path)) as db:
+                self.assertEqual(db.execute("SELECT count(*) FROM fills").fetchone()[0], 1)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -16,7 +16,7 @@ import websockets
 from live.feed_health import FeedHealth, MARKET_WS_MAX_QUEUE, event_time_s
 from live.window_clock import boundary_aligned_delay
 from paper import envload, report
-from paper.ledger import Ledger
+from paper.ledger_writer import LedgerWriter
 from paper.market_metadata import ActiveMarket, fetch_active_market
 from paper.notify import notifier
 from paper.order_book import OrderBookCache
@@ -72,7 +72,7 @@ class State:
         self.token_map: dict[str, tuple[str, bool]] = {}
         self.tokens: set[str] = set()
         self.tokens_changed = asyncio.Event()
-        self.ledger = Ledger()
+        self.ledger = LedgerWriter()
         self.notify = notifier()
         self.events: collections.Counter[str] = collections.Counter()
         self.resolution_errors: collections.Counter[str] = collections.Counter()
@@ -323,12 +323,15 @@ async def main() -> None:
              "official Gamma outcomes | assets=%s",
              names, round(ACTION_LATENCY_S * 1000),
              round(DECISION_CADENCE_S * 1000), list(ASSETS))
-    await asyncio.gather(window_task(), settlement_task(), market_task(),
-                         quote_task(), heartbeat_task(), report_task(), kill_task(),
-                         asyncio.to_thread(
-                             S.notify.send,
-                             "focused pair paper started (4 strategies, queue-aware, no orders)",
-                         ))
+    try:
+        await asyncio.gather(window_task(), settlement_task(), market_task(),
+                             quote_task(), heartbeat_task(), report_task(), kill_task(),
+                             asyncio.to_thread(
+                                 S.notify.send,
+                                 "focused pair paper started (4 strategies, queue-aware, no orders)",
+                             ))
+    finally:
+        await asyncio.to_thread(S.ledger.close)
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ import collections
 from collections.abc import Mapping
 
 MARKET_WS_MAX_QUEUE = 1024
+MAX_FUTURE_EVENT_SKEW_S = 0.050
 
 
 def event_time_s(event: Mapping[str, object]) -> float | None:
@@ -18,11 +19,25 @@ def event_time_s(event: Mapping[str, object]) -> float | None:
 
 def stale_market_event(event: Mapping[str, object], received_at: float,
                        max_lag_s: float) -> bool:
-    """Fail closed when a causal book update is missing or arrives too late."""
+    """Fail closed when a causal book update is missing or outside clock bounds."""
     if event.get("event_type") not in ("book", "price_change"):
         return False
     event_at = event_time_s(event)
-    return event_at is None or received_at - event_at > max_lag_s
+    if event_at is None:
+        return True
+    lag_s = received_at - event_at
+    return lag_s > max_lag_s or lag_s < -MAX_FUTURE_EVENT_SKEW_S
+
+
+def future_event_skew_s(
+    event: Mapping[str, object], received_at: float,
+) -> float | None:
+    """Return excessive source-clock lead, otherwise ``None``."""
+    event_at = event_time_s(event)
+    if event_at is None:
+        return None
+    lead_s = event_at - received_at
+    return lead_s if lead_s > MAX_FUTURE_EVENT_SKEW_S else None
 
 
 def market_event_tokens(event: Mapping[str, object]) -> set[str]:
@@ -46,6 +61,8 @@ class FeedHealth:
         self.reconnects = 0
         self.missing_timestamps = 0
         self.out_of_range_timestamps = 0
+        self.future_timestamps = 0
+        self.max_future_ms = 0.0
         self.interval_max_ms = 0.0
         self.lifetime_max_ms = 0.0
 
@@ -55,7 +72,11 @@ class FeedHealth:
             self.missing_timestamps += 1
             return
         lag = (received_at - event_at) * 1000
-        if -1000 <= lag <= 60_000:
+        if lag < -MAX_FUTURE_EVENT_SKEW_S * 1000:
+            self.future_timestamps += 1
+            self.out_of_range_timestamps += 1
+            self.max_future_ms = max(self.max_future_ms, -lag)
+        elif lag <= 60_000:
             lag = max(0.0, lag)
             self.lag_ms.append(lag)
             self.interval_max_ms = max(self.interval_max_ms, lag)
@@ -76,6 +97,8 @@ class FeedHealth:
             "lifetime_max_ms": round(self.lifetime_max_ms),
             "missing_timestamps": self.missing_timestamps,
             "out_of_range_timestamps": self.out_of_range_timestamps,
+            "future_timestamps": self.future_timestamps,
+            "max_future_ms": round(self.max_future_ms),
             "reconnects": self.reconnects,
         }
         if reset_interval:

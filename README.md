@@ -5,10 +5,12 @@ BTC/ETH/SOL/XRP "up or down" markets. One question end-to-end: *is there a
 replicable, low-capital edge, and what execution captures it?*
 
 **Status: NO-GO for real money.** V2-corrected winner forensics invalidated the
-old mint-and-sell taxonomy. The clean leader rests bids on both outcome tokens,
-acquires fee-inclusive pairs below $1, never sells, and holds to settlement.
-Other winners add directional exposure, but trading both tokens does not prove
-simultaneous asks or direct CTF minting. Mint-and-ask is not the winner replica.
+old mint-and-sell taxonomy. The strongest repeatable neutral signature is cheap
+FIFO acquisition of both outcome tokens; profitable examples range from paired
+accumulators to merge recyclers, while other leaders depend on directional
+residue. Trading both tokens does not prove simultaneous asks or direct CTF
+minting. Mint-and-ask is not the winner replica, and no current paper arm has
+passed a prospective economic gate.
 
 ---
 
@@ -38,20 +40,22 @@ servers, VPNs, or proxies must not be used to circumvent a restriction.
 
 | Session | Command it runs | What it is |
 |---|---|---|
-| `paper` | `python -m paper.run` | five queue-aware paired-bid hypotheses (writes `paper/paper.db`) |
+| `paper` | `python -m paper.run` | two paper controls: `basket99` mechanics and falsified `mintcycle5` (writes `paper/paper.db`) |
+| `crossvenue` | `python -m tools.crossvenue_capture` | passive RTDS/Binance/Deribit causal capture; never feeds a strategy during collection |
 | `mintbot` | stopped; on-demand `MINTBOT_MODE=shadow MINTBOT_ASSETS=btc python -m live.mintbot` | do not duplicate paper's BTC feed during primary experiments; place mode is forbidden |
 
 View: `tmux attach -t paper` (detach `Ctrl-b d`) or `tmux capture-pane -t paper -p | tail -20`.
 
-### The brake
+### The brakes
 
 ```bash
 touch ~/project-fail/paper/KILL
+touch ~/project-fail/paper/CROSSVENUE_KILL
 ```
-Every component checks this file: the executor cancels everything and exits;
-the mintbot cancels all asks and exits (balanced pairs can merge, but any
-unpaired residue remains outcome risk); the paper simulator exits.
-Remove the file before restarting anything.
+`paper/KILL` stops the paper simulator. `paper/CROSSVENUE_KILL` stops the passive
+cross-venue capture. Live components have separate fail-closed controls and are
+not started in this workflow. Remove only the component-specific file being
+deliberately restarted; a general `KILL` file is never removed by paper deploys.
 
 ---
 
@@ -132,25 +136,39 @@ There is no durable fixed momentum rule, no observed direct split value at these
 trading addresses, and no single strategy shared by every current PnL leader.
 See `reports/2026-08-25-gen62-winner-regimes.md`.
 
+The broader 2026-08-18 20:40 through 08-25 20:35 BTC lifecycle study selected
+40 wallets by discovery-period activity, never PnL. Its originally highlighted
+0.9067 AUC uses holdout neutral PnL, which algebraically rewards cheap pairs; it
+mostly demonstrates persistence of pair-acquisition style, not prediction or
+profitability. The corrected, exact-frozen-cohort restatement confirms that
+distinction: discovery pair cost strongly persists into holdout (Spearman 0.826,
+n=34), while its holdout actual-PnL AUC is 0.471 for the 34 activity-qualified
+wallets and 0.482 across all 37 wallets with discovery FIFO evidence. That is no
+economic edge. The exact $0.99 threshold is post-hoc, holdout-activity filtering
+is survivorship selection, and actual PnL is often dominated by directional
+residue. The study therefore supports one paired-mechanics probe only. It does
+not justify a strategy gate, blind copying, or threshold mining. Artifacts:
+`out/gen73-lifecycle-btc-7d.json` and
+`out/gen73-lifecycle-btc-7d-v2-frozen.json` (SHA-256
+`ecd98ac5d03427e26f9324b0327c6b2f0f73539d4e62f50773cd1f8552ae0825`).
+
 ---
 
-## 3. Focused pair-inventory experiment (six strategies)
+## 3. Focused pair-inventory experiment (two controls)
 
 The legacy 49-arm board was retired after every execution-shaped pair/mint arm
 remained negative. V2-corrected forensics then identified the clean leader as a
 paired-bid accumulator. Strict inside-$0.98 won the first price-priority screen.
 Basket99 later reached winner-like pair cost/completion timing but left
-outcome-risk residue. The current board isolates late pair creation, bounded
-completion, and the smallest mint falsification controls:
+outcome-risk residue. Independent Gen73 reviews rejected the taker-completion
+and mint-repair variants because their hold/POST/depth model is uncalibrated.
+The current board keeps only one paired-mechanics probe and one falsified mint
+control:
 
 | Strategy | Mechanic |
 |---|---|
 | `basket99` | Five-share maker baseline; keep cumulative completed-pair average ≤$0.99 |
-| `basket99t270d` | T+270 twin that may round a 4.90–4.999-share complement to the five-share market minimum, leaving at most 0.1 opposite-token dust and exceeding the per-token cap by at most that dust |
-| `basket99x50` | Same five-share maker clips and rolling cap as baseline, but a 50-share inventory ceiling; tests whether repeated small cycles amortize market-minimum residue without changing order size |
-| `mintcycle5` | One five-share complete-set pair per window; tests whether repeated mint churn compounds residue risk |
-| `mintrepair5p95` | Five-set repair twin that accepts a fee-inclusive pair as low as $0.95 after 60 seconds; it deliberately pays for tail-risk reduction and remains an A/B until that insurance cost is measured |
-| `mintrepair5p100` | Five-set mint twin that gives maker completion 60 seconds, then reduces executable residual depth only when the fee-inclusive pair remains non-loss-making; near-minimum dust may round up by at most 0.1 share |
+| `mintcycle5` | One five-share complete-set pair per window; retained only as a falsification/control for repeated mint-churn residue risk |
 
 The observer records the official
 `crypto_prices_twap_sixty` RTDS stream as a **shadow-only** reference. It stores
@@ -168,7 +186,7 @@ when the open residual is within 0.1 share of it, deliberately flipping at most
 0.1 share of dust instead of retaining almost five shares. Five-share low-price
 orders are not incorrectly rejected on dollar notional.
 
-All six arms wait until T+30 seconds and until both token feeds have caught up
+Both controls wait until T+30 seconds and until both token feeds have caught up
 before starting a pair. This deliberately gives up the subscription-backlog
 period; a stale causal update freezes decisions and labels exposed settlement
 economics `lagged` rather than removing the window.
@@ -191,7 +209,9 @@ fills rather than same-time quote sums. Any market-WebSocket disconnect
 invalidates the active window because missed trades cannot be reconstructed. A
 `book` or `price_change` event arriving more than `PAPER_MAX_EVENT_LAG_MS`
 (400 ms by default) late freezes new decisions for its affected asset until both
-token streams catch up. Existing hypothetical exchange orders remain exposed and
+token streams catch up. An event timestamp more than 50 ms in the future fails
+closed and invalidates the affected window; negative clock skew is never clamped
+to fake zero latency. Existing hypothetical exchange orders remain exposed and
 ordered delayed trades can still fill them; this models measured latency instead
 of censoring it. Settlement reports split these windows into `lagged` and `clean`
 economics. A delayed `last_trade_price` does not freeze a fresh book, but its
@@ -214,6 +234,40 @@ This is substantially less optimistic than the retired print-skimming model,
 but still cannot model private cancellations ahead of us, exchange order
 acknowledgement, authenticated fills or our own impact. It remains a rejection
 and comparison tool, not production-parity proof.
+
+### Replay and cross-venue research gate
+
+`paper.capture`, `paper.replay`, and `paper.cohort_engine` form the single-pass
+replay path. The live paper runner and replay now call the same economic engine,
+and a differential fixture compares their complete record streams. A replay
+dataset is usable only when it binds the exact
+processed-event stream, actual decision ticks, market lifecycle, strategy-board
+hash, runtime/model identity, outcomes, and zero-loss raw manifests. Raw socket
+frames alone are forensic evidence: socket receive time is not the time the live
+strategy processed an event. The replay must never invent a perfect cadence or
+score frames left in a queue at shutdown. Byte-cap or writer-queue loss aborts
+immediately; a capped dataset is never allowed to run silently. Deterministic
+parity is an engineering claim only: replay fills remain model fills until maker
+queue access and authenticated execution are calibrated.
+
+`tools/crossvenue_capture.py` records prospective RTDS TWAP60, Binance spot and
+perpetual, and Deribit frames with wall and monotonic receive timestamps. RTDS
+has no historical replay after a disconnect, and Binance cannot be used to
+reconstruct the exact Chainlink TWAP. These feeds therefore support prospective
+toxicity and lead-lag experiments only. `tools/binance_second_cache.py` stores a
+source-hash-verified one-second derived cache so repeated historical screens do
+not rescan every raw aggregate trade archive.
+
+Every economic experiment is frozen before evaluation. Three to five windows
+are only a mechanics smoke. There is no invented default sample size: it must be
+derived from a genuinely prior immutable per-window endpoint, variance,
+autocorrelation/calendar-block structure, invalid-window rate, and an economic
+hurdle derived from fill-model error. The Gen60-72 archive cannot supply those
+inputs: only 33 persisted valid baseline windows exist, 30 are feed-lagged, and
+all span one seven-hour slice of one day. Until a clean pre-period exists, `N`
+is unknown. A correlated parameter grid is exploratory even if one cell looks
+excellent. Maker rebates are excluded from pass/fail economics and reported
+separately.
 
 ---
 
@@ -338,8 +392,9 @@ optional `POLYGON_RPC_URL`,
 
 Generation numbers record code-state changes; they are **not** independent
 strategy experiments. Short 3-5-window runs are engineering smoke tests and
-are green only when the changed action actually fires. Economic decisions now
-require a frozen, predeclared cohort of at least 200 valid windows. Archives
+are green only when the changed action actually fires. Economic decisions need
+a frozen endpoint and a predeclared stopping design powered from an immutable
+clean pre-period; no fixed window count is currently defensible. Archives
 live next to the DB as `paper/paper_genN_<date>{start,end}.db`.
 
 | Gen | When (UTC) | What changed |

@@ -6,8 +6,8 @@
 ## Current architecture
 
 ```text
-public CLOB market feed -> four-strategy queue-aware paper simulator -> SQLite report
-public CLOB market feed -> mintbot shadow quote planner               -> logs only
+public CLOB market feed -> two-control queue-aware paper simulator -> SQLite + capture
+public external feeds   -> passive causal recorder                 -> replay covariates
 ```
 
 The focused paper runner has no keys and emits no executor intents. The legacy
@@ -29,13 +29,21 @@ old approval/setup commands, and CTF split/merge fail closed in code.
 
 ## Strategy evidence required
 
-The four current hypotheses are `strict98` plus `basket98`, `basket985`,
-and `basket99`. All improve both bids one tick; the basket arms can spend prior
-completed-pair surplus while preserving their cumulative average cap. A
-candidate cannot advance unless a clean generation demonstrates all of the following:
+The current board contains only `basket99`, as a paired-fill mechanics probe,
+and `mintcycle5`, as a deliberately retained falsified control. Neither is a
+promotion candidate. The required sample size is currently unknown: the
+Gen60–72 archives do not provide a clean, immutable pre-period for the exact
+endpoint and board. A future candidate cannot advance unless a frozen design
+first derives its horizon from prior per-window variance, serial dependence,
+an explicit economic hurdle, and a predeclared stopping rule. It must then pass
+a non-overlapping future replication cohort. No interim chart or arbitrary
+window count can substitute for that design.
 
-- At least 288 full asset-windows (six hours across four assets); a window with
-  first usable paired books more than ten seconds late is excluded.
+A candidate must also demonstrate all of the following:
+
+- One observation per complete market window, with all clips collapsed and
+  every invalid/disconnected window's known exposure reported alongside valid
+  PnL.
 - Positive PnL and return on conservative overlapping bankroll, not merely high
   win rate or volume.
 - The result is not explained by one asset, one outcome direction, or a handful
@@ -53,11 +61,12 @@ candidate cannot advance unless a clean generation demonstrates all of the follo
   lag must remain bounded rather than hiding a slow consumer behind buffering.
 - Queue-ahead consumption, quote residence, post/cancel rate, and fill rate are
   credible rather than print-skimming assumptions.
-- One-tick price improvement increases completed pairs and neutral PnL versus
-  join-best without violating the same pair-sum or 65 ms action-delay gates.
-- The shadow mintbot cannot advance until authenticated receipts replace its
-  delayed position-based fill inference and exact cycle economics can be proven;
-  V2-corrected winner fills do not currently support mint-and-ask as the replica.
+- Any claimed maker edge survives a predeclared fill-degradation surface and a
+  later authorized calibration of queue-fill probability. The 65 ms action
+  delay is a sensitivity proxy, not authenticated order latency.
+- Mint cannot advance unless new forensics first establish a mint-specific edge
+  and the Safe/Relayer V2 path is independently proven. Current evidence rejects
+  mint-and-ask as the winner replica and repeated mint churn as profitable.
 
 A directional overlay is also closed. It must show, on non-overlapping
 out-of-sample periods, that the lower confidence bound on fair probability clears
@@ -65,8 +74,9 @@ the executable price plus taker fee, slippage, causal feed-age markout, and a
 safety margin. The public last-trade trend proxy fails this net executable-edge
 test before the near-resolution interval.
 
-Early negative evidence is enough to reject or alter a hypothesis; the minimum
-sample is a promotion gate, not a reason to preserve a losing configuration.
+Early negative evidence may stop a hypothesis only through a predeclared
+anytime-valid futility rule or a hard integrity/exposure stop. There is no early
+acceptance.
 
 ## Execution evidence required
 

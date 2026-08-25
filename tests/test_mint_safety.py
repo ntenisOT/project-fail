@@ -40,6 +40,7 @@ class MintSafetyTests(unittest.TestCase):
             {"p50_ms": 10, "p90_ms": 10, "max_ms": 25,
              "interval_max_ms": 25, "lifetime_max_ms": 25,
              "missing_timestamps": 0, "out_of_range_timestamps": 0,
+             "future_timestamps": 0, "max_future_ms": 0,
              "reconnects": 1},
         )
         health.observe({}, 1787631300.060)
@@ -57,6 +58,7 @@ class MintSafetyTests(unittest.TestCase):
         self.assertTrue(stale_market_event(delta, 1000.5, 0.4))
         self.assertTrue(stale_market_event({"event_type": "book"}, 1000.0, 0.4))
         self.assertFalse(stale_market_event(delta, 1000.3, 0.4))
+        self.assertTrue(stale_market_event(delta, 999.9, 0.4))
         self.assertFalse(stale_market_event(trade, 1001.0, 0.4))
         self.assertEqual(
             market_event_tokens({

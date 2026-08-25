@@ -8,15 +8,21 @@ import dataclasses
 import pathlib
 import sys
 from collections import defaultdict, deque
-from typing import Sequence
+from typing import Any, Sequence
 
 import clickhouse_connect  # type: ignore[import-untyped]
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from tools.clickhouse_forensics import SETTINGS, _legs_sql, window_external_data
-from tools.market_windows import ASSET_PREFIX, resolve_windows
+from tools.clickhouse_forensics import (
+    LIFECYCLE_LOOKBACK_S,
+    LIFECYCLE_TAIL_S,
+    SETTINGS,
+    _legs_sql,
+    window_external_data,
+)
+from tools.market_windows import ASSET_PREFIX, ResolvedWindow, resolve_windows
 from tools.top_setters import DEFAULT_CACHE, iso, parse_timestamp
 from tools.wallet_timing import WALLET_RE
 
@@ -140,6 +146,34 @@ def summarize_pairs(fills: list[BuyFill], wallet: str) -> PairSummary:
     )
 
 
+def fetch_buy_fills(
+    client: Any, windows: Sequence[ResolvedWindow], wallets: Sequence[str],
+) -> list[BuyFill]:
+    """Fetch exact ordered buy legs for a bounded, already-validated wallet set."""
+    if not windows or not wallets:
+        return []
+    if any(not WALLET_RE.fullmatch(wallet) for wallet in wallets):
+        raise ValueError("invalid wallet in FIFO query")
+    t0 = min(window.start for window in windows) - LIFECYCLE_LOOKBACK_S
+    t1 = max(window.start for window in windows) + LIFECYCLE_TAIL_S
+    selected = ",".join(f"'{wallet}'" for wallet in wallets)
+    query = f"""
+    SELECT lower(l.wallet), w.slug, w.side, l.block_number, l.log_index,
+           l.ts, l.shares, l.usdc/l.shares, l.is_maker, l.taker_fee
+    FROM ({_legs_sql(t0, t1)}) l
+    INNER JOIN set_windows w ON l.token=w.token
+    WHERE lower(l.wallet) IN ({selected}) AND l.bought>0
+    ORDER BY wallet, slug, block_number, log_index
+    """
+    rows = client.query(
+        query, settings=SETTINGS, external_data=window_external_data(windows)
+    ).result_rows
+    return [BuyFill(
+        str(row[0]), str(row[1]), int(row[2]), (int(row[3]), int(row[4])),
+        int(row[5]), float(row[6]), float(row[7]), bool(row[8]), float(row[9]),
+    ) for row in rows]
+
+
 def arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--start", type=parse_timestamp, required=True)
@@ -161,28 +195,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         assets, args.start, args.end, args.cache,
         fetch_missing=False, allow_missing=False,
     )
-    t0 = min(window.start for window in windows) - 26 * 60 * 60
-    t1 = max(window.start for window in windows) + 60 * 60
-    selected = ",".join(f"'{wallet}'" for wallet in wallets)
-    query = f"""
-    SELECT lower(l.wallet), w.slug, w.side, l.block_number, l.log_index,
-           l.ts, l.shares, l.usdc/l.shares, l.is_maker, l.taker_fee
-    FROM ({_legs_sql(t0, t1)}) l
-    INNER JOIN set_windows w ON l.token=w.token
-    WHERE lower(l.wallet) IN ({selected}) AND l.bought>0
-    ORDER BY wallet, slug, block_number, log_index
-    """
     client = clickhouse_connect.get_client(
         host="localhost", port=8123, username="copypoly", password="copypoly",
         database="copypoly",
     )
-    rows = client.query(
-        query, settings=SETTINGS, external_data=window_external_data(windows)
-    ).result_rows
-    fills = [BuyFill(
-        str(row[0]), str(row[1]), int(row[2]), (int(row[3]), int(row[4])),
-        int(row[5]), float(row[6]), float(row[7]), bool(row[8]), float(row[9]),
-    ) for row in rows]
+    fills = fetch_buy_fills(client, windows, wallets)
     print(f"period: {iso(args.start)} .. {iso(args.end)} | resolved={len(windows)}")
     print("pairs are opposite-token buys matched FIFO in exact block/log order")
     print("pair sums include explicit taker fees; maker rebates are excluded")

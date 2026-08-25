@@ -138,10 +138,19 @@ class FeedPump:
         self, handler: Callable[[dict[str, object]], None],
         capacity: int = EVENT_QUEUE_CAPACITY,
         stats: FeedPumpStats | None = None,
+        frame_sink: Callable[[int, int, str | bytes], int | None] | None = None,
+        processed_sink: Callable[[int, int, int, int], None] | None = None,
+        timestamped_handler: Callable[[dict[str, object], int, int], None] | None = None,
     ) -> None:
         self.handler = handler
-        self.queue: asyncio.Queue[tuple[dict[str, object], float]] = asyncio.Queue(capacity)
+        self.queue: asyncio.Queue[tuple[dict[str, object], float, int, int]] = (
+            asyncio.Queue(capacity)
+        )
         self.stats = stats or FeedPumpStats()
+        self.frame_sink = frame_sink
+        self.processed_sink = processed_sink
+        self.timestamped_handler = timestamped_handler
+        self._next_frame_id = 0
 
     @property
     def high_water(self) -> int:
@@ -164,6 +173,12 @@ class FeedPump:
             self.stats.observe_ws_depth(websocket_frame_depth(ws))
             if raw == "PONG":
                 continue
+            frame_id = self._next_frame_id
+            self._next_frame_id += 1
+            if self.frame_sink is not None:
+                captured_id = self.frame_sink(time.time_ns(), time.monotonic_ns(), raw)
+                if captured_id is not None:
+                    frame_id = captured_id
             parse_started = time.monotonic()
             try:
                 payload = json.loads(raw)
@@ -177,9 +192,11 @@ class FeedPump:
             self.stats.observe_frame(
                 len(events), (time.monotonic() - parse_started) * 1000,
             )
-            for event in events:
+            for event_index, event in enumerate(events):
                 try:
-                    self.queue.put_nowait((event, time.monotonic()))
+                    self.queue.put_nowait(
+                        (event, time.monotonic(), frame_id, event_index),
+                    )
                 except asyncio.QueueFull as exc:
                     raise FeedBacklogError(
                         f"market event queue reached {self.queue.maxsize}",
@@ -190,14 +207,28 @@ class FeedPump:
         processed = 0
         while not stop.is_set():
             try:
-                event, enqueued_at = await asyncio.wait_for(
+                event, enqueued_at, frame_id, event_index = await asyncio.wait_for(
                     self.queue.get(), timeout=0.5,
                 )
             except asyncio.TimeoutError:
                 continue
             residence_ms = max(0.0, (time.monotonic() - enqueued_at) * 1000)
             self.stats.observe_residence(residence_ms)
-            self.handler(event)
+            if self.timestamped_handler is None and self.processed_sink is None:
+                self.handler(event)
+            else:
+                handler_wall_ns = time.time_ns()
+                handler_monotonic_ns = time.monotonic_ns()
+                if self.timestamped_handler is None:
+                    self.handler(event)
+                else:
+                    self.timestamped_handler(
+                        event, handler_wall_ns, handler_monotonic_ns,
+                    )
+                if self.processed_sink is not None:
+                    self.processed_sink(
+                        handler_wall_ns, handler_monotonic_ns, frame_id, event_index,
+                    )
             processed += 1
             if processed % PROCESS_YIELD_EVERY == 0:
                 await asyncio.sleep(0)

@@ -440,7 +440,8 @@ class PairWindow:
         order = self.orders.get(key)
         if order is None or now >= self.end:
             return None
-        if now + 1e-9 < order.placed_at:
+        if (known_at + 1e-9 < order.placed_at
+                or now + 1e-9 < order.placed_at):
             self.pre_activation_trades += 1
             return None
         crossed = price <= order.price if order_side == "buy" else price >= order.price

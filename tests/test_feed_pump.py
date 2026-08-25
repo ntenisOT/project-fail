@@ -2,7 +2,10 @@ import asyncio
 import json
 import time
 
+import pytest
+
 from live.feed_pump import (
+    FeedBacklogError,
     FeedPump,
     FeedPumpStats,
     subscription_messages,
@@ -13,6 +16,7 @@ from live.loop_health import EventLoopHealth
 
 def test_feed_pump_drains_socket_before_ordered_processing_finishes() -> None:
     seen: list[int] = []
+    raw_frames: list[tuple[int, int, str | bytes]] = []
     stop = asyncio.Event()
 
     class Socket:
@@ -37,10 +41,15 @@ def test_feed_pump_drains_socket_before_ordered_processing_finishes() -> None:
         seen.append(int(str(event["sequence"])))
 
     stats = FeedPumpStats()
-    pump = FeedPump(handle, capacity=128, stats=stats)
+    pump = FeedPump(
+        handle, capacity=128, stats=stats,
+        frame_sink=lambda wall, mono, raw: raw_frames.append((wall, mono, raw)),
+    )
     asyncio.run(pump.run(Socket(), stop))
 
     assert seen == list(range(100))
+    assert len(raw_frames) == 1
+    assert raw_frames[0][0] > 0 and raw_frames[0][1] > 0
     assert pump.high_water == 100
     snapshot = pump.snapshot(reset_interval=True)
     assert snapshot["hwm"] == snapshot["interval_hwm"] == 100
@@ -57,6 +66,40 @@ def test_feed_pump_drains_socket_before_ordered_processing_finishes() -> None:
     assert after["interval_parse_max_ms"] == 0
     replacement = FeedPump(handle, capacity=128, stats=stats)
     assert replacement.snapshot()["hwm"] == 100
+
+
+def test_feed_pump_acknowledges_only_the_processed_prefix_on_tail_loss() -> None:
+    seen: list[int] = []
+    processed: list[tuple[int, int]] = []
+    raw_frames: list[str | bytes] = []
+
+    class Socket:
+        async def send(self, message: str) -> None:
+            del message
+
+        async def recv(self) -> str:
+            return json.dumps([{"sequence": value} for value in range(20)])
+
+    def frame_sink(wall_ns: int, monotonic_ns: int, raw: str | bytes) -> int:
+        assert wall_ns > 0 and monotonic_ns > 0
+        raw_frames.append(raw)
+        return 41
+
+    pump = FeedPump(
+        lambda event: seen.append(int(str(event["sequence"]))),
+        capacity=8,
+        frame_sink=frame_sink,
+        processed_sink=lambda _wall, _mono, frame, event: processed.append(
+            (frame, event)
+        ),
+    )
+
+    with pytest.raises(FeedBacklogError):
+        asyncio.run(pump.run(Socket(), asyncio.Event()))
+
+    assert len(raw_frames) == 1
+    assert 0 <= len(seen) < 20
+    assert processed == [(41, index) for index in range(len(seen))]
 
 
 def test_subscription_rotation_adds_before_removing() -> None:

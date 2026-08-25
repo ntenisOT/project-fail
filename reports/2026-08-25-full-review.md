@@ -197,6 +197,24 @@ bug is also fixed and covered by one focused test.
   Gen50 subscribes the new pair before unsubscribing the old pair on one
   persistent socket, eliminating the repository's unnecessary five-minute
   reconnect/snapshot burst ([market channel](https://docs.polymarket.com/api-reference/wss/market)).
+- Gen50's second resolved window immediately reversed the flattering first one.
+  Across two tail-exposed windows, mintcycle fell to -$2.08 adverse PnL with five
+  unmatched shares and ladder fell to -$4.59 with ten unmatched. Basket99c180
+  was balanced at +$1.15, but two lagged windows do not estimate an edge.
+- Gen51's only scored window was again tail-exposed and rejected every apparent
+  winner: mint adverse PnL was -$1.50 with five unmatched, ladder was -$3.40
+  with ten unmatched, and all three basket arms left five unmatched shares.
+- The Gen51 diagnostic recorded no missing timestamps on causal `book` or
+  `price_change` events. The heartbeat discrepancy was a display defect: at
+  this event rate, a delayed burst aged out of FeedHealth's 4,096-event rolling
+  sample before the next 20-second log. Gen52 retains rolling percentiles but
+  adds interval and lifetime maxima plus missing-timestamp counts.
+- An independent simulator audit then found a larger upward bias: one public
+  print was offered independently to every ladder lane, and a through-price
+  print could fill a whole clip even when the observed print was smaller.
+  Gen52 conserves one print-size budget across lanes in price priority and caps
+  every through fill by observed size. All pre-Gen52 ladder results, and any
+  full-clip through fills in the single-lane arms, require a fresh baseline.
 
 A 15-minute generation is realistic for rejecting a mechanism or catching a
 runtime defect. It is not realistic for estimating edge. Promotion requires at

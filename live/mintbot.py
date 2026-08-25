@@ -437,7 +437,8 @@ class Mintbot:
         queue_hwm = self.feed_pump.high_water if self.feed_pump else 0
         log.info("feed events=%s lag=%s queue_hwm=%d quotes=%s residence=%.1fs "
                  "under15=%.0f%%", dict(self.feed_counts),
-                 self.feed_health.snapshot(), queue_hwm, quote_events, rest_s,
+                 self.feed_health.snapshot(reset_interval=True), queue_hwm,
+                 quote_events, rest_s,
                  under_pct)
         self.last_feed_log = time.monotonic()
 

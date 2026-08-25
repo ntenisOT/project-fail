@@ -248,8 +248,15 @@ def _gate_stale_market_event(event: dict[str, object], now: float) -> None:
     assets = _affected_assets(tokens)
     if not assets:
         return
-    stale = stale_market_event(event, now, MAX_MARKET_EVENT_LAG_S)
     event_at = event_time_s(event)
+    stale = stale_market_event(event, now, MAX_MARKET_EVENT_LAG_S)
+    if event_at is None:
+        missing_key = f"{event.get('event_type')}_missing_timestamp"
+        S.events[missing_key] += 1
+        if S.events[missing_key] in (1, 10, 100, 1_000, 10_000):
+            log.warning("market event missing timestamp type=%s count=%d keys=%s",
+                        event.get("event_type"), S.events[missing_key],
+                        sorted(event))
     event_lag_ms = None if event_at is None else max(0.0, 1000 * (now - event_at))
     if stale:
         S.events["stale_market_event"] += 1
@@ -402,7 +409,8 @@ async def heartbeat_task() -> None:
         log.info("hb | events=%s fills=%s active_orders=%d pending_resolution=%d "
                  "feed_paused=%s feed=%s feed_queue_hwm=%d errors=%s",
                  dict(S.events), active, orders, len(S.pending),
-                 sorted(S.stale_assets), S.feed_health.snapshot(), feed_queue_hwm,
+                 sorted(S.stale_assets),
+                 S.feed_health.snapshot(reset_interval=True), feed_queue_hwm,
                  dict(S.resolution_errors))
 
 

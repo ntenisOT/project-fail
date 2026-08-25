@@ -146,10 +146,32 @@ class LadderWindow:
         self, now: float, side_up: bool, price: float, size: float,
         taker_side: str, received_at: float | None = None,
     ) -> dict[str, float | str] | None:
-        records = [record for lane in self.lanes
-                   if (record := lane.on_trade(
-                       now, side_up, price, size, taker_side, received_at,
-                   )) is not None]
+        order_side = "buy" if taker_side.upper() == "SELL" else "sell"
+        key = (side_up, order_side)
+        lanes = [lane for lane in self.lanes if key in lane.orders]
+        lanes.sort(
+            key=lambda lane: lane.orders[key].price,
+            reverse=order_side == "buy",
+        )
+        records: list[dict[str, float | str]] = []
+        remaining = size
+        for lane in lanes:
+            if remaining <= 1e-9:
+                break
+            order = lane.orders.get(key)
+            if order is None:
+                continue
+            queue_consumed = (
+                min(order.queue_ahead, remaining)
+                if price == order.price else 0.0
+            )
+            record = lane.on_trade(
+                now, side_up, price, remaining, taker_side, received_at,
+            )
+            remaining -= queue_consumed
+            if record is not None:
+                remaining -= float(record["size"])
+                records.append(record)
         self._record_buys(now, records)
         if not records:
             return None

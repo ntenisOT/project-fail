@@ -37,8 +37,14 @@ class MintSafetyTests(unittest.TestCase):
         health.reconnect()
         self.assertEqual(
             health.snapshot(),
-            {"p50_ms": 10, "p90_ms": 10, "max_ms": 25, "reconnects": 1},
+            {"p50_ms": 10, "p90_ms": 10, "max_ms": 25,
+             "interval_max_ms": 25, "lifetime_max_ms": 25,
+             "missing_timestamps": 0, "reconnects": 1},
         )
+        health.observe({}, 1787631300.060)
+        self.assertEqual(health.snapshot(reset_interval=True)["interval_max_ms"], 25)
+        self.assertEqual(health.snapshot()["interval_max_ms"], 0)
+        self.assertEqual(health.snapshot()["missing_timestamps"], 1)
         self.assertEqual(event_time_s({"timestamp": "1787631300040"}), 1787631300.04)
         self.assertIsNone(event_time_s({}))
 

@@ -390,7 +390,9 @@ class PairWindow:
             self.queue_consumed += consumed
             executable = max(0.0, size - consumed)
         else:
-            executable = order.size
+            # A through-print proves price priority was crossed, but it does not
+            # prove more executable flow than the public print itself.
+            executable = min(order.size, size)
         capacity = (self.config.max_inventory - self.inventory[side_up]
                     if order_side == "buy" else self.inventory[side_up])
         if capacity <= 0:

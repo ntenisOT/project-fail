@@ -31,13 +31,13 @@ def test_two_level_ladder_holds_queue_and_pairs_cross_level_fills() -> None:
     up_fill = window.on_trade(3, True, 0.49, 5, "SELL")
     window.on_books(3.1, *moved)
     down_fill = window.on_trade(4, False, 0.46, 5, "SELL")
-    assert (up_fill or {})["size"] == 10
-    assert (down_fill or {})["size"] == 10
+    assert (up_fill or {})["size"] == 5
+    assert (down_fill or {})["size"] == 5
 
     settled, metrics = window.settle(300, 1)
-    assert metrics["buy_pair_shares"] == 10
+    assert metrics["buy_pair_shares"] == 5
     pair_cost = metrics["buy_pair_cost"]
     assert isinstance(pair_cost, (int, float))
-    assert math.isclose(pair_cost / 10, 0.96)
+    assert math.isclose(pair_cost / 5, 0.97)
     assert metrics["unmatched_end"] == 0
-    assert math.isclose(float(settled["pnl"]), 0.4)
+    assert math.isclose(float(settled["pnl"]), 0.15)

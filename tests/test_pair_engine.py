@@ -56,6 +56,21 @@ class FocusedPairTests(unittest.TestCase):
         self.assertFalse(window.full_window)
         self.assertFalse(window.orders)
 
+    def test_entry_cutoff_cancels_balanced_quotes_but_completes_an_open_leg(self) -> None:
+        config = PairConfig("cutoff", "accumulate", 0.01, 0, new_pair_cutoff_s=240)
+        up, down = book(0.48, 0, 0.52, 5), book(0.49, 0, 0.51, 5)
+        balanced = PairWindow(config, "btc", "btc-updown-5m-0", 0, "up", "down", 0)
+        balanced.on_books(1, up, down)
+        balanced.on_books(240, up, down)
+        self.assertFalse(balanced.orders)
+
+        open_leg = PairWindow(config, "btc", "btc-updown-5m-0", 0, "up", "down", 0)
+        open_leg.on_books(1, up, down)
+        open_leg.on_trade(2, True, 0.48, 5, "SELL")
+        open_leg.on_books(240, up, down)
+        self.assertIn((False, "buy"), open_leg.orders)
+        self.assertNotIn((True, "buy"), open_leg.orders)
+
     def test_delayed_requote_cannot_oversell_after_an_inflight_fill(self) -> None:
         config = PairConfig("mint", "mint", 0.01, 0.06, mint_sets=5)
         window = PairWindow(config, "btc", "btc-updown-5m-0", 0, "up", "down", 0)

@@ -103,7 +103,7 @@ signature, not one universal mechanism. The current board tests only:
 |---|---|
 | `pair_carry20` | Join both best bids only when their sum is ≤0.99; keep balanced complete sets through close |
 | `pair_churn20` | Same 20 ms decision cadence plus balanced best-ask resale when the ask sum is ≥1.01 |
-| `pair_churn600` | Identical churn with 600 ms decision cadence to test queue patience, not network latency |
+| `pair_churn240` | Fast churn that starts no new pair after 240 s, matching the corrected leader's minimal last-minute volume |
 | `mint_sell20` | Start with twenty $1 paper sets; maker-sell balanced five-share clips, never bid |
 
 The simulator reconstructs public price levels from authoritative snapshots and
@@ -228,7 +228,7 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 12 | 08-25 02:xx | four queue-aware pair/inventory hypotheses; official outcomes; measured 65 ms action delay |
 | 13 | 08-25 02:4x | open-leg price constrains later pair completion; outcome side persisted per fill |
 | 14 | 08-25 02:5x | delayed actions revalidate fills/holdings; negative inventory hard-fails; worst-outcome PnL |
-| 15 | 08-25 03:1x | roll resubscribe bounded to 500 ms; late first books invalidate a window |
+| 15 | 08-25 03:1x | roll resubscribe bounded to 500 ms; late books invalidate; 240 s entry-cutoff arm |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

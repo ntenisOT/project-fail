@@ -20,6 +20,7 @@ class PairConfig:
     clip_shares: float = 5.0
     max_inventory: float = 20.0
     mint_sets: float = 20.0
+    new_pair_cutoff_s: float = 300.0
 
 
 @dataclasses.dataclass
@@ -104,13 +105,18 @@ class PairWindow:
         self.buy_pairs = PairLots()
         self.sell_pairs = PairLots()
 
-    def _desired(self, up: OrderBook, down: OrderBook) -> dict[tuple[bool, str], float]:
+    def _desired(self, now: float, up: OrderBook,
+                 down: OrderBook) -> dict[tuple[bool, str], float]:
         books = {True: up, False: down}
         desired: dict[tuple[bool, str], float] = {}
+        can_start_pair = now < self.start + self.config.new_pair_cutoff_s
         up_bid, down_bid = up.best_bid, down.best_bid
         if self.config.mode != "mint" and up_bid is not None and down_bid is not None:
             open_side = self.buy_pairs.open_side
-            buy_sides = (True, False) if open_side is None else (not open_side,)
+            buy_sides = (
+                ((True, False) if can_start_pair else ())
+                if open_side is None else (not open_side,)
+            )
             for side in buy_sides:
                 inv, other = self.inventory[side], self.inventory[not side]
                 if inv > other + 0.1 or inv + self.config.clip_shares > self.config.max_inventory:
@@ -131,7 +137,10 @@ class PairWindow:
         if (self.config.mode in ("churn", "mint")
                 and up_ask is not None and down_ask is not None):
             open_side = self.sell_pairs.open_side
-            sell_sides = (True, False) if open_side is None else (not open_side,)
+            sell_sides = (
+                ((True, False) if can_start_pair else ())
+                if open_side is None else (not open_side,)
+            )
             for side in sell_sides:
                 inv, other = self.inventory[side], self.inventory[not side]
                 if inv + 0.1 >= other and inv >= self.config.clip_shares:
@@ -165,7 +174,7 @@ class PairWindow:
         self.action_batches += 1
         complete = (up.best_bid is not None and down.best_bid is not None
                     and up.best_ask is not None and down.best_ask is not None)
-        desired = self._desired(up, down) if complete else {}
+        desired = self._desired(now, up, down) if complete else {}
         books = {True: up, False: down}
         for key in list(self.orders):
             if key not in desired or self.orders[key].price != desired[key]:
@@ -200,7 +209,7 @@ class PairWindow:
             return
         complete = (up.best_bid is not None and down.best_bid is not None
                     and up.best_ask is not None and down.best_ask is not None)
-        desired = self._desired(up, down) if complete else {}
+        desired = self._desired(now, up, down) if complete else {}
         self.last_requote = now
         current = {key: order.price for key, order in self.orders.items()}
         if current == desired:

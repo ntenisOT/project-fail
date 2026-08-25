@@ -40,8 +40,8 @@ STRATEGIES = (
                action_latency_s=ACTION_LATENCY_S),
     PairConfig("pair_churn20", "churn", 0.02,
                action_latency_s=ACTION_LATENCY_S),
-    PairConfig("pair_churn600", "churn", 0.60,
-               action_latency_s=ACTION_LATENCY_S),
+    PairConfig("pair_churn240", "churn", 0.02,
+               action_latency_s=ACTION_LATENCY_S, new_pair_cutoff_s=240),
     PairConfig("mint_sell20", "mint", 0.02,
                action_latency_s=ACTION_LATENCY_S,
                sell_sum_floor=1.005),
@@ -285,7 +285,7 @@ async def main() -> None:
         raise SystemExit("paper KILL present")
     names = [config.name for config in STRATEGIES]
     log.info("focused pair paper starting | strategies=%s | queue-ahead fills | "
-             "action-latency=%dms | decision cadence=20/600ms | "
+             "action-latency=%dms | decision cadence=20ms | "
              "official Gamma outcomes | assets=%s",
              names, round(ACTION_LATENCY_S * 1000), list(ASSETS))
     S.notify.send("focused pair paper started (4 strategies, queue-aware, no orders)")

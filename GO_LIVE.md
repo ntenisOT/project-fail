@@ -30,7 +30,7 @@ the old approval/setup commands fail closed in code.
 ## Strategy evidence required
 
 The four current hypotheses are `pair_carry20`, `pair_churn20`,
-`pair_churn600`, and `mint_sell20`. A candidate cannot advance unless a clean
+`pair_churn240`, and `mint_sell20`. A candidate cannot advance unless a clean
 generation demonstrates all of the following:
 
 - At least 288 full asset-windows (six hours across four assets); a window with
@@ -47,8 +47,8 @@ generation demonstrates all of the following:
   invalidates the generation instead of manufacturing short sales.
 - Queue-ahead consumption, quote residence, post/cancel rate, and fill rate are
   credible rather than print-skimming assumptions.
-- The 600 ms decision-cadence twin does not destroy the edge. This is a queue-
-  patience comparison; both twins use the same 65 ms action-delay model.
+- The 240 s new-pair cutoff improves worst-case inventory PnL versus otherwise
+  identical all-window churn; both use the same 65 ms action-delay model.
 
 Early negative evidence is enough to reject or alter a hypothesis; the minimum
 sample is a promotion gate, not a reason to preserve a losing configuration.

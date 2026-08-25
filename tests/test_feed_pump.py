@@ -1,7 +1,7 @@
 import asyncio
 import json
 
-from live.feed_pump import FeedPump
+from live.feed_pump import FeedPump, subscription_messages
 
 
 def test_feed_pump_drains_socket_before_ordered_processing_finishes() -> None:
@@ -32,3 +32,10 @@ def test_feed_pump_drains_socket_before_ordered_processing_finishes() -> None:
 
     assert seen == list(range(100))
     assert pump.high_water == 100
+
+
+def test_subscription_rotation_adds_before_removing() -> None:
+    assert subscription_messages({"old-up", "old-down"}, {"new-up", "new-down"}) == [
+        {"operation": "subscribe", "assets_ids": ["new-down", "new-up"]},
+        {"operation": "unsubscribe", "assets_ids": ["old-down", "old-up"]},
+    ]

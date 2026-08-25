@@ -22,7 +22,7 @@ from live.feed_health import (
 )
 from live.window_clock import boundary_aligned_delay
 from paper import envload, report
-from live.feed_pump import FeedPump
+from live.feed_pump import FeedPump, WebSocketLike, subscription_messages
 from paper.ladder_engine import LadderWindow
 from paper.ledger_writer import LedgerWriter
 from paper.market_metadata import ActiveMarket, fetch_active_market
@@ -163,7 +163,6 @@ async def window_task() -> None:
                         S.pending.append(PendingWindow(asset, start, windows))
                         S.active[asset] = {}
             current_base = base
-            _refresh_tokens()
         missing = [asset for asset in ASSETS if not S.active.get(asset)]
         if missing:
             discoveries = await asyncio.gather(*(_discover(asset, base) for asset in missing))
@@ -275,6 +274,10 @@ def handle_event(event: dict[str, object]) -> None:
     S.events[event_type] += 1
     now = time.time()
     S.feed_health.observe(event, now)
+    event_tokens = market_event_tokens(event)
+    if event_tokens and not event_tokens & S.tokens:
+        S.events["retired_market_event"] += 1
+        return
     S.books.apply(event, now)
     _gate_stale_market_event(event, now)
     if event_type != "last_trade_price":
@@ -309,14 +312,28 @@ def handle_event(event: dict[str, object]) -> None:
             S.ledger.record_fill(traded_at, name, asset, window.slug, fill)
 
 
+async def _rotate_subscriptions(
+    ws: WebSocketLike, subscribed: set[str],
+) -> None:
+    while True:
+        await S.tokens_changed.wait()
+        S.tokens_changed.clear()
+        target = set(S.tokens)
+        for message in subscription_messages(subscribed, target):
+            await ws.send(json.dumps(message))
+        if target != subscribed:
+            log.info("market ws rotated %d -> %d tokens", len(subscribed), len(target))
+        subscribed = target
+
+
 async def market_task() -> None:
     retry_delay = 0.1
     while True:
-        S.tokens_changed.clear()
-        tokens = list(S.tokens)
-        if not tokens:
-            await S.tokens_changed.wait()
-            continue
+        while not S.tokens:
+            S.tokens_changed.clear()
+            if not S.tokens:
+                await S.tokens_changed.wait()
+        tokens = set(S.tokens)
         connected_at: float | None = None
         try:
             S.books.clear()
@@ -325,10 +342,27 @@ async def market_task() -> None:
                 max_queue=MARKET_WS_MAX_QUEUE,
             ) as ws:
                 connected_at = time.monotonic()
-                await ws.send(json.dumps({"assets_ids": tokens, "type": "market"}))
+                await ws.send(json.dumps({
+                    "assets_ids": sorted(tokens), "type": "market",
+                }))
                 log.info("market ws subscribed %d tokens", len(tokens))
                 S.feed_pump = FeedPump(handle_event)
-                await S.feed_pump.run(ws, S.tokens_changed)
+                connection_stop = asyncio.Event()
+                pump_task = asyncio.create_task(S.feed_pump.run(ws, connection_stop))
+                rotate_task = asyncio.create_task(_rotate_subscriptions(ws, tokens))
+                tasks = {pump_task, rotate_task}
+                try:
+                    done, _ = await asyncio.wait(
+                        tasks, return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    for task in done:
+                        task.result()
+                finally:
+                    connection_stop.set()
+                    for task in tasks:
+                        if not task.done():
+                            task.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
         except Exception as exc:
             if connected_at is not None:
                 S.feed_health.reconnect()

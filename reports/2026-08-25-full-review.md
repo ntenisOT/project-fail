@@ -174,6 +174,12 @@ bug is also fixed and covered by one focused test.
   connected. Gen49 therefore narrows the shadow mintbot to the same BTC cohort;
   scaling back to four assets requires clean evidence or one connection per
   market, not a larger in-process queue.
+- At the 10:40 market burst, BTC-only mintbot and paper subscribed to the same
+  two tokens within 50 ms. Paper was immediately dropped with `1013` while both
+  local queues were shallow and mintbot stayed connected. The shadow bot was
+  stopped: duplicate subscriptions were damaging the only fill-bearing
+  experiment. Any future concurrent runner must consume one locally fanned-out
+  feed rather than compete through duplicate upstream sockets.
 - Gen48's one later officially scored window was also tail-exposed, so it is not
   clean edge evidence, but its mechanics expose the core small-bank risk. The
   two-level ladder filled 10 Down shares at a $0.465 weighted price at T+35 and
@@ -181,6 +187,16 @@ bug is also fixed and covered by one focused test.
   mint control sold a five-share pair at $1.03, then sold another five Up at
   $0.57 without a Down completion: neutral +$0.50 but adverse -$2.00. A few
   cents of paired spread cannot pay for one five-share directional remainder.
+- Gen49 then completed all four mint clips at a $1.03 pair sum and locked +$0.60
+  neutral/adverse PnL. The ladder paired 10 shares at an average $0.965 but
+  reopened and left five shares unmatched, producing +$0.95 neutral yet -$1.55
+  adverse PnL. Every arm was correctly labeled lagged after an 804 ms causal
+  tail. This is strong mechanism evidence for mintcycle and against unrestricted
+  ladder replenishment, but not a clean profitability estimate.
+- The official market-channel protocol supports in-place subscription updates.
+  Gen50 subscribes the new pair before unsubscribing the old pair on one
+  persistent socket, eliminating the repository's unnecessary five-minute
+  reconnect/snapshot burst ([market channel](https://docs.polymarket.com/api-reference/wss/market)).
 
 A 15-minute generation is realistic for rejecting a mechanism or catching a
 runtime defect. It is not realistic for estimating edge. Promotion requires at
@@ -265,7 +281,8 @@ state from orchestration only after the strategy survives.
 
 ## Current safety state
 
-- Ireland: paper runner only plus shadow mintbot.
+- Ireland: paper runner only; shadow mintbot is stopped during paper experiments
+  after duplicate BTC subscriptions correlated with a boundary `1013`.
 - No executor or lockbot process.
 - All place paths hard-disabled in code.
 - Legacy direct-EOA mint place path hard-disabled.

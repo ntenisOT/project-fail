@@ -39,7 +39,7 @@ servers, VPNs, or proxies must not be used to circumvent a restriction.
 | Session | Command it runs | What it is |
 |---|---|---|
 | `paper` | `python -m paper.run` | five queue-aware paired-bid hypotheses (writes `paper/paper.db`) |
-| `mintbot` | `MINTBOT_MODE=shadow python -m live.mintbot` | feed/quote soak only; place mode is currently forbidden |
+| `mintbot` | stopped; on-demand `MINTBOT_MODE=shadow MINTBOT_ASSETS=btc python -m live.mintbot` | do not duplicate paper's BTC feed during primary experiments; place mode is forbidden |
 
 View: `tmux attach -t paper` (detach `Ctrl-b d`) or `tmux capture-pane -t paper -p | tail -20`.
 
@@ -177,7 +177,11 @@ report rolling server-event p50/p90/max lag, stale/delayed-trade event counts,
 reconnect count, and the ordered feed-queue high-water mark. Socket reads are
 decoupled from event processing through a bounded 8,192-event queue; local queue
 delay still appears in event age, while overflow or disconnect invalidates the
-window. The ledger separately persists every truly invalid
+window. Market rolls use the official in-place subscription update protocol:
+the new token pair is subscribed before the old pair is unsubscribed, preserving
+one socket instead of forcing a reconnect and duplicate snapshot burst every
+five minutes ([market channel](https://docs.polymarket.com/api-reference/wss/market)).
+The ledger separately persists every truly invalid
 strategy-window, its reason, fills, peak committed capital, cash, and residual
 inventory. Reports include the cohort validity rate so rejected windows cannot
 silently disappear from the denominator. Completed opposite-token fills retain
@@ -218,6 +222,11 @@ timestamped snapshot/delta update within `MINT_BOOK_FRESH_MS` (2,000 ms by
 default); unrelated token traffic can no longer make a stale pair look healthy.
 The mintbot now shares paper's bounded ordered feed pump, reports queue high
 water and separately counts deltas that actually updated its best-ask cache.
+A bounded post-fix soak proved those updates, then revealed that running paper
+and mintbot as separate subscribers to the same BTC pair can make one socket
+receive a server `1013` at the window burst even with shallow local queues.
+Mintbot is therefore stopped during paper experiments; a future concurrent
+design must fan out one owned feed locally rather than open duplicate sockets.
 A joint-sum
 floor constrains a quoted pair but cannot guarantee paired fills. Position
 polling still cannot reconstruct exact fill prices, so reported PnL is not yet
@@ -354,6 +363,7 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 47 | 08-25 09:49 | reject the 10-share arms after five windows; keep 5-share Basket99 control and isolate a T+180 new-pair cutoff from fee-aware completion at T+120/T+180 |
 | 48 | 08-25 10:05 | retain Basket98/Basket99/cutoff controls; replace redundant taker twins with a stable two-level replenishing ladder and an honest queue-aware mint-cycle control |
 | 49 | 08-25 10:33 | preserve the Gen48 board; decouple WebSocket draining from ordered processing after another real 1013 slow-consumer disconnect; share the pump with mintbot and require fresh timestamped updates for each outcome token |
+| 50 | 08-25 10:44 | preserve the board; stop duplicate shadow subscriptions and rotate market tokens in-place on one persistent official WebSocket instead of reconnecting at every boundary |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

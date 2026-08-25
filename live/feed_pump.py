@@ -6,7 +6,7 @@ import asyncio
 import json
 import time
 from collections.abc import Callable
-from typing import Protocol
+from typing import Protocol, Sequence
 
 EVENT_QUEUE_CAPACITY = 8192
 PROCESS_YIELD_EVERY = 64
@@ -19,6 +19,19 @@ class WebSocketLike(Protocol):
 
 class FeedBacklogError(RuntimeError):
     pass
+
+
+def subscription_messages(
+    current: set[str], target: set[str],
+) -> list[dict[str, str | Sequence[str]]]:
+    """Rotate market tokens without dropping the socket or snapshot coverage."""
+    messages: list[dict[str, str | Sequence[str]]] = []
+    added, removed = sorted(target - current), sorted(current - target)
+    if added:
+        messages.append({"operation": "subscribe", "assets_ids": added})
+    if removed:
+        messages.append({"operation": "unsubscribe", "assets_ids": removed})
+    return messages
 
 
 class FeedPump:

@@ -174,6 +174,8 @@ async def window_task() -> None:
             discoveries = await asyncio.gather(*(_discover(asset, base) for asset in missing))
             for asset, market in discoveries:
                 if market is not None:
+                    S.books.set_min_order_size(market.up_token, market.min_order_size)
+                    S.books.set_min_order_size(market.down_token, market.min_order_size)
                     S.active[asset] = _new_windows(market, time.time())
                     log.info("opened %s %s with %d focused strategies", asset, market.slug,
                              len(STRATEGIES))

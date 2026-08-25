@@ -146,6 +146,10 @@ fee-aware completion:
 | `mintcycle20` | Queue-aware $20 complete-set control: paired maker asks with a $1.005 joint floor, realistic 65 ms actions, and T+30/T+240 entry bounds |
 | `minthedge60p95` | Mintcycle twin that gives maker completion 60 seconds, then crosses displayed depth only when the fee-inclusive pair sum remains at least $0.95 |
 
+Market discovery carries each market's Gamma `orderMinSize` into taker
+simulation. A partial residual below that share minimum cannot be force-filled;
+five-share low-price orders are not incorrectly rejected on dollar notional.
+
 All five arms wait until T+30 seconds and until both token feeds have caught up
 before starting a pair. This deliberately gives up the subscription-backlog
 period; a stale causal update freezes decisions and labels exposed settlement

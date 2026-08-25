@@ -12,6 +12,7 @@ class OrderBook:
     asks: dict[float, float] = dataclasses.field(default_factory=dict)
     received_at: float = 0.0
     tick: float = 0.01
+    min_order_size: float = 5.0
 
     @property
     def best_bid(self) -> float | None:
@@ -54,6 +55,11 @@ class OrderBookCache:
 
     def clear(self) -> None:
         self._books.clear()
+
+    def set_min_order_size(self, token: str, shares: float) -> None:
+        if shares <= 0:
+            raise ValueError("minimum order size must be positive")
+        self._books.setdefault(token, OrderBook()).min_order_size = shares
 
     def apply(self, event: Mapping[str, object], received_at: float) -> set[str]:
         """Apply official snapshot, price-level delta, or tick-size events."""

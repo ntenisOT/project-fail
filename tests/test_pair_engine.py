@@ -19,16 +19,18 @@ def book(bid: float, bid_size: float, ask: float, ask_size: float, ts: float = 1
 
 
 class FocusedPairTests(unittest.TestCase):
-    def test_taker_sweep_requires_full_depth_and_minimum_notional(self) -> None:
+    def test_taker_sweep_requires_full_depth_and_market_minimum(self) -> None:
         depth = OrderBook({0.42: 2, 0.41: 4}, {0.58: 2, 0.59: 4}, 1)
         legs = sweep(depth, "sell", 5)
         self.assertEqual([(leg.price, leg.shares) for leg in legs], [(0.42, 2), (0.41, 3)])
         self.assertEqual([leg.fee for leg in legs], [crypto_fee(0.42, 2), crypto_fee(0.41, 3)])
         self.assertFalse(sweep(OrderBook({0.42: 4}, {}, 1), "sell", 5))
-        self.assertFalse(sweep(OrderBook({0.10: 5}, {}, 1), "sell", 5))
+        self.assertTrue(sweep(OrderBook({0.10: 5}, {}, 1), "sell", 5))
+        self.assertFalse(sweep(OrderBook({0.42: 5}, {}, 1), "sell", 4))
 
     def test_order_book_delta_updates_and_removes_levels(self) -> None:
         cache = OrderBookCache()
+        cache.set_min_order_size("up", 10)
         cache.apply({"event_type": "book", "asset_id": "up",
                      "bids": [{"price": "0.48", "size": "10"}],
                      "asks": [{"price": "0.52", "size": "20"}]}, 1.0)
@@ -36,6 +38,7 @@ class FocusedPairTests(unittest.TestCase):
             {"asset_id": "up", "side": "BUY", "price": "0.49", "size": "15"},
         ]}, 2.0)
         self.assertEqual(cache.get("up").best_bid, 0.49)  # type: ignore[union-attr]
+        self.assertEqual(cache.get("up").min_order_size, 10)  # type: ignore[union-attr]
         cache.apply({"event_type": "price_change", "price_changes": [
             {"asset_id": "up", "side": "BUY", "price": "0.49", "size": "0"},
         ]}, 3.0)
@@ -227,7 +230,7 @@ class FocusedPairTests(unittest.TestCase):
         self.assertAlmostEqual(metrics["taker_fees"], fee)
         self.assertAlmostEqual(metrics["unmatched_end"], 0)
 
-    def test_mint_hedge_refuses_a_pair_below_the_net_floor(self) -> None:
+    def test_mint_hedge_refuses_partial_below_market_minimum(self) -> None:
         config = PairConfig(
             "hedge", "mint", 0.01, action_latency_s=0,
             mint_sets=5, sell_sum_floor=1.005, taker_hedge_after_s=5,
@@ -235,12 +238,15 @@ class FocusedPairTests(unittest.TestCase):
         window = PairWindow(config, "btc", "btc-updown-5m-0", 0, "up", "down", 0)
         up = book(0.58, 5, 0.60, 0)
         window.on_books(1.0, up, book(0.43, 5, 0.44, 0))
-        window.on_trade(1.1, True, 0.60, 5, "BUY")
-        down = book(0.30, 5, 0.31, 0)
+        window.on_trade(1.1, True, 0.60, 4, "BUY")
+        down = book(0.43, 5, 0.44, 0)
         window.on_books(2.0, up, down)
         self.assertFalse(window.on_books(6.1, up, down))
-        self.assertEqual(window.inventory, {True: 0, False: 5})
+        self.assertEqual(window.inventory, {True: 1, False: 5})
         self.assertEqual(window.taker_fees, 0)
+        _, metrics = window.settle(300, 0)
+        self.assertEqual(metrics["sell_hedge_execution_blocks"], 1)
+        self.assertEqual(metrics["sell_hedge_floor_blocks"], 0)
 
     def test_mint_60s_hedge_applies_fee_inclusive_095_floor(self) -> None:
         config = PairConfig(
@@ -253,9 +259,8 @@ class FocusedPairTests(unittest.TestCase):
         window.on_books(1.0, up, book(0.26, 5, 0.31, 0))
         window.on_trade(1.1, True, 0.70, 5, "BUY")
 
-        self.assertFalse(window.on_books(61.1, up, book(0.19, 5, 0.20, 0)))
+        self.assertFalse(window.on_books(61.1, up, book(0.26, 5, 0.27, 0)))
         self.assertEqual(window.inventory, {True: 0, False: 5})
-        self.assertFalse(window.on_books(61.15, up, book(0.26, 5, 0.27, 0)))
         fills = window.on_books(61.2, up, book(0.27, 5, 0.28, 0))
 
         self.assertEqual([fill["action"] for fill in fills], ["taker_sell"])
@@ -267,7 +272,7 @@ class FocusedPairTests(unittest.TestCase):
         self.assertAlmostEqual(metrics["unmatched_end"], 0)
         self.assertEqual(metrics["sell_hedge_due_episodes"], 1)
         self.assertEqual(metrics["sell_hedge_floor_blocks"], 1)
-        self.assertEqual(metrics["sell_hedge_execution_blocks"], 1)
+        self.assertEqual(metrics["sell_hedge_execution_blocks"], 0)
         self.assertEqual(metrics["sell_hedge_completions"], 1)
         self.assertEqual(metrics["sell_hedge_shares"], 5)
 
@@ -384,6 +389,16 @@ class FocusedPairTests(unittest.TestCase):
             "outcomes": '["Up","Down"]', "clobTokenIds": '["11","22"]',
         }]}]
         self.assertIsNone(parse_active_market("btc", 0, payload))
+
+    def test_active_market_parser_carries_the_order_minimum(self) -> None:
+        payload = [{"markets": [{
+            "slug": "btc-updown-5m-0", "conditionId": "0x" + "1" * 64,
+            "outcomes": '["Up","Down"]', "clobTokenIds": '["11","22"]',
+            "orderMinSize": "5",
+        }]}]
+        market = parse_active_market("btc", 0, payload)
+        self.assertIsNotNone(market)
+        self.assertEqual(market.min_order_size, 5)  # type: ignore[union-attr]
 
     def test_report_reads_settlement_and_queue_metrics(self) -> None:
         with TemporaryDirectory() as temp:

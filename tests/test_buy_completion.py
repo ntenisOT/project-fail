@@ -34,9 +34,17 @@ def test_five_share_taker_completion_is_fee_and_minimum_aware() -> None:
     assert refused.inventory[False] == 0
 
     high = book(0.70, 0.71)
-    below_minimum = book(0.18, 0.19)
-    too_small = PairWindow(config, "btc", "btc-updown-5m-0", 0, "up", "down", 0)
-    too_small.on_books(1, high, below_minimum)
-    assert too_small.on_trade(2, True, 0.70, 5, "SELL") is not None
-    assert not too_small.on_books(5, high, below_minimum)
-    assert too_small.inventory[False] == 0
+    cheap = book(0.18, 0.19)
+    cheap_fill = PairWindow(config, "btc", "btc-updown-5m-0", 0, "up", "down", 0)
+    cheap_fill.on_books(1, high, cheap)
+    assert cheap_fill.on_trade(2, True, 0.70, 5, "SELL") is not None
+    assert [fill["action"] for fill in cheap_fill.on_books(5, high, cheap)] == [
+        "taker_buy"
+    ]
+    assert cheap_fill.inventory == {True: 5, False: 5}
+
+    partial = PairWindow(config, "btc", "btc-updown-5m-0", 0, "up", "down", 0)
+    partial.on_books(1, high, cheap)
+    assert partial.on_trade(2, True, 0.70, 4, "SELL") is not None
+    assert not partial.on_books(5, high, cheap)
+    assert partial.inventory == {True: 4, False: 0}

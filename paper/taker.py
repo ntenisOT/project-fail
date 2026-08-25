@@ -9,7 +9,6 @@ from paper.order_book import OrderBook
 
 CRYPTO_TAKER_RATE = 0.07
 CRYPTO_MAKER_REBATE_SHARE = 0.20
-MIN_NOTIONAL = 1.0
 
 
 @dataclasses.dataclass(frozen=True)
@@ -30,7 +29,9 @@ def crypto_maker_rebate(price: float, shares: float) -> float:
 
 
 def sweep(book: OrderBook, side: Literal["buy", "sell"], shares: float) -> list[TakerLeg]:
-    """Return a full displayed-depth fill, or no fill when FOK cannot complete."""
+    """Return a full displayed-depth fill when the market minimum is met."""
+    if shares + 1e-9 < book.min_order_size:
+        return []
     levels = book.asks if side == "buy" else book.bids
     prices = sorted(levels, reverse=side == "sell")
     remaining = shares
@@ -42,5 +43,4 @@ def sweep(book: OrderBook, side: Literal["buy", "sell"], shares: float) -> list[
             remaining -= size
         if remaining <= 1e-9:
             break
-    gross = sum(leg.price * leg.shares for leg in legs)
-    return legs if remaining <= 1e-9 and gross >= MIN_NOTIONAL else []
+    return legs if remaining <= 1e-9 else []

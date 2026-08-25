@@ -243,7 +243,15 @@ bug is also fixed and covered by one focused test.
   `minthedge60p95`: after 60 seconds, it may complete the remaining token through
   displayed depth only at a fee-inclusive pair sum of at least $0.95. This caps
   an executed five-share repair loss at $0.25; it does not guarantee a hedge
-  when depth is absent or the $1 taker minimum rejects a cheap residual leg.
+  when depth is absent or a partial residual is below the market's five-share
+  minimum.
+- The first Gen55 partial fill exposed an execution-model error before scoring:
+  current BTC books advertise `min_order_size=5`, and the
+  [official order guide](https://docs.polymarket.com/trading/place-orders)
+  requires size to meet that market field. Paper incorrectly enforced a fixed
+  $1 notional instead. The taker primitive now carries `orderMinSize` from Gamma,
+  rejects sub-minimum residuals, and permits five-share low-price orders. Gen55
+  remains a pre-fix diagnostic generation rather than promotion evidence.
 
 A 15-minute generation is realistic for rejecting a mechanism or catching a
 runtime defect. It is not realistic for estimating edge. Promotion requires at

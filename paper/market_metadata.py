@@ -18,6 +18,7 @@ class ActiveMarket:
     condition_id: str
     up_token: str
     down_token: str
+    min_order_size: float
 
 
 def _list(value: object) -> list[object]:
@@ -46,10 +47,17 @@ def parse_active_market(asset: str, start: int, payload: object) -> ActiveMarket
     except ValueError as exc:
         raise ValueError(f"Gamma outcomes are not explicit Up/Down for {slug}") from exc
     condition = str(market.get("conditionId") or "")
+    try:
+        min_order_size = float(str(market.get("orderMinSize") or ""))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"invalid Gamma order minimum for {slug}") from exc
     if (not TOKEN_RE.fullmatch(up_token) or not TOKEN_RE.fullmatch(down_token)
-            or up_token == down_token or not CONDITION_RE.fullmatch(condition)):
+            or up_token == down_token or not CONDITION_RE.fullmatch(condition)
+            or min_order_size <= 0):
         raise ValueError(f"invalid Gamma identifiers for {slug}")
-    return ActiveMarket(asset, slug, start, condition, up_token, down_token)
+    return ActiveMarket(
+        asset, slug, start, condition, up_token, down_token, min_order_size,
+    )
 
 
 def fetch_active_market(asset: str, start: int, attempts: int = 3) -> ActiveMarket | None:

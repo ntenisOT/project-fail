@@ -230,6 +230,26 @@ class FocusedPairTests(unittest.TestCase):
         self.assertAlmostEqual(metrics["buy_pair_cost"] / metrics["buy_pair_shares"], 0.97)
         self.assertAlmostEqual(metrics["sell_pair_proceeds"] / metrics["sell_pair_shares"], 1.03)
 
+    def test_inventory_churn_sells_sets_then_replenishes_below_one(self) -> None:
+        config = PairConfig(
+            "inventory", "inventory", 0.01, action_latency_s=0,
+            initial_sets=5, max_inventory=5,
+        )
+        window = PairWindow(config, "btc", "btc-updown-5m-0", 0, "up", "down", 0)
+        up, down = book(0.48, 0, 0.52, 0), book(0.48, 0, 0.52, 0)
+        window.on_books(1.0, up, down)
+        self.assertEqual(set(window.orders), {(True, "sell"), (False, "sell")})
+        window.on_trade(1.1, True, 0.52, 5, "BUY")
+        window.on_trade(1.2, False, 0.52, 5, "BUY")
+        window.on_books(1.3, up, down)
+        self.assertEqual(set(window.orders), {(True, "buy"), (False, "buy")})
+        window.on_trade(1.4, True, 0.48, 5, "SELL")
+        window.on_trade(1.5, False, 0.48, 5, "SELL")
+        settled, metrics = window.settle(300, 0)
+        self.assertAlmostEqual(float(settled["pnl"]), 0.4)
+        self.assertAlmostEqual(metrics["buy_pair_cost"], 4.8)
+        self.assertAlmostEqual(metrics["sell_pair_proceeds"], 5.2)
+
     def test_inside_quotes_trade_pair_margin_for_queue_priority(self) -> None:
         config = PairConfig("inside", "churn", 0.01, action_latency_s=0,
                             improve_ticks=1)

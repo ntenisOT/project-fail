@@ -14,7 +14,7 @@ from paper.taker import sweep
 @dataclasses.dataclass(frozen=True)
 class PairConfig:
     name: str
-    mode: Literal["accumulate", "churn", "mint"]
+    mode: Literal["accumulate", "churn", "mint", "inventory"]
     requote_s: float
     action_latency_s: float = 0.065
     buy_sum_ceiling: float = 0.99
@@ -22,6 +22,7 @@ class PairConfig:
     clip_shares: float = 5.0
     max_inventory: float = 20.0
     mint_sets: float = 20.0
+    initial_sets: float = 0.0
     new_pair_cutoff_s: float = 300.0
     taker_hedge_after_s: float | None = None
     taker_pair_sum_floor: float | None = None
@@ -112,7 +113,8 @@ class PairWindow:
         self.full_window = (start if observed_at is None else observed_at) <= start + 10
         self.first_books_at: float | None = None
         self.tokens = {True: up_token, False: down_token}
-        minted = config.mint_sets if config.mode == "mint" and self.full_window else 0.0
+        starting_sets = config.mint_sets if config.mode == "mint" else config.initial_sets
+        minted = starting_sets if self.full_window else 0.0
         self.inventory = {True: minted, False: minted}
         self.cash = -minted
         self.peak = minted
@@ -139,7 +141,9 @@ class PairWindow:
         desired: dict[tuple[bool, str], float] = {}
         can_start_pair = now < self.start + self.config.new_pair_cutoff_s
         up_bid, down_bid = up.best_bid, down.best_bid
-        if self.config.mode != "mint" and up_bid is not None and down_bid is not None:
+        if (self.config.mode != "mint"
+                and (self.config.mode != "inventory" or self.sell_pairs.open_side is None)
+                and up_bid is not None and down_bid is not None):
             open_side = self.buy_pairs.open_side
             improved_bids = {
                 side: _maker_price(books[side], "buy", self.config.improve_ticks)
@@ -164,7 +168,8 @@ class PairWindow:
                     desired[(side, "buy")] = price
 
         up_ask, down_ask = up.best_ask, down.best_ask
-        if (self.config.mode in ("churn", "mint")
+        if (self.config.mode in ("churn", "mint", "inventory")
+                and (self.config.mode != "inventory" or self.buy_pairs.open_side is None)
                 and up_ask is not None and down_ask is not None):
             open_side = self.sell_pairs.open_side
             improved_asks = {

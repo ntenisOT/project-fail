@@ -82,6 +82,15 @@ class PairWindow:
                     or self.sell_pairs.open_side is not None)
         self.exposure.update(now, bool(self.orders) or self.pending is not None or open_leg)
 
+    def _buy_dust_is_balanced(self, now: float) -> bool:
+        tolerance = self.config.balanced_dust_shares
+        return (
+            tolerance > 0
+            and now < self.start + self.config.new_pair_cutoff_s
+            and self.buy_pairs.open_side is not None
+            and self.buy_pairs.open_shares <= tolerance + 1e-9
+        )
+
     def _desired(self, now: float, up: OrderBook,
                  down: OrderBook) -> dict[tuple[bool, str], float]:
         if now < self.start + self.config.new_pair_start_s:
@@ -107,7 +116,9 @@ class PairWindow:
         if (self.config.mode != "mint"
                 and inventory_can_buy
                 and up_bid is not None and down_bid is not None):
-            open_side = self.buy_pairs.open_side
+            recorded_open_side = self.buy_pairs.open_side
+            dust_balanced = self._buy_dust_is_balanced(now)
+            open_side = None if dust_balanced else recorded_open_side
             improved_bids = {
                 side: _maker_price(books[side], "buy", self.config.improve_ticks)
                 for side in (True, False)
@@ -121,7 +132,15 @@ class PairWindow:
                 start_cap = self.buy_pairs.next_pair_sum_cap(
                     self.config.buy_sum_ceiling, self.config.clip_shares,
                 )
-            if open_side is None and sum(improved_bids.values()) > start_cap:
+            projected_sum = sum(improved_bids.values())
+            if dust_balanced:
+                assert recorded_open_side is not None
+                projected_sum += (
+                    self.buy_pairs.open_value
+                    - self.buy_pairs.open_shares
+                    * improved_bids[recorded_open_side]
+                ) / self.config.clip_shares
+            if open_side is None and projected_sum > start_cap:
                 buy_sides = ()
             candidates: dict[tuple[bool, str], float] = {}
             for side in buy_sides:
@@ -252,8 +271,15 @@ class PairWindow:
                     and up.best_ask is not None and down.best_ask is not None)
         desired = self._desired(now, up, down) if complete else {}
         books = {True: up, False: down}
+        refresh_dust_remainder = self._buy_dust_is_balanced(now)
         for key in list(self.orders):
-            if key not in desired or self.orders[key].price != desired[key]:
+            order = self.orders[key]
+            refresh_small_buy = (
+                refresh_dust_remainder
+                and key[1] == "buy"
+                and order.size + 1e-9 < books[key[0]].min_order_size
+            )
+            if key not in desired or order.price != desired[key] or refresh_small_buy:
                 self._close_order(key, now, cancelled=True)
         for key, price in desired.items():
             if key in self.orders:

@@ -302,7 +302,7 @@ async def report_task() -> None:
         text = report.text()
         for line in text.splitlines():
             log.info(line)
-        S.notify.send(report.tg_text(), pre=True)
+        await asyncio.to_thread(S.notify.send, report.tg_text(), pre=True)
 
 
 async def kill_task() -> None:
@@ -319,9 +319,12 @@ async def main() -> None:
              "action-latency=%dms | decision cadence=20ms | "
              "official Gamma outcomes | assets=%s",
              names, round(ACTION_LATENCY_S * 1000), list(ASSETS))
-    S.notify.send("focused pair paper started (4 strategies, queue-aware, no orders)")
     await asyncio.gather(window_task(), settlement_task(), market_task(),
-                         quote_task(), heartbeat_task(), report_task(), kill_task())
+                         quote_task(), heartbeat_task(), report_task(), kill_task(),
+                         asyncio.to_thread(
+                             S.notify.send,
+                             "focused pair paper started (4 strategies, queue-aware, no orders)",
+                         ))
 
 
 if __name__ == "__main__":

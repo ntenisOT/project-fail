@@ -333,6 +333,7 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 44 | 08-25 08:47 | stop censoring measured public-feed tails: freeze decisions, retain resting exposure and delayed ordered trades, then report clean versus lagged economics separately |
 | 45 | 08-25 08:54 | include delayed trade/fill awareness in the lagged quality class after Gen44 observed a 1.716 s trade tail that causal-book-only labeling would have missed |
 | 46 | 08-25 09:11 | replace the nearly redundant Basket985 arm with 5-share versus 10-share Basket99 twins and a fee-aware T+120 taker-completion twin; retain strict and Basket98 controls |
+| 47 | 08-25 09:49 | reject the 10-share arms after five windows; keep 5-share Basket99 control and isolate a T+180 new-pair cutoff from fee-aware completion at T+120/T+180 |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

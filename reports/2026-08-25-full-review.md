@@ -2,9 +2,12 @@
 
 ## Verdict
 
-**NO-GO for real money.** The project is now substantially better at rejecting
-false strategies, but it does not yet reproduce a winning Polymarket maker and
-cannot obtain compliant live-order evidence from its current locations.
+**NO-GO for strategy promotion.** The project is now substantially better at
+rejecting false strategies, but it does not yet reproduce a winning Polymarket
+maker. The user reports being physically in Cyprus, which is not listed as a
+restricted jurisdiction; nevertheless, neither currently tested source IP gives
+us an unambiguous execution path, and no authenticated POST/cancel sample has
+yet been run.
 
 The main progress was epistemic, not commercial: corrected CLOB V2 semantics
 invalidated the old mint-and-ask story; exact FIFO reconstruction identified
@@ -26,14 +29,18 @@ contaminated fills.
 
 ## Critical findings
 
-### 1. Current locations cannot place compliant orders — open blocker
+### 1. Eligibility and server geography were being conflated — open blocker
 
-Polymarket's live geoblock endpoint returned `blocked=true` from both the local
-machine (`GB`) and Ireland server (`IE`). The current Help Center lists both
-countries as blocked and prohibits proxy/VPN circumvention ([current geographic
-restrictions](https://help.polymarket.com/en/articles/13364163-geographic-restrictions)). `DEPLOY_REGION` is
-not an eligibility control. Documentation was corrected and all place paths
-remain hard-disabled.
+The user reports being physically in Cyprus, not London. Cyprus is not on the
+current restricted-country list. However, Polymarket's live geoblock endpoint
+returned `blocked=true` from the tested local route (`GB`) and Ireland server
+(`IE`). The official pages conflict: the developer geoblock page labels Ireland
+frontend-only/API-allowed and recommends `eu-west-1`, while the Help Center
+lists Ireland as fully blocked ([developer geoblock](https://docs.polymarket.com/api-reference/geoblock),
+[Help Center restrictions](https://help.polymarket.com/en/articles/13364163-geographic-restrictions)).
+`DEPLOY_REGION` is not proof of the user's location or eligibility. Place paths
+therefore remain disabled until this conflict is resolved without routing around
+a restriction.
 
 ### 2. The original winner taxonomy was wrong — fixed
 
@@ -88,56 +95,60 @@ Changing `$0.98` to `$0.985` cannot bridge this gap. A separate ladder and
 replenishment engine is required; adding it to the already large pair engine
 would be poor design.
 
-### 6. Baseline latency is fast; public-feed tails are not — open blocker
+### 6. One second is not the normal latency; tails are the real problem
 
 Read-only Ireland measurements:
 
-- REST `/time`: typically 27–34 ms median; observed p90 31–64 ms.
-- Configured paper action proxy: 65 ms; twice-GET-p90 sensitivity ranged about
-  65–130 ms. Authenticated POST/cancel remains unmeasured.
-- Independent 60-second market-channel sample:
-  - `best_bid_ask`: 11 ms median, 453 ms p90, 930 ms max.
-  - `price_change`: 10 ms median, 363 ms p90, 978 ms max.
-  - `last_trade_price`: 20 ms median, 509 ms p90, 972 ms max.
+- REST `/time`: 27–32 ms median and 31–70 ms p90 across focused probes.
+- Ordinary market-WebSocket event age: 8–13 ms p50 and 9–24 ms p90 in
+  healthy intervals.
+- Separate feed-tail incidents reached roughly 0.4–3.8 seconds and sometimes
+  affected top-of-book or trade events.
+- The configured 65 ms paper action delay is a sensitivity proxy, not a
+  measured authenticated POST/cancel distribution.
 
 These event types and timestamps are defined by the [official market-channel
 protocol](https://docs.polymarket.com/api-reference/wss/market).
 
-Therefore, “one-second latency” is false as a blanket action assumption but real
-as an intermittent public-feed tail. The tail reaches top-of-book and trades;
-it is not just deep-book noise. Host CPU was 10–14% and NTP offset was only a
-few microseconds during diagnosis.
+Therefore, a blanket one-second execution assumption materially overstates the
+ordinary path. Pretending the tail does not exist would be equally wrong. The
+remaining missing measurement is a real signed, post-only order acknowledgement
+followed by targeted cancellation. A dry-run-safe, hard-capped probe now exists;
+the user must run its money-moving mode under the standing launch boundary.
 
-### 7. Paper evidence was contaminated by feed tails — fixed prospectively
+### 7. Paper used to censor feed-tail risk — fixed prospectively
 
 Paper now:
 
 - Pauses until both token feeds are causally fresh.
 - Starts pairs no earlier than T+30 seconds.
-- Invalidates exposed strategy-windows after a causal market event over 400 ms
-  old or a WebSocket reconnect.
+- Freezes new decisions after a causal market event over 400 ms old, but keeps
+  already-resting orders and delayed ordered trades exposed.
 - Preserves event timestamps and rejects trades predating order activation.
+- Reports `clean` and `lagged` economics separately; reconnects and unusably late
+  first books remain invalid.
 - Scores validity per strategy, not based on the first strategy in the cohort.
 
-Gen41 exposed the prior settlement bug: Basket-$0.99 was feed-invalid while
-stricter arms had not yet opened. The old loop would have settled every arm
-using only the first arm's validity. This is fixed and covered by one focused
-test.
+This avoids the flattering mistake of deleting exactly the windows in which a
+live resting order would still be at risk. The earlier per-strategy settlement
+bug is also fixed and covered by one focused test.
 
 ### 8. Current generation evidence is insufficient
 
-- Gen38 produced positive aggregate numbers, but BTC did not carry them;
-  SOL/XRP concentration and residual direction dominated. The adverse-outcome
-  metric rejected three of four variants.
-- Gen39/40 were feed-tainted and are archived as invalid, not winners/losers.
-- Gen41 produced one basket-$0.99 pair at $0.99 with a 29.6-second completion,
-  matching current-wallet timing, then suffered a stale-feed event while
-  exposed. Those fills are rejected.
-- The only exposure-free valid Gen41 window found no qualifying opportunity.
+- Gen38's apparent aggregate win was not BTC-driven; SOL/XRP concentration and
+  residual direction dominated.
+- Gen39–45 primarily found and fixed feed causality, settlement, and reporting
+  errors. Those iterations improved the harness, not the trading edge.
+- Gen46's first five resolved BTC windows rejected ten-share clips: the large
+  maker arm ended with 27.2 unmatched shares and a -$4.91 adverse-outcome floor,
+  versus 10 unmatched shares and a +$1.65 floor for its five-share control.
+  The ten-share taker-completion arm lost $3.23.
+- Gen46's five-share controls were positive over those five windows, but this is
+  mechanism evidence only, not a profitability estimate.
 
-A 15-minute generation is suitable for mechanism verification and rejection,
-not statistical profitability. Promotion requires at least a 1–2 hour clean
-screen and a fresh roughly 21-hour/250-BTC-window cohort.
+A 15-minute generation is realistic for rejecting a mechanism or catching a
+runtime defect. It is not realistic for estimating edge. Promotion requires at
+least a 1–2 hour clean screen and a fresh roughly 21-hour/250-BTC-window cohort.
 
 ### 9. No directional signal passes — rejected for now
 
@@ -175,20 +186,37 @@ reserved by resting bids. That inflated return on capital, including windows
 with quotes but no fills. Resting bid notional is now included and covered by a
 focused test. Old generation ROC figures remain stale and should not be used.
 
-### 12. Mintbot is not strategy evidence
+### 12. The separate mint EOA was an implementation shortcut, not a requirement
 
-Mintbot is healthy only as a shadow control-plane soak: feed baseline near 10
-ms, about 11.9-second quote residence, three historical reconnects, and no real
+The earlier explanation that a Polymarket proxy "cannot mint" was wrong.
+Polymarket's official Builder Relayer supports split, merge, redeem, and
+approval transactions from a Safe/Proxy wallet, while that same wallet remains
+the CLOB funder ([gasless transactions](https://docs.polymarket.com/trading/gasless),
+[market-maker setup](https://docs.polymarket.com/market-makers/getting-started)).
+The direct Polygon EOA existed because this repository had no Relayer
+integration, not because the protocol forced a second inventory account.
+
+The current balances expose the operational cost of that mistake: the CLOB Safe
+has 9.855666 pUSD, while the legacy mint EOA holds 891.930536 USDC.e and zero
+pUSD. Do not repair the direct-EOA place path. If direct minting becomes
+evidence-backed again, use one Safe, one Relayer path, and one inventory ledger.
+Moving or converting the legacy collateral is a separate user-authorized money
+operation.
+
+### 13. Mintbot is not strategy evidence
+
+Mintbot is useful only as a shadow control-plane soak: feed baseline near 10
+ms, about 12-second quote residence, 11 accumulated reconnects, and no real
 orders or chain transactions. Its “minted/merged” rows are synthetic shadow
 bookkeeping. It has no authenticated fill-price or ownership evidence and its
 place path is hard-disabled.
 
-### 13. Maintainability is mixed
+### 14. Maintainability is mixed
 
 The new forensic and settlement modules are bounded, and the focused test set
 is fast. Three inherited files remain too large:
 
-- `live/executor.py`: 679 lines, dormant legacy path.
+- `live/executor.py`: about 680 lines, dormant legacy path.
 - `paper/pair_engine.py`: about 500 lines, active.
 - `live/mintbot.py`: 501 lines, experimental.
 
@@ -201,25 +229,30 @@ state from orchestration only after the strategy survives.
 - Ireland: paper runner only plus shadow mintbot.
 - No executor or lockbot process.
 - All place paths hard-disabled in code.
-- Direct CLOB V2 split/merge route hard-disabled.
+- Legacy direct-EOA mint place path hard-disabled.
+- CLOB Safe: 9.855666 pUSD; legacy mint EOA: 891.930536 USDC.e, zero pUSD.
 - No order, cancellation, approval, or chain transaction was sent during this
   review.
 
 ## Focused verification
 
-- 34 pair/feed/settlement tests pass after the latest fix.
+- 27 focused pair/probe/executor tests pass after the latest change.
 - New exact FIFO wallet-pair test and existing winner/cycle tests pass.
-- Ruff and changed-file mypy checks pass.
+- Ruff, compilation, and changed-file mypy checks pass (third-party imports are
+  ignored locally because the CLOB V2 package is installed only on Ireland).
 - Deployments were source-hash verified; unrelated files and secrets were not
   touched or printed.
 
 ## Next generation — precise scope
 
-1. Deploy the per-strategy settlement and committed-capital fixes, archive the
-   current DB, and restart at a clean boundary.
-2. Keep the one-level basket-$0.99 arm as control.
-3. Add a separate two-level maker-bid ladder with five-share clips, repeated
-   replenishment, and a rolling basket cap. Do not add this to `pair_engine.py`.
+1. Archive Gen46 and run the five-share Gen47 board: Basket98, unchanged
+   Basket99 control, a T+180 new-pair cutoff, and fee-aware completion at T+120
+   versus T+180.
+2. Use Gen47 only to decide completion mechanics. Do not tune cents based on a
+   handful of outcomes.
+3. In parallel, add a separate two-level maker-bid ladder with five-share clips,
+   repeated replenishment, and a rolling basket cap. Do not add it to
+   `pair_engine.py`.
 4. Target winner-shaped mechanics before PnL:
    - pair-completion coverage above 90%;
    - residual below 10% of acquired shares;
@@ -229,8 +262,9 @@ state from orchestration only after the strategy survives.
    - no stale/reconnect-tainted scored exposure.
 5. Keep signal skew disabled until an untouched cohort clears the five-cent
    gross-edge and lower-confidence-bound gate.
-6. Do not plan live money until both geographic eligibility and a materially
-   better execution/feed path are independently proven.
+6. Measure one hard-capped authenticated POST/cancel round trip only under the
+   user's explicit execution boundary; do not confuse that infrastructure probe
+   with strategy promotion.
 
 ## Final assessment
 
@@ -238,5 +272,5 @@ We made enough progress for a first review because several false beliefs and
 measurement bugs are now gone. We have **not** made enough progress to claim we
 are close to the winners. The project has moved from an optimistic bot toward a
 credible research harness. The next challenge is no longer “find the right
-number”; it is to build the winner's laddered inventory machinery and obtain a
-feed/execution environment capable of testing it honestly.
+number”; it is to build the winner's laddered inventory machinery, prove its
+mechanics without directional luck, and measure the authenticated path honestly.

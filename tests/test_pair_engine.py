@@ -48,6 +48,15 @@ class FocusedPairTests(unittest.TestCase):
         self.assertEqual(fill["size"], 3.0)  # type: ignore[index]
         self.assertEqual(window.queue_consumed, 10.0)
 
+    def test_resting_bids_count_as_peak_committed_capital(self) -> None:
+        window = PairWindow(PairConfig("capital", "accumulate", 0.6, action_latency_s=0),
+                            "btc", "btc-updown-5m-0", 0, "up", "down", 0)
+        window.on_books(1.0, book(0.48, 10, 0.52, 5), book(0.49, 10, 0.51, 5))
+
+        settled, _ = window.settle(300.0, 1)
+
+        self.assertAlmostEqual(float(settled["capital"]), 4.85)
+
     def test_order_cannot_fill_before_modeled_action_latency(self) -> None:
         window = PairWindow(PairConfig("carry", "accumulate", 0.01, 0.06),
                             "btc", "btc-updown-5m-0", 0, "up", "down", 0)

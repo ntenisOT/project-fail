@@ -306,6 +306,14 @@ class PairWindow:
         self.closed_orders += 1
         self.quote_cancels += int(cancelled)
 
+    def _update_peak(self) -> None:
+        reserved_bids = sum(
+            order.price * order.size
+            for (_, order_side), order in self.orders.items()
+            if order_side == "buy"
+        )
+        self.peak = max(self.peak, max(0.0, -self.cash) + reserved_bids)
+
     def _activate_pending(self, now: float, up: OrderBook, down: OrderBook) -> None:
         pending = self.pending
         if pending is None or now < pending.ready_at:
@@ -337,6 +345,7 @@ class PairWindow:
                 book.size_at(order_side, price), now,
             )
             self.quote_posts += 1
+        self._update_peak()
 
     def _record_sell_pair(self, now: float, side: bool,
                           shares: float, net_price: float) -> None:
@@ -461,6 +470,7 @@ class PairWindow:
             signed_cash = notional
         if order.size <= 1e-9:
             self._close_order(key, now, cancelled=False)
+        self._update_peak()
         return {"action": order_side, "price": order.price, "size": fill,
                 "signed_cash": signed_cash, "outcome_up": int(side_up)}
 

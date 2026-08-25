@@ -23,6 +23,10 @@ class LedgerWriterTests(unittest.TestCase):
                 "cash": -3, "up_shares": 5, "down_shares": 0,
                 "event_lag_ms": 812,
             })
+            writer.record_reference(
+                "btc", 1_700_000_000, 1_700_000_001.5,
+                "65000000000000000000000", 60,
+            )
             writer.close()
             with closing(sqlite3.connect(path)) as db:
                 self.assertEqual(db.execute("SELECT count(*) FROM fills").fetchone()[0], 1)
@@ -31,6 +35,16 @@ class LedgerWriterTests(unittest.TestCase):
                         "SELECT reason,n_fills,capital,event_lag_ms FROM invalid_windows"
                     ).fetchone(),
                     ("stale_market_event", 1, 3.0, 812.0),
+                )
+                self.assertEqual(
+                    db.execute(
+                        "SELECT asset,observed_at,received_at,value_e18,window_s "
+                        "FROM reference_prices"
+                    ).fetchone(),
+                    (
+                        "btc", 1_700_000_000.0, 1_700_000_001.5,
+                        "65000000000000000000000", 60,
+                    ),
                 )
 
 

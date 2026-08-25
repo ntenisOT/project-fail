@@ -10,6 +10,7 @@ import time
 from paper.feed_quality import snapshots as feed_quality_snapshots
 from paper.fill_quality import snapshots as fill_quality_snapshots
 from paper.pair_lots import weighted_quantile
+from paper.reference_report import audit as reference_audit
 
 
 @dataclasses.dataclass(frozen=True)
@@ -325,6 +326,40 @@ def text(db_path: str = "paper/paper.db") -> str:
                 f"{fill_row.markout_1_cents:>+8.2f}{fill_row.coverage_1:>7.0%}"
                 f"{fill_row.markout_5_cents:>+8.2f}{fill_row.coverage_5:>7.0%}"
                 f"{fill_row.markout_15_cents:>+8.2f}{fill_row.coverage_15:>7.0%}"
+            )
+    reference = reference_audit(db)
+    if reference.total_windows:
+        complete = len(reference.signals)
+        out.append(
+            "official Chainlink 60s TWAP shadow coverage | "
+            f"complete={complete}/{reference.total_windows} "
+            f"({complete / reference.total_windows:.1%}) | misses={len(reference.misses)}"
+        )
+        for miss in reference.misses:
+            nearest = ("none" if miss.nearest_offset_ms is None else
+                       f"{miss.nearest_offset_ms:+.0f}ms")
+            out.append(
+                "reference miss | "
+                f"{miss.asset} {time.strftime('%H:%M', time.gmtime(miss.start))} "
+                f"reason={miss.reason} nearestOpeningOffset={nearest}"
+            )
+        out.extend((
+            "official Chainlink 60s TWAP shadow at T+30; causal and not used for orders",
+            f"{'asset':<6}{'start':>6}{'signal':>10}{'srcAge':>9}"
+            f"{'winner':>8}{'firstSell':>11}{'toxic':>8}",
+        ))
+        for reference_row in reference.signals:
+            first_sell = ("-" if reference_row.first_mint_sold_up is None else
+                          "Up" if reference_row.first_mint_sold_up else "Down")
+            toxic = ("-" if reference_row.first_mint_toxic is None else
+                     "yes" if reference_row.first_mint_toxic else "no")
+            out.append(
+                f"{reference_row.asset:<6}"
+                f"{time.strftime('%H:%M', time.gmtime(reference_row.start)):>6}"
+                f"{reference_row.signal_bps:>+8.2f}bp"
+                f"{reference_row.source_age_ms:>8.0f}ms"
+                f"{('Up' if reference_row.outcome_up else 'Down'):>8}"
+                f"{first_sell:>11}{toxic:>8}"
             )
     out.extend((
         "asset breakdown; pnl/neutral/worst keep directional luck and concentration visible",

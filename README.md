@@ -61,7 +61,8 @@ All read-only; run from anywhere with the SSH key.
 
 **Focused paper report** — realized PnL, paired edge, neutral 50-cent inventory
 mark, isolated outcome luck, worst-case PnL, pair sums, FIFO completion delay,
-queue depth, residence, and structured invalid-window reasons/exposure:
+queue depth, residence, official 60-second Chainlink TWAP shadow coverage, and
+structured invalid-window reasons/exposure:
 ```bash
 ssh -i ~/.ssh/pm_deploy ubuntu@3.254.130.64 'cd ~/project-fail && ./.venv/bin/python -m paper.report'
 ```
@@ -145,6 +146,15 @@ count, and fee-aware completion:
 | `mintcycle5` | One five-share complete-set pair per window; tests whether repeated mint churn compounds residue risk |
 | `mintcycle20` | Queue-aware $20 complete-set control: paired maker asks with a $1.005 joint floor, realistic 65 ms actions, and T+30/T+240 entry bounds |
 | `minthedge60p95` | Mintcycle twin that gives maker completion 60 seconds, then crosses displayed depth only when the fee-inclusive pair sum remains at least $0.95 |
+
+The next measurement generation adds the official
+`crypto_prices_twap_sixty` RTDS stream as a **shadow-only** reference. It stores
+the exact E18 value plus observation and local-receive timestamps, reconstructs
+only samples causally available at T+30, and reports every missing or late
+opening observation. It has no path into quote generation. The legacy spot
+`crypto_prices_chainlink` topic is not the settlement reference for current
+five-minute crypto markets ([Chainlink TWAP](https://docs.polymarket.com/market-data/chainlink-twap),
+[prediction changelog](https://docs.polymarket.com/changelog/predictions)).
 
 Market discovery carries each market's Gamma `orderMinSize` into maker and
 taker simulation. A partial residual below that share minimum cannot be posted

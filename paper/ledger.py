@@ -27,6 +27,10 @@ class Ledger:
               ts REAL, strategy TEXT, asset TEXT, slug TEXT, reason TEXT,
               n_fills INT, capital REAL, cash REAL, up_shares REAL, down_shares REAL,
               event_lag_ms REAL);
+            CREATE TABLE IF NOT EXISTS reference_prices(
+              asset TEXT, observed_at REAL, received_at REAL,
+              value_e18 TEXT, window_s INT,
+              PRIMARY KEY(asset,observed_at,window_s));
             """
         )
         columns = {row[1] for row in self.db.execute("PRAGMA table_info(fills)")}
@@ -68,6 +72,14 @@ class Ledger:
                ) VALUES(?,?,?,?,?,?,?,?,?)""",
             (ts, strategy, asset, slug, rec["action"], rec["price"], rec["size"],
              rec["signed_cash"], rec["outcome_up"]),
+        )
+        self.db.commit()
+
+    def record_reference(self, asset: str, observed_at: float, received_at: float,
+                         value_e18: str, window_s: int) -> None:
+        self.db.execute(
+            "INSERT OR IGNORE INTO reference_prices VALUES(?,?,?,?,?)",
+            (asset, observed_at, received_at, value_e18, window_s),
         )
         self.db.commit()
 

@@ -35,6 +35,7 @@ from paper.notify import notifier
 from paper.order_book import OrderBookCache
 from paper.pair_engine import PairWindow
 from paper.pair_types import PairConfig
+from paper.reference_feed import ReferenceFeed, ReferenceUpdate
 from paper.settlement import settle_valid
 from tools.market_windows import ASSET_PREFIX, fetch_gamma_window
 
@@ -111,9 +112,17 @@ class State:
         self.feed_pump_stats = FeedPumpStats()
         self.fresh_tokens: set[str] = set()
         self.stale_assets: set[str] = set()
+        self.reference_feed = ReferenceFeed(ASSETS)
 
 
 S = State()
+
+
+def _record_reference(update: ReferenceUpdate) -> None:
+    S.ledger.record_reference(
+        update.asset, update.observed_at, update.received_at,
+        update.value_e18, update.window_s,
+    )
 
 
 def _new_windows(market: ActiveMarket, observed_at: float) -> dict[str, PaperWindow]:
@@ -415,10 +424,11 @@ async def heartbeat_task() -> None:
                      for window in windows.values())
         feed_queue = S.feed_pump_stats.snapshot(reset_interval=True)
         log.info("hb | events=%s fills=%s active_orders=%d pending_resolution=%d "
-                 "feed_paused=%s feed=%s feed_queue=%s errors=%s",
+                 "feed_paused=%s feed=%s feed_queue=%s reference=%s errors=%s",
                  dict(S.events), active, orders, len(S.pending),
                  sorted(S.stale_assets),
                  S.feed_health.snapshot(reset_interval=True), feed_queue,
+                 S.reference_feed.snapshot(),
                  dict(S.resolution_errors))
 
 
@@ -452,7 +462,8 @@ async def main() -> None:
              round(DECISION_CADENCE_S * 1000), list(ASSETS))
     try:
         await asyncio.gather(window_task(), settlement_task(), market_task(),
-                             quote_task(), heartbeat_task(), report_task(), kill_task(),
+                             S.reference_feed.run(_record_reference), quote_task(),
+                             heartbeat_task(), report_task(), kill_task(),
                              asyncio.to_thread(
                                  S.notify.send,
                                  f"focused pair paper started ({len(names)} strategies, "

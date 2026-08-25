@@ -242,6 +242,29 @@ class FocusedPairTests(unittest.TestCase):
         self.assertEqual(window.inventory, {True: 0, False: 5})
         self.assertEqual(window.taker_fees, 0)
 
+    def test_mint_60s_hedge_applies_fee_inclusive_095_floor(self) -> None:
+        config = PairConfig(
+            "minthedge60p95", "mint", 0.01, action_latency_s=0,
+            mint_sets=5, sell_sum_floor=1.005, taker_hedge_after_s=60,
+            taker_pair_sum_floor=0.95,
+        )
+        window = PairWindow(config, "btc", "btc-updown-5m-0", 0, "up", "down", 0)
+        up = book(0.68, 5, 0.70, 0)
+        window.on_books(1.0, up, book(0.26, 5, 0.31, 0))
+        window.on_trade(1.1, True, 0.70, 5, "BUY")
+
+        self.assertFalse(window.on_books(61.1, up, book(0.26, 5, 0.27, 0)))
+        self.assertEqual(window.inventory, {True: 0, False: 5})
+        fills = window.on_books(61.2, up, book(0.27, 5, 0.28, 0))
+
+        self.assertEqual([fill["action"] for fill in fills], ["taker_sell"])
+        self.assertEqual(window.inventory, {True: 0, False: 0})
+        settled, metrics = window.settle(300, 0)
+        fee = crypto_fee(0.27, 5)
+        self.assertAlmostEqual(float(settled["pnl"]), 5 * (0.70 + 0.27 - 1) - fee)
+        self.assertAlmostEqual(metrics["taker_fees"], fee)
+        self.assertAlmostEqual(metrics["unmatched_end"], 0)
+
     def test_mint_flatten_crosses_below_floor_after_action_delay(self) -> None:
         config = PairConfig(
             "flatten", "mint", 0.01, action_latency_s=0.065,

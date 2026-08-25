@@ -123,9 +123,9 @@ Latest bounded refresh (2026-08-25 03:50–09:45 UTC, BTC): the previously clean
 flow and 12 s / 57 s FIFO d50/d90, but its fee-inclusive average pair deteriorated
 to **$1.015** and terminal edge was **−$4,292**. `0x0ca…` made +$2,040 with only
 22.1% maker/maker pairs, 83.6% completion and 7,997 residual shares. The current
-top-ten trading addresses showed zero direct split/merge value. Ladder mechanics
-remain worth testing; neither pure accumulation nor direct minting is a durable
-winner claim.
+top-ten trading addresses showed zero direct split/merge value. The corrected
+local ladder arm was subsequently rejected for repeated directional residue;
+neither pure accumulation nor direct minting is a durable winner claim.
 
 ---
 
@@ -143,8 +143,8 @@ fee-aware completion:
 | `basket98` | Keep the cumulative completed-pair average ≤$0.98 |
 | `basket99` | Five-share maker baseline; keep cumulative completed-pair average ≤$0.99 |
 | `basket99c180` | Basket99 twin that stops opening fresh pairs after T+180 but can finish an existing leg |
-| `ladder99c180` | Two stable maker-bid levels per outcome (join best and one tick back), 15-second minimum residence, shared FIFO evidence, and the T+180 cutoff |
 | `mintcycle20` | Queue-aware $20 complete-set control: paired maker asks with a $1.005 joint floor, realistic 65 ms actions, and T+30/T+240 entry bounds |
+| `minthedge60p95` | Mintcycle twin that gives maker completion 60 seconds, then crosses displayed depth only when the fee-inclusive pair sum remains at least $0.95 |
 
 All five arms wait until T+30 seconds and until both token feeds have caught up
 before starting a pair. This deliberately gives up the subscription-backlog
@@ -155,8 +155,9 @@ The simulator reconstructs public price levels from authoritative snapshots and
 `price_change` deltas. Joining the best price puts the displayed level size in
 front of our hypothetical order; trades consume that queue before we receive a
 fill. Same-price quotes retain queue position, repricing loses it. The five-share
-arms are reported independently, maker fees/rebates are excluded, and
-official resolved Gamma outcomes settle each window. A window whose first usable
+arms are reported independently; taker hedges pay the documented crypto fee,
+while projected maker rebates are reported but excluded from PnL. Official
+resolved Gamma outcomes settle each window. A window whose first usable
 paired books
 arrive more than ten seconds late is observed but not scored. Actions activate
 after a configurable 65 ms delay: a fixed ordinary-path proxy, not a measured

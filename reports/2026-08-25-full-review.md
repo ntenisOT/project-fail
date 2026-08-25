@@ -227,6 +227,20 @@ bug is also fixed and covered by one focused test.
   12 microseconds slow with roughly 10-microsecond RMS offset. The large tails
   therefore arrive upstream; they are not created by the 10 ms paper decision
   loop, local queueing, or host clock skew.
+- Gen53's first valid official window rejected both exposed baselines. Mint sold
+  10 paired shares at $1.03 but stranded five Down shares; Up settled, producing
+  -$1.30 realized/adverse PnL despite +$1.20 neutral PnL. Its two natural pair
+  completions took 7.94 s and 10.99 s. Ladder's +$2.37 realized result was
+  directional luck: neutral PnL was -$1.18 and adverse PnL -$4.73 with 7.1
+  unmatched shares. The ladder arm is retired rather than tuned further.
+- Gen54 persists lifetime feed counters outside each WebSocket connection. A
+  real 3.292-second total-age tail remained visible after rolling lag returned
+  to 45 ms, while local queue residence stayed at 3 ms and reconnects at zero.
+  The next board keeps `mintcycle20` as the control and replaces ladder with
+  `minthedge60p95`: after 60 seconds, it may complete the remaining token through
+  displayed depth only at a fee-inclusive pair sum of at least $0.95. This caps
+  an executed five-share repair loss at $0.25; it does not guarantee a hedge
+  when depth is absent or the $1 taker minimum rejects a cheap residual leg.
 
 A 15-minute generation is realistic for rejecting a mechanism or catching a
 runtime defect. It is not realistic for estimating edge. Promotion requires at

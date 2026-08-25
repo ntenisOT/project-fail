@@ -176,6 +176,24 @@ class FocusedPairTests(unittest.TestCase):
         self.assertEqual(window.inventory, {True: 0, False: 5})
         self.assertEqual(window.taker_fees, 0)
 
+    def test_mint_flatten_crosses_below_floor_after_action_delay(self) -> None:
+        config = PairConfig(
+            "flatten", "mint", 0.01, action_latency_s=0.065,
+            mint_sets=5, sell_sum_floor=1.005, taker_hedge_after_s=0,
+            taker_pair_sum_floor=0,
+        )
+        window = PairWindow(config, "btc", "btc-updown-5m-0", 0, "up", "down", 0)
+        up = book(0.58, 5, 0.60, 0)
+        window.on_books(1.0, up, book(0.43, 5, 0.44, 0))
+        window.on_books(1.065, up, book(0.43, 5, 0.44, 0))
+        window.on_trade(1.1, True, 0.60, 5, "BUY")
+        down = book(0.30, 5, 0.31, 0)
+        self.assertFalse(window.on_books(1.164, up, down))
+        fills = window.on_books(1.165, up, down)
+        self.assertEqual([fill["action"] for fill in fills], ["taker_sell"])
+        self.assertEqual(window.inventory, {True: 0, False: 0})
+        self.assertGreater(window.taker_fees, 0)
+
     def test_mint_cycle_anchors_and_completes_asymmetric_fill(self) -> None:
         config = PairConfig(
             "mint", "mint", 0.5, action_latency_s=0,

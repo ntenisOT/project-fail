@@ -47,10 +47,11 @@ STRATEGIES = (
                action_latency_s=ACTION_LATENCY_S,
                sell_sum_floor=1.005, new_pair_start_s=3,
                new_pair_cutoff_s=275, mint_anchor_spread=0.02),
-    PairConfig("mint_cut60", "mint", 0.5,
+    PairConfig("mint_flat0", "mint", 0.5,
                action_latency_s=ACTION_LATENCY_S,
                sell_sum_floor=1.005, new_pair_start_s=3,
-               new_pair_cutoff_s=240, mint_anchor_spread=0.02),
+               new_pair_cutoff_s=275, mint_anchor_spread=0.02,
+               taker_hedge_after_s=0, taker_pair_sum_floor=0),
 )
 MKT_WS = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 KILL = "paper/KILL"

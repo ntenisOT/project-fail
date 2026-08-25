@@ -24,6 +24,7 @@ class PairConfig:
     mint_sets: float = 20.0
     new_pair_cutoff_s: float = 300.0
     taker_hedge_after_s: float | None = None
+    taker_pair_sum_floor: float | None = None
     improve_ticks: int = 0
     new_pair_start_s: float = 0.0
     mint_anchor_spread: float | None = None
@@ -303,8 +304,11 @@ class PairWindow:
         if not legs:
             return []
         net_cash = sum(leg.price * leg.shares - leg.fee for leg in legs)
+        pair_floor = (self.config.sell_sum_floor
+                      if self.config.taker_pair_sum_floor is None
+                      else self.config.taker_pair_sum_floor)
         if (self.sell_pairs.worst_open_price(buying=False) + net_cash / shares
-                < self.config.sell_sum_floor - 1e-9):
+                < pair_floor - 1e-9):
             return []
         self._close_order((hedge_side, "sell"), now, cancelled=True)
         records: list[dict[str, float | str]] = []

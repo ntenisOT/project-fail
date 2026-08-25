@@ -94,6 +94,7 @@ class FocusedPairTests(unittest.TestCase):
                             "btc", "btc-updown-5m-0", 0, "up", "down", 0)
         window.on_books(1.0, book(0.48, 0, 0.52, 5), book(0.49, 0, 0.51, 5))
         window.observe_stale_market_event(812)
+        window.observe_delayed_trade_event(1716)
 
         self.assertTrue(window.full_window)
         self.assertTrue(window.orders)
@@ -102,6 +103,8 @@ class FocusedPairTests(unittest.TestCase):
         _, metrics = window.settle(300, 1)
         self.assertEqual(metrics["exposed_stale_market_events"], 1)
         self.assertEqual(metrics["max_exposed_stale_event_lag_ms"], 812)
+        self.assertEqual(metrics["exposed_delayed_trade_events"], 1)
+        self.assertEqual(metrics["max_exposed_delayed_trade_lag_ms"], 1716)
 
     def test_settlement_scores_valid_strategies_independently(self) -> None:
         valid = PairWindow(PairConfig("valid", "accumulate", 0.01, 0),

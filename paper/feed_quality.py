@@ -30,9 +30,15 @@ def snapshots(db: sqlite3.Connection) -> list[FeedQualitySnapshot]:
             continue
         if not isinstance(values, dict) or "exposed_stale_market_events" not in values:
             continue
-        lagged = float(values.get("exposed_stale_market_events", 0)) > 0
         try:
-            max_lag = float(values.get("max_exposed_stale_event_lag_ms", 0))
+            lagged = (
+                float(values.get("exposed_stale_market_events", 0))
+                + float(values.get("exposed_delayed_trade_events", 0))
+            ) > 0
+            max_lag = max(
+                float(values.get("max_exposed_stale_event_lag_ms", 0)),
+                float(values.get("max_exposed_delayed_trade_lag_ms", 0)),
+            )
         except (TypeError, ValueError):
             max_lag = 0.0
         quality_by_window[(str(strategy), str(slug))] = (

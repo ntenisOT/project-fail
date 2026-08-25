@@ -283,6 +283,11 @@ def handle_event(event: dict[str, object]) -> None:
     if traded_at is None:
         S.events["last_trade_missing_timestamp"] += 1
         return
+    trade_lag_ms = max(0.0, 1000 * (now - traded_at))
+    if trade_lag_ms > MAX_MARKET_EVENT_LAG_S * 1000:
+        S.events["delayed_trade_event"] += 1
+        for window in (S.active.get(asset) or {}).values():
+            window.observe_delayed_trade_event(trade_lag_ms)
     for name, window in (S.active.get(asset) or {}).items():
         fill = window.on_trade(
             traded_at, side_up, price, size, taker_side, received_at=now,

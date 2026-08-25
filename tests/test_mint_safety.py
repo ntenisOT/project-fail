@@ -1,13 +1,36 @@
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 import unittest
+from pathlib import Path
 
+from live import lockbot
 from live.chain import PreflightError, merge, split
 from live.market_book import BestAskCache
 from live.mint_quotes import plan_pair_quotes, should_reprice
 
 
 class MintSafetyTests(unittest.TestCase):
+    def test_retired_lockbot_place_mode_is_fail_closed(self) -> None:
+        original = lockbot.MODE
+        lockbot.MODE = "place"
+        try:
+            with self.assertRaisesRegex(SystemExit, "PLACE DISABLED"):
+                lockbot.Lockbot()
+        finally:
+            lockbot.MODE = original
+        env = dict(os.environ)
+        env["LOCKBOT_MODE"] = "place"
+        result = subprocess.run(
+            [sys.executable, "-m", "live.lockbot"],
+            cwd=Path(__file__).resolve().parents[1], env=env,
+            capture_output=True, text=True, check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("PLACE DISABLED", result.stderr + result.stdout)
+
     def test_unverified_v2_direct_mint_path_is_fail_closed(self) -> None:
         for operation in (split, merge):
             with self.assertRaisesRegex(PreflightError, "CLOB V2"):

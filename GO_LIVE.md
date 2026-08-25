@@ -12,7 +12,8 @@ public CLOB market feed -> mintbot shadow quote planner               -> logs on
 
 The focused paper runner has no keys and emits no executor intents. The legacy
 file-driven executor is disconnected. Mintbot place mode, CTF split/merge, and
-the old approval/setup commands fail closed in code.
+the retired lockbot, old approval/setup commands, and CTF split/merge fail
+closed in code.
 
 ## Market and execution facts
 

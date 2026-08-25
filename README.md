@@ -183,7 +183,8 @@ ported and verified. Mintbot place mode is also hard-disabled in code.
 In-process taker set-arb. Lifetime: ~10 detections, 0 completed locks, ~$4.35
 tuition. Lessons that now protect the mintbot: marketable-order amount rules
 (2-decimal dollars, $1/leg minimum), fill→sellable indexing lag, adverse
-selection on crossed books. Kept in-repo as reference.
+selection on crossed books. Kept in-repo as reference; place mode now
+hard-refuses before constructing a client or touching its database.
 
 ---
 

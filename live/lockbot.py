@@ -11,11 +11,9 @@ Run it YOURSELF:
 
     LOCKBOT_MODE=shadow  python -m live.lockbot    # detection soak, NO orders,
                                                    # no credentials needed
-    LOCKBOT_MODE=place   python -m live.lockbot    # REAL ORDERS. Needs
-                                                   # POLY_PRIVATE_KEY (+funder)
-                                                   # AND DEPLOY_REGION=eu-west-1
+    LOCKBOT_MODE=place   python -m live.lockbot    # hard-refused: retired
 
-Guards (mirrors the executor's hardening):
+Historical guards below are inactive because place mode is hard-disabled:
   L1 place-mode geo interlock (DEPLOY_REGION=eu-west-1)
   L2 KILL file (paper/KILL) checked before every action -> exit
   L3 $ per-leg clip cap (default $5) and >=5 share exchange minimum
@@ -35,7 +33,6 @@ import json
 import logging
 import math
 import os
-import re
 import sqlite3
 import time
 import urllib.request
@@ -93,6 +90,10 @@ class Lockbot:
     def __init__(self):
         self.clob = None
         if MODE == "place":
+            raise SystemExit(
+                "PLACE DISABLED: lockbot is retired after repeated legged fills; "
+                "its execution model is not approved"
+            )
             if os.environ.get("DEPLOY_REGION") != "eu-west-1":       # L1
                 raise SystemExit("L1 geo interlock: place mode only on eu-west-1")
             from live.executor import Clob
@@ -321,7 +322,4 @@ class Lockbot:
 if __name__ == "__main__":
     if MODE not in ("shadow", "place"):
         raise SystemExit(f"LOCKBOT_MODE must be shadow|place, got {MODE}")
-    try:
-        asyncio.run(Lockbot().main())
-    except SystemExit as e:
-        log.warning("%s", e)
+    asyncio.run(Lockbot().main())

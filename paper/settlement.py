@@ -45,6 +45,15 @@ def settle_valid(
                 window.invalid_event_lag_ms,
             ))
             continue
-        settlement, metrics = window.settle(now, outcome_up)
+        try:
+            settlement, metrics = window.settle(now, outcome_up)
+        except RuntimeError as exc:
+            skipped.append(SkippedWindow(
+                strategy, window.slug, f"settlement_error:{exc}",
+                window.buys + window.sells, window.peak, window.cash,
+                window.inventory[True], window.inventory[False],
+                window.invalid_event_lag_ms,
+            ))
+            continue
         scored.append(ScoredWindow(strategy, settlement, metrics))
     return scored, skipped

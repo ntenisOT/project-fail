@@ -71,6 +71,9 @@ def test_taker_completion_can_round_only_near_minimum_dust() -> None:
         ("taker_buy", 5),
     ]
     assert rounded.inventory == {True: 5, False: 5.02}
+    settlement, metrics = rounded.settle(300, 1)
+    assert settlement["pnl"] > 0
+    assert abs(metrics["unmatched_end"] - 0.02) < 1e-9
 
     far_config = dataclasses.replace(config, max_inventory=20)
     far = PairWindow(far_config, "btc", "btc-updown-5m-0", 0, "up", "down", 0)

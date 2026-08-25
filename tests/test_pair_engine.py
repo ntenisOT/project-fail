@@ -179,6 +179,22 @@ class FocusedPairTests(unittest.TestCase):
         ])
         self.assertEqual(skipped[0].event_lag_ms, 812)
 
+    def test_settlement_isolates_one_strategy_invariant_failure(self) -> None:
+        valid = PairWindow(PairConfig("valid", "accumulate", 0.01, 0),
+                           "btc", "btc-updown-5m-0", 0, "up", "down", 0)
+        broken = PairWindow(PairConfig("broken", "accumulate", 0.01, 0,
+                                       max_inventory=5),
+                            "btc", "btc-updown-5m-0", 0, "up", "down", 0)
+        broken.inventory[True] = 5.1
+
+        scored, skipped = settle_valid({"valid": valid, "broken": broken}, 300, 1)
+
+        self.assertEqual([row.strategy for row in scored], ["valid"])
+        self.assertEqual([row.strategy for row in skipped], ["broken"])
+        self.assertTrue(skipped[0].reason.startswith(
+            "settlement_error:inventory invariant violated"
+        ))
+
     def test_entry_cutoff_cancels_balanced_quotes_but_completes_an_open_leg(self) -> None:
         config = PairConfig("cutoff", "accumulate", 0.01, 0, new_pair_cutoff_s=240)
         up, down = book(0.48, 0, 0.52, 5), book(0.49, 0, 0.51, 5)

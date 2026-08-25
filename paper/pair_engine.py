@@ -532,8 +532,11 @@ class PairWindow:
         for key in list(self.orders):
             self._close_order(key, now, cancelled=True)
         self._sync_exposure(now)
+        inventory_ceiling = (
+            self.config.max_inventory + self.config.taker_dust_round_shares
+        )
         if (min(self.inventory.values()) < -1e-8
-                or max(self.inventory.values()) > self.config.max_inventory + 1e-8):
+                or max(self.inventory.values()) > inventory_ceiling + 1e-8):
             raise RuntimeError(f"inventory invariant violated in {self.slug}: {self.inventory}")
         residual = self.inventory[True] * outcome_up + self.inventory[False] * (1 - outcome_up)
         paired = min(self.inventory.values())

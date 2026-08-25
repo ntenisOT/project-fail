@@ -8,7 +8,7 @@ from typing import Literal
 
 from live.mint_quotes import guarded_pair_prices, plan_pair_quotes, should_reprice
 from paper.order_book import OrderBook
-from paper.taker import sweep
+from paper.taker import crypto_maker_rebate, sweep
 
 
 @dataclasses.dataclass(frozen=True)
@@ -128,6 +128,7 @@ class PairWindow:
         self.action_seconds = 0.0
         self.action_batches = self.post_only_rejects = self.pre_activation_trades = 0
         self.taker_fees = 0.0
+        self.maker_rebates = 0.0
         self.sell_opened_at: float | None = None
         self.buy_pairs = PairLots()
         self.sell_pairs = PairLots()
@@ -414,6 +415,7 @@ class PairWindow:
         order.size -= fill
         notional = fill * order.price
         self.filled_shares += fill
+        self.maker_rebates += crypto_maker_rebate(order.price, fill)
         if order_side == "buy":
             self.inventory[side_up] += fill
             self.cash -= notional
@@ -464,6 +466,7 @@ class PairWindow:
             "post_only_rejects": self.post_only_rejects,
             "pre_activation_trades": self.pre_activation_trades,
             "taker_fees": self.taker_fees,
+            "maker_rebates": self.maker_rebates,
             "paired_end": paired, "unmatched_end": abs(self.inventory[True] - self.inventory[False]),
             "buy_pair_shares": self.buy_pairs.paired_shares,
             "buy_pair_cost": self.buy_pairs.paired_value,

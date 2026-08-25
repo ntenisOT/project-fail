@@ -116,6 +116,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     print("inventory-floor is unexplained sell inventory, not proof of minting")
     print("direct CTF values match the trading address only; proxies/transfers remain separate")
     print("buySum/sellSum include taker fees and are matched-share proxies, not ordered cycles")
+    print("maker rebates are paid separately and are not included in pnl$")
     print(f"{'wallet':<44}{'pnl$':>10}{'vol$':>11}{'mkts':>6}{'both':>7}"
           f"{'buy2':>7}{'sell2':>7}{'buySum':>8}{'sellSum':>9}"
           f"{'fee$':>9}{'invfloor':>10}{'maker':>7}{'split$':>10}{'merge$':>10}")

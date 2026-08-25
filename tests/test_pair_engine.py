@@ -9,7 +9,7 @@ from paper.ledger import Ledger
 from paper.market_metadata import parse_active_market
 from paper.order_book import OrderBook, OrderBookCache
 from paper.pair_engine import PairConfig, PairWindow
-from paper.taker import crypto_fee, sweep
+from paper.taker import crypto_fee, crypto_maker_rebate, sweep
 
 
 def book(bid: float, bid_size: float, ask: float, ask_size: float, ts: float = 1.0) -> OrderBook:
@@ -316,6 +316,9 @@ class FocusedPairTests(unittest.TestCase):
             self.assertAlmostEqual(snapshot.volume, 4.85)
             self.assertAlmostEqual(snapshot.neutral_pnl, 0.15)
             self.assertAlmostEqual(snapshot.outcome_pnl, 0)
+            expected_rebate = (crypto_maker_rebate(0.48, 5)
+                               + crypto_maker_rebate(0.49, 5))
+            self.assertAlmostEqual(snapshot.maker_rebates, expected_rebate)
             output = report.text(path)
             self.assertIn("carry", output)
             self.assertIn("0.970", output)

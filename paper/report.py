@@ -25,6 +25,7 @@ class Snapshot:
     buy_sum: float | None
     sell_sum: float | None
     taker_fees: float
+    maker_rebates: float
     unmatched: float
     posts_per_window: float
     rest_seconds: float
@@ -42,6 +43,7 @@ class AssetSnapshot:
     pnl: float
     neutral_pnl: float
     worst_pnl: float
+    maker_rebates: float
     unmatched: float
 
 
@@ -119,6 +121,7 @@ def snapshot_one(db: sqlite3.Connection, strategy: str) -> Snapshot:
         sell_sum=_sum_or_none(metrics.get("sell_pair_proceeds", 0.0),
                               metrics.get("sell_pair_shares", 0.0)),
         taker_fees=metrics.get("taker_fees", 0.0),
+        maker_rebates=metrics.get("maker_rebates", 0.0),
         unmatched=metrics.get("unmatched_end", 0.0),
         posts_per_window=metrics.get("quote_posts", 0.0) / windows if windows else 0.0,
         rest_seconds=metrics.get("rest_seconds", 0.0) / closed if closed else 0.0,
@@ -131,6 +134,16 @@ def snapshot_one(db: sqlite3.Connection, strategy: str) -> Snapshot:
 
 
 def asset_snapshots(db: sqlite3.Connection) -> list[AssetSnapshot]:
+    rebates: dict[tuple[str, str], float] = {}
+    for strategy, asset, raw in db.execute(
+        "SELECT strategy,asset,data FROM window_metrics"
+    ):
+        try:
+            value = float(json.loads(raw).get("maker_rebates", 0.0))
+        except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+            continue
+        key = (str(strategy), str(asset))
+        rebates[key] = rebates.get(key, 0.0) + value
     rows = db.execute(
         """SELECT strategy,asset,count(*),sum(pnl),
                   sum(cash + resid_shares/2),
@@ -139,7 +152,8 @@ def asset_snapshots(db: sqlite3.Connection) -> list[AssetSnapshot]:
            FROM settlements GROUP BY strategy,asset ORDER BY strategy,asset"""
     )
     return [AssetSnapshot(str(strategy), str(asset), int(windows), float(pnl),
-                          float(neutral), float(worst), float(unmatched))
+                          float(neutral), float(worst),
+                          rebates.get((str(strategy), str(asset)), 0.0), float(unmatched))
             for strategy, asset, windows, pnl, neutral, worst, unmatched in rows]
 
 
@@ -163,7 +177,8 @@ def text(db_path: str = "paper/paper.db") -> str:
         f"FOCUSED PAIR PAPER | official outcomes | last settle {time.strftime('%H:%M:%S', time.gmtime(last))} UTC",
         f"{'strategy':<14}{'wnd':>5}{'trd':>6}{'vol$':>8}{'win%':>6}{'pnl$':>9}"
         f"{'edge$':>8}{'neutral$':>9}{'outcome$':>9}{'worst$':>8}{'bank$':>8}"
-        f"{'ROC':>7}{'buySum':>8}{'sellSum':>9}{'fee$':>7}{'unmat':>7}{'post/w':>8}{'rest':>7}"
+        f"{'ROC':>7}{'buySum':>8}{'sellSum':>9}{'fee$':>7}{'rebate$':>9}"
+        f"{'unmat':>7}{'post/w':>8}{'rest':>7}"
         f"{'qAhead':>8}{'act':>8}{'reject':>8}{'preAct':>8}",
     ]
     for row in snapshots:
@@ -174,7 +189,8 @@ def text(db_path: str = "paper/paper.db") -> str:
             f"{row.outcome_pnl:>+9.2f}"
             f"{row.worst_pnl:>+8.2f}{row.bankroll:>8.1f}"
             f"{row.roc*100:>+6.1f}%{_format_sum(row.buy_sum):>8}"
-            f"{_format_sum(row.sell_sum):>9}{row.taker_fees:>7.2f}{row.unmatched:>7.1f}"
+            f"{_format_sum(row.sell_sum):>9}{row.taker_fees:>7.2f}"
+            f"{row.maker_rebates:>9.2f}{row.unmatched:>7.1f}"
             f"{row.posts_per_window:>8.1f}{row.rest_seconds:>6.1f}s"
             f"{row.queue_consumed:>8.0f}{row.action_ms:>6.0f}ms"
             f"{row.post_only_rejects:>8}{row.pre_activation_trades:>8}"
@@ -182,17 +198,18 @@ def text(db_path: str = "paper/paper.db") -> str:
     out.extend((
         "asset breakdown; pnl/neutral/worst keep directional luck and concentration visible",
         f"{'strategy':<14}{'asset':<6}{'wnd':>5}{'pnl$':>10}"
-        f"{'neutral$':>10}{'worst$':>10}{'unmat':>8}",
+        f"{'neutral$':>10}{'worst$':>10}{'rebate$':>10}{'unmat':>8}",
     ))
     for asset_row in asset_snapshots(db):
         out.append(f"{asset_row.strategy:<14}{asset_row.asset:<6}{asset_row.windows:>5}"
                    f"{asset_row.pnl:>+10.2f}{asset_row.neutral_pnl:>+10.2f}"
-                   f"{asset_row.worst_pnl:>+10.2f}{asset_row.unmatched:>8.1f}")
+                   f"{asset_row.worst_pnl:>+10.2f}{asset_row.maker_rebates:>10.2f}"
+                   f"{asset_row.unmatched:>8.1f}")
     out.extend((
         "buySum/sellSum are FIFO-matched opposite-token fills; unmat is end inventory.",
         "edge is FIFO-paired economics; neutral marks every end token at 50 cents.",
         "outcome is realized PnL minus neutral, isolating settlement-direction luck.",
-        "fee$ is crypto taker fees; maker rebates and taker rebates are excluded.",
+        "fee$ is crypto taker fee; rebate$ estimates the separate daily maker payout.",
         "worst is settlement PnL under the adverse outcome for every asset-window.",
         "Queue-ahead depth is consumed before a maker fill; rebates are excluded.",
         "act is measured simulated action activation; reject is stale post-only prevention.",

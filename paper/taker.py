@@ -8,6 +8,7 @@ from typing import Literal
 from paper.order_book import OrderBook
 
 CRYPTO_TAKER_RATE = 0.07
+CRYPTO_MAKER_REBATE_SHARE = 0.20
 MIN_NOTIONAL = 1.0
 
 
@@ -21,6 +22,11 @@ class TakerLeg:
 def crypto_fee(price: float, shares: float) -> float:
     """Official crypto taker formula, rounded per match to five decimals."""
     return round(shares * CRYPTO_TAKER_RATE * price * (1 - price), 5)
+
+
+def crypto_maker_rebate(price: float, shares: float) -> float:
+    """Estimate the daily crypto maker rebate from filled fee-equivalent."""
+    return shares * CRYPTO_TAKER_RATE * price * (1 - price) * CRYPTO_MAKER_REBATE_SHARE
 
 
 def sweep(book: OrderBook, side: Literal["buy", "sell"], shares: float) -> list[TakerLeg]:

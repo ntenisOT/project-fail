@@ -25,7 +25,7 @@ def crypto_fee(price: float, shares: float) -> float:
 
 
 def crypto_maker_rebate(price: float, shares: float) -> float:
-    """Estimate the daily crypto maker rebate from filled fee-equivalent."""
+    """Current documented 20% baseline; actual daily pool payouts can differ."""
     return shares * CRYPTO_TAKER_RATE * price * (1 - price) * CRYPTO_MAKER_REBATE_SHARE
 
 

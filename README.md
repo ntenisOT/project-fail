@@ -89,7 +89,8 @@ counterparty and must not be expanded as a second bilateral trade. The old V1
 expansion fabricated sells, cycles, and maker roles from complementary buys.
 The tool separates direct CTF events and reports fee-inclusive pair proxies.
 Its `pnl$` excludes separately paid maker rebates; query the official rebate
-endpoint before comparing total wallet economics.
+endpoint before comparing total wallet economics. Paper's `rebate$` is only the
+current documented 20% fee-equivalent baseline because actual pool payouts can differ.
 `tools/latency_probe.py` measures GET and feed surfaces without calling an order
 endpoint, then compares the configured paper delay with twice the GET p90 proxy.
 `tools/wallet_timing.py` tests the stronger all-window-maker claim by separating

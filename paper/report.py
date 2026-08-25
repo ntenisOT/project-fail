@@ -209,7 +209,7 @@ def text(db_path: str = "paper/paper.db") -> str:
         "buySum/sellSum are FIFO-matched opposite-token fills; unmat is end inventory.",
         "edge is FIFO-paired economics; neutral marks every end token at 50 cents.",
         "outcome is realized PnL minus neutral, isolating settlement-direction luck.",
-        "fee$ is crypto taker fee; rebate$ estimates the separate daily maker payout.",
+        "fee$ is taker fee; rebate$ is the documented 20% maker baseline, not payout truth.",
         "worst is settlement PnL under the adverse outcome for every asset-window.",
         "Queue-ahead depth is consumed before a maker fill; rebates are excluded.",
         "act is measured simulated action activation; reject is stale post-only prevention.",

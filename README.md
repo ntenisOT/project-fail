@@ -107,6 +107,9 @@ time; it also nets same-token alternating inventory without double-counting and
 does not treat uncovered sells as proof of minting. `tools/wallet_signal.py`,
 `tools/wallet_tape.py`, and `tools/wallet_markout.py` separate neutral pair edge
 from outcome alignment and screen public-tape signals after slippage and fees.
+`tools/wallet_pairs.py` matches opposite-token buys FIFO in exact block/log
+order so aggregate token averages cannot disguise completion coverage, pair-cost
+distribution, residual imbalance, or pairing delay.
 
 ---
 

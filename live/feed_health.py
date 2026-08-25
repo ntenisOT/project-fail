@@ -5,6 +5,8 @@ from __future__ import annotations
 import collections
 from collections.abc import Mapping
 
+MARKET_WS_MAX_QUEUE = 1024
+
 
 def event_time_s(event: Mapping[str, object]) -> float | None:
     try:

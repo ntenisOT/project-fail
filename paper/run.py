@@ -13,7 +13,7 @@ import time
 
 import websockets
 
-from live.feed_health import FeedHealth, event_time_s
+from live.feed_health import FeedHealth, MARKET_WS_MAX_QUEUE, event_time_s
 from live.window_clock import boundary_aligned_delay
 from paper import envload, report
 from paper.ledger import Ledger
@@ -227,7 +227,7 @@ async def market_task() -> None:
             S.books.clear()
             async with websockets.connect(
                 MKT_WS, ping_interval=None, open_timeout=12, close_timeout=0.1,
-                max_queue=64,
+                max_queue=MARKET_WS_MAX_QUEUE,
             ) as ws:
                 connected_at = time.monotonic()
                 await ws.send(json.dumps({"assets_ids": tokens, "type": "market"}))

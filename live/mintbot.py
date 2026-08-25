@@ -39,7 +39,7 @@ import time
 import urllib.request
 
 from live.market_book import BestAskCache
-from live.feed_health import FeedHealth
+from live.feed_health import FeedHealth, MARKET_WS_MAX_QUEUE
 from live.mint_quotes import Quote, guarded_pair_prices, plan_pair_quotes, should_reprice
 from live.window_clock import boundary_aligned_delay
 from paper import envload
@@ -413,7 +413,7 @@ class Mintbot:
                 async with websockets.connect(MKT_WS, ping_interval=None,
                                               open_timeout=12,
                                               close_timeout=0.1,
-                                              max_queue=64) as ws:
+                                              max_queue=MARKET_WS_MAX_QUEUE) as ws:
                     connected_at = time.monotonic()
                     await ws.send(json.dumps({"assets_ids": toks, "type": "market"}))
                     last_ping = time.monotonic()

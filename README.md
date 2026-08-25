@@ -366,6 +366,7 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 50 | 08-25 10:44 | preserve the board; stop duplicate shadow subscriptions and rotate market tokens in-place on one persistent official WebSocket instead of reconnecting at every boundary |
 | 51 | 08-25 11:00 | preserve the board; prove stale-count/heartbeat discrepancies are timestamped feed tails hidden by the 4,096-event rolling display, not missing timestamps |
 | 52 | 08-25 11:16 | measurement-only reset: conserve each public trade's size across ladder lanes and cap through-price fills by observed print size; report interval/lifetime feed peaks that cannot age out before heartbeat |
+| 53 | 08-25 11:31 | preserve the corrected board; timestamp pump enqueue/handler residence to split upstream event age from local queue/processing delay |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

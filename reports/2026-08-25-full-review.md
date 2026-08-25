@@ -215,6 +215,18 @@ bug is also fixed and covered by one focused test.
   Gen52 conserves one print-size budget across lanes in price priority and caps
   every through fill by observed size. All pre-Gen52 ladder results, and any
   full-clip through fills in the single-lane arms, require a fresh baseline.
+- Gen52's first corrected window retained mint's mechanism but rejected the
+  ladder: mint completed four pairs at $1.03 for +$0.60 neutral/adverse, while
+  the ladder paid $1.01 on its completed pairs, left five shares unmatched, and
+  had a -$3.18 adverse floor. A 1.611-second causal tail still makes this a
+  lagged mechanism observation, not a profitability estimate.
+- Gen53 decomposes each event's total server-timestamp age from its residence in
+  the local feed-pump queue. It observed a 2.611-second total-age tail while
+  local queue residence peaked at only 1 ms in that interval (3 ms lifetime),
+  with queue high-water 77. Ireland's chrony source reported the host clock only
+  12 microseconds slow with roughly 10-microsecond RMS offset. The large tails
+  therefore arrive upstream; they are not created by the 10 ms paper decision
+  loop, local queueing, or host clock skew.
 
 A 15-minute generation is realistic for rejecting a mechanism or catching a
 runtime defect. It is not realistic for estimating edge. Promotion requires at

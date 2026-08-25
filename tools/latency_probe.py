@@ -6,11 +6,19 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import pathlib
 import statistics
+import sys
 import time
 import urllib.request
+from collections import defaultdict
 
 import websockets
+
+if __package__ in (None, ""):
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+
+from live.feed_health import event_time_s
 
 MKT_WS = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 
@@ -29,18 +37,25 @@ def rest_rtts(samples: int = 15) -> list[float]:
     return sorted(values)
 
 
-async def ws_probe(token: str, seconds: float = 8.0) -> tuple[float, float | None, list[float]]:
+async def ws_probe(
+    token: str, seconds: float = 8.0,
+) -> tuple[float, float | None, list[float], dict[str, list[float]]]:
     started = time.perf_counter()
     async with websockets.connect(MKT_WS, ping_interval=None, open_timeout=10) as ws:
         connected_ms = (time.perf_counter() - started) * 1000
-        await ws.send(json.dumps({"assets_ids": [token], "type": "market"}))
+        await ws.send(json.dumps({
+            "assets_ids": [token], "type": "market", "custom_feature_enabled": True,
+        }))
         first_ms = None
         last = None
         gaps: list[float] = []
+        ages: dict[str, list[float]] = defaultdict(list)
         end = time.monotonic() + seconds
         while time.monotonic() < end:
             try:
-                await asyncio.wait_for(ws.recv(), timeout=max(0.1, end - time.monotonic()))
+                raw = await asyncio.wait_for(
+                    ws.recv(), timeout=max(0.1, end - time.monotonic())
+                )
             except asyncio.TimeoutError:
                 break
             now = time.perf_counter()
@@ -49,7 +64,24 @@ async def ws_probe(token: str, seconds: float = 8.0) -> tuple[float, float | Non
             if last is not None:
                 gaps.append((now - last) * 1000)
             last = now
-    return connected_ms, first_ms, sorted(gaps)
+            if raw == "PONG":
+                continue
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            received_at = time.time()
+            for event in payload if isinstance(payload, list) else [payload]:
+                if not isinstance(event, dict):
+                    continue
+                event_at = event_time_s(event)
+                if event_at is not None and -1 <= received_at - event_at <= 60:
+                    ages[str(event.get("event_type") or "?")].append(
+                        max(0.0, 1000 * (received_at - event_at))
+                    )
+    return connected_ms, first_ms, sorted(gaps), {
+        kind: sorted(values) for kind, values in ages.items()
+    }
 
 
 def percentile(values: list[float], fraction: float) -> float:
@@ -87,12 +119,17 @@ def main() -> None:
     if token is None:
         print("market WS       : active BTC token unavailable")
     else:
-        connected, first, gaps = asyncio.run(ws_probe(token))
+        seconds = float(os.environ.get("LATENCY_WS_SECONDS", "8"))
+        connected, first, gaps, ages = asyncio.run(ws_probe(token, seconds))
         first_text = "none" if first is None else f"{first:.0f} ms"
         print(f"market WS       : connect {connected:.0f} ms | first frame {first_text}")
         if gaps:
             print(f"WS frame gaps   : median {statistics.median(gaps):.0f} | "
                   f"p90 {percentile(gaps, 0.9):.0f} ms | n={len(gaps)}")
+        for kind, values in sorted(ages.items()):
+            print(f"WS {kind:<16}: p50 {statistics.median(values):.0f} | "
+                  f"p90 {percentile(values, 0.9):.0f} | max {values[-1]:.0f} ms | "
+                  f"n={len(values)}")
 
     modeled = float(os.environ.get("PAPER_ACTION_LATENCY_MS", "65"))
     proxy = 5 * round(2 * p90 / 5)

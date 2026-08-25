@@ -149,10 +149,13 @@ or floors the opposite-token quote; the reported pair sums are FIFO-matched
 fills rather than same-time quote sums. Any market-WebSocket disconnect
 invalidates the active window because missed trades cannot be reconstructed. A
 `book` or `price_change` event arriving more than `PAPER_MAX_EVENT_LAG_MS`
-(400 ms by default) late also invalidates only its affected asset-window;
-heartbeats report rolling server-event p50/p90/max lag, stale-event count, and
-reconnect count. The ledger separately persists every invalid strategy-window,
-its triggering event lag, fills, peak committed capital, cash, and residual
+(400 ms by default) late freezes new decisions for its affected asset until both
+token streams catch up. Existing hypothetical exchange orders remain exposed and
+ordered delayed trades can still fill them; this models measured latency instead
+of censoring it. Settlement reports split these windows into `lagged` and `clean`
+economics. Heartbeats report rolling server-event p50/p90/max lag, stale-event
+count, and reconnect count. The ledger separately persists every truly invalid
+strategy-window, its reason, fills, peak committed capital, cash, and residual
 inventory. Reports include the cohort validity rate so rejected windows cannot
 silently disappear from the denominator. Completed opposite-token fills retain
 share-weighted FIFO d50/d90 timing for direct comparison with winner wallets.
@@ -304,6 +307,7 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 41 | 08-25 07:5x | pause through the repeatable subscription backlog; start BTC pairs at T+30 only after both token feeds catch up |
 | 42 | 08-25 08:15 | score feed validity per strategy and include resting-bid collateral in capital; continue the BTC basket control |
 | 43 | 08-25 08:34 | persist invalid-window exposure and trigger lag; report FIFO pair d50/d90; a wrong all-asset bootstrap was caught before T+30 and replaced by the verified BTC-only runner |
+| 44 | 08-25 08:47 | stop censoring measured public-feed tails: freeze decisions, retain resting exposure and delayed ordered trades, then report clean versus lagged economics separately |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

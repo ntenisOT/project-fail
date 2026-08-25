@@ -89,6 +89,20 @@ class FocusedPairTests(unittest.TestCase):
         self.assertFalse(window.orders)
         self.assertIsNone(window.on_trade(2.1, True, 0.48, 5, "SELL"))
 
+    def test_feed_tail_freezes_decisions_but_keeps_exchange_exposure_scored(self) -> None:
+        window = PairWindow(PairConfig("lagged", "accumulate", 0.01, 0),
+                            "btc", "btc-updown-5m-0", 0, "up", "down", 0)
+        window.on_books(1.0, book(0.48, 0, 0.52, 5), book(0.49, 0, 0.51, 5))
+        window.observe_stale_market_event(812)
+
+        self.assertTrue(window.full_window)
+        self.assertTrue(window.orders)
+        fill = window.on_trade(1.5, True, 0.48, 5, "SELL", received_at=2.0)
+        self.assertIsNotNone(fill)
+        _, metrics = window.settle(300, 1)
+        self.assertEqual(metrics["exposed_stale_market_events"], 1)
+        self.assertEqual(metrics["max_exposed_stale_event_lag_ms"], 812)
+
     def test_settlement_scores_valid_strategies_independently(self) -> None:
         valid = PairWindow(PairConfig("valid", "accumulate", 0.01, 0),
                            "btc", "btc-updown-5m-0", 0, "up", "down", 0)
@@ -138,6 +152,7 @@ class FocusedPairTests(unittest.TestCase):
             window = PairWindow(PairConfig("carry", "accumulate", 0.6, action_latency_s=0),
                                 "btc", "btc-updown-5m-0", 0, "up", "down", 0)
             window.on_books(1.0, book(0.48, 0, 0.52, 5), book(0.49, 0, 0.51, 5))
+            window.observe_stale_market_event(812)
             window.on_trade(1.1, True, 0.48, 5, "SELL")
             window.on_trade(1.2, False, 0.49, 5, "SELL")
             settled, _ = window.settle(300.0, outcome)
@@ -378,6 +393,8 @@ class FocusedPairTests(unittest.TestCase):
             self.assertIn("validity=50.0%", output)
             self.assertIn("stale_market_event=1", output)
             self.assertIn("max invalid event lag=812ms", output)
+            self.assertIn("lagged", output)
+            self.assertIn("812ms", output)
             ledger.close()
 
 

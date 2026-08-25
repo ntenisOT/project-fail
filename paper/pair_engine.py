@@ -90,6 +90,8 @@ class PairWindow:
         self.action_batches = self.post_only_rejects = self.pre_activation_trades = 0
         self.taker_fees = 0.0
         self.maker_rebates = 0.0
+        self.stale_market_events = self.exposed_stale_market_events = 0
+        self.max_stale_event_lag_ms = self.max_exposed_stale_event_lag_ms = 0.0
         self.sell_opened_at: float | None = None
         self.buy_pairs = PairLots()
         self.sell_pairs = PairLots()
@@ -425,6 +427,17 @@ class PairWindow:
         for key in list(self.orders):
             self._close_order(key, now, cancelled=True)
 
+    def observe_stale_market_event(self, event_lag_ms: float | None) -> None:
+        """Record a feed tail without pretending an exchange order disappeared."""
+        lag_ms = 0.0 if event_lag_ms is None else event_lag_ms
+        self.stale_market_events += 1
+        self.max_stale_event_lag_ms = max(self.max_stale_event_lag_ms, lag_ms)
+        if self.orders or self.pending is not None or self.buys or self.sells:
+            self.exposed_stale_market_events += 1
+            self.max_exposed_stale_event_lag_ms = max(
+                self.max_exposed_stale_event_lag_ms, lag_ms,
+            )
+
     def settle(self, now: float, outcome_up: int) -> tuple[dict[str, float | int], dict[str, object]]:
         self.pending = None
         for key in list(self.orders):
@@ -449,6 +462,10 @@ class PairWindow:
             "action_seconds": self.action_seconds, "action_batches": self.action_batches,
             "post_only_rejects": self.post_only_rejects,
             "pre_activation_trades": self.pre_activation_trades,
+            "stale_market_events": self.stale_market_events,
+            "exposed_stale_market_events": self.exposed_stale_market_events,
+            "max_stale_event_lag_ms": self.max_stale_event_lag_ms,
+            "max_exposed_stale_event_lag_ms": self.max_exposed_stale_event_lag_ms,
             "taker_fees": self.taker_fees,
             "maker_rebates": self.maker_rebates,
             "paired_end": paired, "unmatched_end": abs(self.inventory[True] - self.inventory[False]),

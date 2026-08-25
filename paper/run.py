@@ -229,7 +229,7 @@ def _affected_assets(tokens: set[str]) -> set[str]:
     return {S.token_map[token][0] for token in tokens if token in S.token_map}
 
 
-def _invalidate_stale_market_event(event: dict[str, object], now: float) -> None:
+def _gate_stale_market_event(event: dict[str, object], now: float) -> None:
     if event.get("event_type") not in ("book", "price_change"):
         return
     tokens = market_event_tokens(event) & S.tokens
@@ -254,10 +254,7 @@ def _invalidate_stale_market_event(event: dict[str, object], now: float) -> None
         if not stale:
             continue
         for window in windows.values():
-            exposed = bool(window.orders or window.pending is not None
-                           or window.buys or window.sells)
-            if exposed:
-                window.invalidate(now, "stale_market_event", event_lag_ms)
+            window.observe_stale_market_event(event_lag_ms)
 
 
 def handle_event(event: dict[str, object]) -> None:
@@ -266,7 +263,7 @@ def handle_event(event: dict[str, object]) -> None:
     now = time.time()
     S.feed_health.observe(event, now)
     S.books.apply(event, now)
-    _invalidate_stale_market_event(event, now)
+    _gate_stale_market_event(event, now)
     if event_type != "last_trade_price":
         return
     token = str(event.get("asset_id") or "")

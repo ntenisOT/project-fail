@@ -7,6 +7,7 @@ import json
 import sqlite3
 import time
 
+from paper.feed_quality import snapshots as feed_quality_snapshots
 from paper.pair_lots import weighted_quantile
 
 
@@ -263,6 +264,18 @@ def text(db_path: str = "paper/paper.db") -> str:
             f"{row.pair_delay_p50_s:>7.1f}s{row.pair_delay_p90_s:>7.1f}s"
         )
     out.extend(_integrity_lines(db))
+    out.extend((
+        "feed-quality breakdown; lagged windows retain measured feed-tail exposure",
+        f"{'strategy':<14}{'quality':<14}{'wnd':>5}{'pnl$':>10}"
+        f"{'neutral$':>10}{'worst$':>10}{'unmat':>8}{'maxLag':>9}",
+    ))
+    for quality_row in feed_quality_snapshots(db):
+        out.append(
+            f"{quality_row.strategy:<14}{quality_row.quality:<14}{quality_row.windows:>5}"
+            f"{quality_row.pnl:>+10.2f}{quality_row.neutral_pnl:>+10.2f}"
+            f"{quality_row.worst_pnl:>+10.2f}{quality_row.unmatched:>8.1f}"
+            f"{quality_row.max_lag_ms:>8.0f}ms"
+        )
     out.extend((
         "asset breakdown; pnl/neutral/worst keep directional luck and concentration visible",
         f"{'strategy':<14}{'asset':<6}{'wnd':>5}{'pnl$':>10}"

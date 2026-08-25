@@ -10,7 +10,7 @@ import datetime
 from paper import envload
 
 envload.load()
-from live.executor import Clob  # the ACTUAL production parsing code
+from live.executor import Clob  # noqa: E402 - env must load before client import
 
 
 def main():

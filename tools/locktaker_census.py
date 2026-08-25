@@ -48,7 +48,7 @@ INNER JOIN legs d ON d.token = p.dn AND d.wallet = u.wallet AND d.blk = u.blk
 """
 r = c.query(q, settings=S).result_rows[0]
 events, wallets, usd_total, usd_avg, first_seen, last_seen = r
-print(f"SAME-BLOCK both-sides buys (lock-take fingerprint):")
+print("SAME-BLOCK both-sides buys (lock-take fingerprint):")
 print(f"  events {events} | wallets {wallets} | total ${usd_total:,.0f} | avg ${usd_avg}/event")
 print(f"  span: {first_seen} .. {last_seen}")
 

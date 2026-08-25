@@ -8,7 +8,7 @@ from pathlib import Path
 
 from live import lockbot
 from live.chain import PreflightError, merge, split
-from live.feed_health import FeedHealth
+from live.feed_health import FeedHealth, event_time_s
 from live.market_book import BestAskCache
 from live.mint_quotes import (
     guarded_pair_prices,
@@ -28,6 +28,7 @@ class MintSafetyTests(unittest.TestCase):
             health.snapshot(),
             {"p50_ms": 10, "p90_ms": 10, "max_ms": 25, "reconnects": 1},
         )
+        self.assertEqual(event_time_s({"timestamp": "1787631300040"}), 1787631300.04)
 
     def test_retired_lockbot_place_mode_is_fail_closed(self) -> None:
         original = lockbot.MODE

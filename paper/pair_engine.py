@@ -122,7 +122,7 @@ class PairWindow:
         self.quote_posts = self.quote_cancels = self.closed_orders = 0
         self.rest_seconds = self.queue_consumed = self.filled_shares = 0.0
         self.action_seconds = 0.0
-        self.action_batches = self.post_only_rejects = 0
+        self.action_batches = self.post_only_rejects = self.pre_activation_trades = 0
         self.taker_fees = 0.0
         self.sell_opened_at: float | None = None
         self.buy_pairs = PairLots()
@@ -354,6 +354,9 @@ class PairWindow:
         order = self.orders.get(key)
         if order is None or now >= self.end:
             return None
+        if now + 1e-9 < order.placed_at:
+            self.pre_activation_trades += 1
+            return None
         crossed = price <= order.price if order_side == "buy" else price >= order.price
         if not crossed:
             return None
@@ -423,6 +426,7 @@ class PairWindow:
             "queue_consumed": self.queue_consumed, "filled_shares": self.filled_shares,
             "action_seconds": self.action_seconds, "action_batches": self.action_batches,
             "post_only_rejects": self.post_only_rejects,
+            "pre_activation_trades": self.pre_activation_trades,
             "taker_fees": self.taker_fees,
             "paired_end": paired, "unmatched_end": abs(self.inventory[True] - self.inventory[False]),
             "buy_pair_shares": self.buy_pairs.paired_shares,

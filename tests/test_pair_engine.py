@@ -57,6 +57,8 @@ class FocusedPairTests(unittest.TestCase):
         self.assertIsNone(window.on_trade(1.03, True, 0.48, 5, "SELL"))
         window.on_books(1.06, up, down)
         self.assertIn((True, "buy"), window.orders)
+        self.assertIsNone(window.on_trade(1.05, True, 0.48, 5, "SELL"))
+        self.assertEqual(window.pre_activation_trades, 1)
 
     def test_late_first_books_make_the_window_unscored(self) -> None:
         window = PairWindow(PairConfig("carry", "accumulate", 0.01, 0),

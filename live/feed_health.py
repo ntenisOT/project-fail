@@ -6,19 +6,24 @@ import collections
 from collections.abc import Mapping
 
 
+def event_time_s(event: Mapping[str, object]) -> float | None:
+    try:
+        timestamp = float(str(event["timestamp"]))
+    except (KeyError, TypeError, ValueError):
+        return None
+    return timestamp / 1000 if timestamp >= 100_000_000_000 else timestamp
+
+
 class FeedHealth:
     def __init__(self, sample_size: int = 4096) -> None:
         self.lag_ms: collections.deque[float] = collections.deque(maxlen=sample_size)
         self.reconnects = 0
 
     def observe(self, event: Mapping[str, object], received_at: float) -> None:
-        try:
-            timestamp = float(str(event["timestamp"]))
-        except (KeyError, TypeError, ValueError):
+        event_at = event_time_s(event)
+        if event_at is None:
             return
-        if timestamp < 100_000_000_000:
-            timestamp *= 1000
-        lag = received_at * 1000 - timestamp
+        lag = (received_at - event_at) * 1000
         if -1000 <= lag <= 60_000:
             self.lag_ms.append(max(0.0, lag))
 

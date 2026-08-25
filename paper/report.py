@@ -31,6 +31,7 @@ class Snapshot:
     queue_consumed: float
     action_ms: float
     post_only_rejects: int
+    pre_activation_trades: int
 
 
 def _metrics(db: sqlite3.Connection, strategy: str) -> dict[str, float]:
@@ -114,6 +115,7 @@ def snapshot_one(db: sqlite3.Connection, strategy: str) -> Snapshot:
         action_ms=1000 * (_sum_or_none(metrics.get("action_seconds", 0.0),
                                       metrics.get("action_batches", 0.0)) or 0.0),
         post_only_rejects=int(metrics.get("post_only_rejects", 0.0)),
+        pre_activation_trades=int(metrics.get("pre_activation_trades", 0.0)),
     )
 
 
@@ -138,7 +140,7 @@ def text(db_path: str = "paper/paper.db") -> str:
         f"{'strategy':<14}{'wnd':>5}{'trd':>6}{'vol$':>8}{'win%':>6}{'pnl$':>9}"
         f"{'edge$':>8}{'neutral$':>9}{'outcome$':>9}{'worst$':>8}{'bank$':>8}"
         f"{'ROC':>7}{'buySum':>8}{'sellSum':>9}{'fee$':>7}{'unmat':>7}{'post/w':>8}{'rest':>7}"
-        f"{'qAhead':>8}{'act':>8}{'reject':>8}",
+        f"{'qAhead':>8}{'act':>8}{'reject':>8}{'preAct':>8}",
     ]
     for row in snapshots:
         out.append(
@@ -151,7 +153,7 @@ def text(db_path: str = "paper/paper.db") -> str:
             f"{_format_sum(row.sell_sum):>9}{row.taker_fees:>7.2f}{row.unmatched:>7.1f}"
             f"{row.posts_per_window:>8.1f}{row.rest_seconds:>6.1f}s"
             f"{row.queue_consumed:>8.0f}{row.action_ms:>6.0f}ms"
-            f"{row.post_only_rejects:>8}"
+            f"{row.post_only_rejects:>8}{row.pre_activation_trades:>8}"
         )
     out.extend((
         "buySum/sellSum are FIFO-matched opposite-token fills; unmat is end inventory.",
@@ -161,6 +163,7 @@ def text(db_path: str = "paper/paper.db") -> str:
         "worst is settlement PnL under the adverse outcome for every asset-window.",
         "Queue-ahead depth is consumed before a maker fill; rebates are excluded.",
         "act is measured simulated action activation; reject is stale post-only prevention.",
+        "preAct counts delayed trade events rejected because they predate order activation.",
     ))
     result = "\n".join(out)
     db.close()

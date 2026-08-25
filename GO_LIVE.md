@@ -46,6 +46,8 @@ generation demonstrates all of the following:
 - Unmatched inventory and tail losses remain inside explicit caps.
 - Delayed actions revalidate current holdings; negative simulated inventory
   invalidates the generation instead of manufacturing short sales.
+- Trade matching uses exchange event time; delayed prints that predate the
+  simulated order activation are rejected and counted.
 - Any market-feed reconnect invalidates the active window; rolling server-event
   lag must remain bounded rather than hiding a slow consumer behind buffering.
 - Queue-ahead consumption, quote residence, post/cancel rate, and fill rate are

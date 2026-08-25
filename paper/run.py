@@ -13,7 +13,7 @@ import time
 
 import websockets
 
-from live.feed_health import FeedHealth
+from live.feed_health import FeedHealth, event_time_s
 from paper import envload, report
 from paper.ledger import Ledger
 from paper.market_metadata import ActiveMarket, fetch_active_market
@@ -203,10 +203,11 @@ def handle_event(event: dict[str, object]) -> None:
             or not 0 < price < 1 or size <= 0):
         return
     asset, side_up = info
+    traded_at = event_time_s(event) or now
     for name, window in (S.active.get(asset) or {}).items():
-        fill = window.on_trade(now, side_up, price, size, taker_side)
+        fill = window.on_trade(traded_at, side_up, price, size, taker_side)
         if fill:
-            S.ledger.record_fill(now, name, asset, window.slug, fill)
+            S.ledger.record_fill(traded_at, name, asset, window.slug, fill)
 
 
 async def market_task() -> None:

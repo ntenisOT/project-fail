@@ -134,7 +134,7 @@ See `reports/2026-08-25-gen62-winner-regimes.md`.
 
 ---
 
-## 3. Focused pair-inventory experiment (five strategies)
+## 3. Focused pair-inventory experiment (six strategies)
 
 The legacy 49-arm board was retired after every execution-shaped pair/mint arm
 remained negative. V2-corrected forensics then identified the clean leader as a
@@ -149,6 +149,7 @@ completion, and the smallest mint falsification controls:
 | `basket99t270` | Basket99 twin that waits until T+270, then takes only a displayed complement whose fee-inclusive cost preserves the rolling $0.99 cap |
 | `basket99t270d` | T+270 twin that may round a 4.90–4.999-share complement to the five-share market minimum, leaving at most 0.1 opposite-token dust and exceeding the per-token cap by at most that dust |
 | `mintcycle5` | One five-share complete-set pair per window; tests whether repeated mint churn compounds residue risk |
+| `mintrepair5p95` | Five-set repair twin that accepts a fee-inclusive pair as low as $0.95 after 60 seconds; it deliberately pays for tail-risk reduction and remains an A/B until that insurance cost is measured |
 | `mintrepair5p100` | Five-set mint twin that gives maker completion 60 seconds, then reduces executable residual depth only when the fee-inclusive pair remains non-loss-making; near-minimum dust may round up by at most 0.1 share |
 
 The observer records the official
@@ -167,7 +168,7 @@ when the open residual is within 0.1 share of it, deliberately flipping at most
 0.1 share of dust instead of retaining almost five shares. Five-share low-price
 orders are not incorrectly rejected on dollar notional.
 
-All five arms wait until T+30 seconds and until both token feeds have caught up
+All six arms wait until T+30 seconds and until both token feeds have caught up
 before starting a pair. This deliberately gives up the subscription-backlog
 period; a stale causal update freezes decisions and labels exposed settlement
 economics `lagged` rather than removing the window.
@@ -401,7 +402,7 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 63 | 08-25 15:51 | add a T+270 fee-aware Basket99 completion A/B and replace the inert full-depth mint hedge with a five-set partial-depth/dust repair twin; keep signal shadow-only |
 | 64 | 08-25 16:20 | retire the repeatedly loss-making 20-set mint arm; add an opt-in T+270 near-minimum buy-completion twin after Gen63 locked one late pair but exposed a 4.98-share minimum dead zone |
 | 65 | 08-25 16:56 | let the dust twin exceed its per-token inventory cap by at most 0.1 share after Gen64 proved saturation made it inert; replace the redundant T+180 arm with a $1.00 mint-repair floor A/B |
-| 66 | 08-25 17:25 | accept only the configured dust allowance at settlement and isolate a broken paper arm instead of killing the cohort; retire the $0.95 mint repair after two forced completions both locked losses while $1.00/control waited |
+| 66 | 08-25 17:29 | accept only the configured dust allowance at settlement and isolate a broken paper arm instead of killing the cohort; retain the $0.95/$1.00 A/B because the second $0.95 repair capped a $2.30 unmatched loss at $0.19 |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

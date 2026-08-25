@@ -42,8 +42,11 @@ class FeedPump:
         capacity: int = EVENT_QUEUE_CAPACITY,
     ) -> None:
         self.handler = handler
-        self.queue: asyncio.Queue[dict[str, object]] = asyncio.Queue(capacity)
+        self.queue: asyncio.Queue[tuple[dict[str, object], float]] = asyncio.Queue(capacity)
         self.high_water = 0
+        self.interval_high_water = 0
+        self.residence_max_ms = 0.0
+        self.interval_residence_max_ms = 0.0
 
     async def _read(self, ws: WebSocketLike, stop: asyncio.Event) -> None:
         last_ping = time.monotonic()
@@ -68,20 +71,30 @@ class FeedPump:
                 if not isinstance(event, dict):
                     continue
                 try:
-                    self.queue.put_nowait(event)
+                    self.queue.put_nowait((event, time.monotonic()))
                 except asyncio.QueueFull as exc:
                     raise FeedBacklogError(
                         f"market event queue reached {self.queue.maxsize}",
                     ) from exc
                 self.high_water = max(self.high_water, self.queue.qsize())
+                self.interval_high_water = max(
+                    self.interval_high_water, self.queue.qsize(),
+                )
 
     async def _process(self, stop: asyncio.Event) -> None:
         processed = 0
         while not stop.is_set():
             try:
-                event = await asyncio.wait_for(self.queue.get(), timeout=0.5)
+                event, enqueued_at = await asyncio.wait_for(
+                    self.queue.get(), timeout=0.5,
+                )
             except asyncio.TimeoutError:
                 continue
+            residence_ms = max(0.0, (time.monotonic() - enqueued_at) * 1000)
+            self.residence_max_ms = max(self.residence_max_ms, residence_ms)
+            self.interval_residence_max_ms = max(
+                self.interval_residence_max_ms, residence_ms,
+            )
             self.handler(event)
             processed += 1
             if processed % PROCESS_YIELD_EVERY == 0:
@@ -100,3 +113,15 @@ class FeedPump:
                 if not task.done():
                     task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+
+    def snapshot(self, *, reset_interval: bool = False) -> dict[str, int]:
+        snapshot = {
+            "hwm": self.high_water,
+            "interval_hwm": self.interval_high_water,
+            "residence_max_ms": round(self.residence_max_ms),
+            "interval_residence_max_ms": round(self.interval_residence_max_ms),
+        }
+        if reset_interval:
+            self.interval_high_water = 0
+            self.interval_residence_max_ms = 0.0
+        return snapshot

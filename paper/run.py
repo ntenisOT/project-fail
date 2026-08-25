@@ -405,12 +405,13 @@ async def heartbeat_task() -> None:
         }
         orders = sum(len(window.orders) for windows in S.active.values()
                      for window in windows.values())
-        feed_queue_hwm = S.feed_pump.high_water if S.feed_pump is not None else 0
+        feed_queue = (S.feed_pump.snapshot(reset_interval=True)
+                      if S.feed_pump is not None else {})
         log.info("hb | events=%s fills=%s active_orders=%d pending_resolution=%d "
-                 "feed_paused=%s feed=%s feed_queue_hwm=%d errors=%s",
+                 "feed_paused=%s feed=%s feed_queue=%s errors=%s",
                  dict(S.events), active, orders, len(S.pending),
                  sorted(S.stale_assets),
-                 S.feed_health.snapshot(reset_interval=True), feed_queue_hwm,
+                 S.feed_health.snapshot(reset_interval=True), feed_queue,
                  dict(S.resolution_errors))
 
 

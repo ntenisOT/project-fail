@@ -32,6 +32,11 @@ def test_feed_pump_drains_socket_before_ordered_processing_finishes() -> None:
 
     assert seen == list(range(100))
     assert pump.high_water == 100
+    snapshot = pump.snapshot(reset_interval=True)
+    assert snapshot["hwm"] == snapshot["interval_hwm"] == 100
+    assert snapshot["residence_max_ms"] >= 0
+    assert pump.snapshot()["interval_hwm"] == 0
+    assert pump.snapshot()["interval_residence_max_ms"] == 0
 
 
 def test_subscription_rotation_adds_before_removing() -> None:

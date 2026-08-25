@@ -434,10 +434,11 @@ class Mintbot:
             key: value for key, value in self.quote_counts.items()
             if not key.startswith("rest_")
         }
-        queue_hwm = self.feed_pump.high_water if self.feed_pump else 0
-        log.info("feed events=%s lag=%s queue_hwm=%d quotes=%s residence=%.1fs "
+        queue = (self.feed_pump.snapshot(reset_interval=True)
+                 if self.feed_pump else {})
+        log.info("feed events=%s lag=%s queue=%s quotes=%s residence=%.1fs "
                  "under15=%.0f%%", dict(self.feed_counts),
-                 self.feed_health.snapshot(reset_interval=True), queue_hwm,
+                 self.feed_health.snapshot(reset_interval=True), queue,
                  quote_events, rest_s,
                  under_pct)
         self.last_feed_log = time.monotonic()

@@ -12,7 +12,7 @@ from paper.pair_engine import PairWindow
 class ScoredWindow:
     strategy: str
     settlement: dict[str, float | int]
-    metrics: dict[str, float]
+    metrics: dict[str, object]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -20,6 +20,11 @@ class SkippedWindow:
     strategy: str
     slug: str
     reason: str
+    n_fills: int
+    capital: float
+    cash: float
+    up_shares: float
+    down_shares: float
 
 
 def settle_valid(
@@ -31,6 +36,8 @@ def settle_valid(
         if not window.full_window:
             skipped.append(SkippedWindow(
                 strategy, window.slug, window.invalid_reason or "unknown",
+                window.buys + window.sells, window.peak, window.cash,
+                window.inventory[True], window.inventory[False],
             ))
             continue
         settlement, metrics = window.settle(now, outcome_up)

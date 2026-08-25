@@ -59,8 +59,12 @@ class LedgerWriter:
         self._put("record_settlement", ts, strategy, asset, slug, settlement)
 
     def record_metrics(self, ts: float, strategy: str, asset: str, slug: str,
-                       metrics: dict[str, float]) -> None:
+                       metrics: dict[str, object]) -> None:
         self._put("record_metrics", ts, strategy, asset, slug, metrics)
+
+    def record_invalid_window(self, ts: float, strategy: str, asset: str, slug: str,
+                              invalid: dict[str, Any]) -> None:
+        self._put("record_invalid_window", ts, strategy, asset, slug, invalid)
 
     def close(self) -> None:
         if self._closed:

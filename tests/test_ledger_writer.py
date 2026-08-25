@@ -18,9 +18,19 @@ class LedgerWriterTests(unittest.TestCase):
                 "action": "sell", "price": 0.6, "size": 5,
                 "signed_cash": 3, "outcome_up": 1,
             })
+            writer.record_invalid_window(2, "test", "btc", "slug", {
+                "reason": "stale_market_event", "n_fills": 1, "capital": 3,
+                "cash": -3, "up_shares": 5, "down_shares": 0,
+            })
             writer.close()
             with closing(sqlite3.connect(path)) as db:
                 self.assertEqual(db.execute("SELECT count(*) FROM fills").fetchone()[0], 1)
+                self.assertEqual(
+                    db.execute(
+                        "SELECT reason,n_fills,capital FROM invalid_windows"
+                    ).fetchone(),
+                    ("stale_market_event", 1, 3.0),
+                )
 
 
 if __name__ == "__main__":

@@ -180,6 +180,17 @@ async def settlement_task() -> None:
             now = time.time()
             scored, skipped = settle_valid(pending.windows, now, resolved.winner_up)
             for skipped_row in skipped:
+                S.ledger.record_invalid_window(
+                    now, skipped_row.strategy, pending.asset, skipped_row.slug,
+                    {
+                        "reason": skipped_row.reason,
+                        "n_fills": skipped_row.n_fills,
+                        "capital": skipped_row.capital,
+                        "cash": skipped_row.cash,
+                        "up_shares": skipped_row.up_shares,
+                        "down_shares": skipped_row.down_shares,
+                    },
+                )
                 log.info("skipped invalid strategy-window %s %s reason=%s",
                          skipped_row.strategy, skipped_row.slug, skipped_row.reason)
             for scored_row in scored:

@@ -340,10 +340,10 @@ class FocusedPairTests(unittest.TestCase):
             window = PairWindow(PairConfig("carry", "accumulate", 0.6, action_latency_s=0),
                                 "btc", "btc-updown-5m-0", 0, "up", "down", 0)
             window.on_books(1.0, book(0.48, 0, 0.52, 5), book(0.49, 0, 0.51, 5))
-            for side, price in ((True, 0.48), (False, 0.49)):
-                fill = window.on_trade(1.1, side, price, 5, "SELL")
+            for side, price, filled_at in ((True, 0.48, 1.1), (False, 0.49, 21.1)):
+                fill = window.on_trade(filled_at, side, price, 5, "SELL")
                 assert fill is not None
-                ledger.record_fill(1.1, "carry", "btc", window.slug, fill)
+                ledger.record_fill(filled_at, "carry", "btc", window.slug, fill)
             outcomes = [row[0] for row in ledger.db.execute(
                 "SELECT outcome_up FROM fills ORDER BY rowid"
             )]
@@ -351,6 +351,10 @@ class FocusedPairTests(unittest.TestCase):
             settled, metrics = window.settle(300.0, 1)
             ledger.record_settlement(300.0, "carry", "btc", window.slug, settled)
             ledger.record_metrics(300.0, "carry", "btc", window.slug, metrics)
+            ledger.record_invalid_window(301.0, "rejected", "btc", "bad-slug", {
+                "reason": "stale_market_event", "n_fills": 1, "capital": 2.5,
+                "cash": -2.5, "up_shares": 5, "down_shares": 0,
+            })
             ledger.record_fill(301, "carry", "btc", "btc-updown-5m-300", {
                 "action": "buy", "price": 0.5, "size": 100,
                 "signed_cash": -50, "outcome_up": 1,
@@ -359,6 +363,8 @@ class FocusedPairTests(unittest.TestCase):
             self.assertAlmostEqual(snapshot.volume, 4.85)
             self.assertAlmostEqual(snapshot.neutral_pnl, 0.15)
             self.assertAlmostEqual(snapshot.outcome_pnl, 0)
+            self.assertAlmostEqual(snapshot.pair_delay_p50_s, 20)
+            self.assertAlmostEqual(snapshot.pair_delay_p90_s, 20)
             expected_rebate = (crypto_maker_rebate(0.48, 5)
                                + crypto_maker_rebate(0.49, 5))
             self.assertAlmostEqual(snapshot.maker_rebates, expected_rebate)
@@ -367,6 +373,8 @@ class FocusedPairTests(unittest.TestCase):
             self.assertIn("0.970", output)
             self.assertIn("asset breakdown", output)
             self.assertIn("btc", output)
+            self.assertIn("validity=50.0%", output)
+            self.assertIn("stale_market_event=1", output)
             ledger.close()
 
 

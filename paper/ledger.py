@@ -23,6 +23,9 @@ class Ledger:
               n_fills INT, outcome_up INT);
             CREATE TABLE IF NOT EXISTS window_metrics(
               ts REAL, strategy TEXT, asset TEXT, slug TEXT, data TEXT);
+            CREATE TABLE IF NOT EXISTS invalid_windows(
+              ts REAL, strategy TEXT, asset TEXT, slug TEXT, reason TEXT,
+              n_fills INT, capital REAL, cash REAL, up_shares REAL, down_shares REAL);
             """
         )
         columns = {row[1] for row in self.db.execute("PRAGMA table_info(fills)")}
@@ -34,6 +37,17 @@ class Ledger:
         self.db.execute(
             "INSERT INTO window_metrics VALUES(?,?,?,?,?)",
             (ts, strategy, asset, slug, json.dumps(metrics, sort_keys=True)),
+        )
+        self.db.commit()
+
+    def record_invalid_window(self, ts, strategy, asset, slug, invalid) -> None:
+        self.db.execute(
+            """INSERT INTO invalid_windows(
+                 ts,strategy,asset,slug,reason,n_fills,capital,cash,up_shares,down_shares
+               ) VALUES(?,?,?,?,?,?,?,?,?,?)""",
+            (ts, strategy, asset, slug, invalid["reason"], invalid["n_fills"],
+             invalid["capital"], invalid["cash"], invalid["up_shares"],
+             invalid["down_shares"]),
         )
         self.db.commit()
 

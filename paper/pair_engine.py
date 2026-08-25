@@ -8,6 +8,7 @@ from typing import Literal
 
 from live.mint_quotes import guarded_pair_prices, plan_pair_quotes, should_reprice
 from paper.order_book import OrderBook
+from paper.pair_lots import PairLots
 from paper.taker import crypto_maker_rebate, sweep
 
 
@@ -45,70 +46,6 @@ class RestingOrder:
 class PendingRequote:
     ready_at: float
     decided_at: float
-
-
-class PairLots:
-    """Match opposite-token fills and retain the exact open-leg prices."""
-
-    def __init__(self) -> None:
-        self.lots: dict[bool, list[list[float]]] = {True: [], False: []}
-        self.paired_shares = 0.0
-        self.paired_value = 0.0
-
-    @property
-    def open_side(self) -> bool | None:
-        sides = [side for side in (True, False) if self.lots[side]]
-        if len(sides) > 1:
-            raise RuntimeError("opposite unmatched pair lots")
-        return sides[0] if sides else None
-
-    def worst_open_price(self, buying: bool) -> float:
-        side = self.open_side
-        if side is None:
-            raise RuntimeError("no open pair lot")
-        prices = [lot[1] for lot in self.lots[side]]
-        return max(prices) if buying else min(prices)
-
-    @property
-    def open_shares(self) -> float:
-        side = self.open_side
-        return sum(lot[0] for lot in self.lots[side]) if side is not None else 0.0
-
-    def add(self, side: bool, shares: float, price: float) -> None:
-        remaining = shares
-        opposite = self.lots[not side]
-        while remaining > 1e-9 and opposite:
-            lot = opposite[0]
-            matched = min(remaining, lot[0])
-            self.paired_shares += matched
-            self.paired_value += matched * (price + lot[1])
-            remaining -= matched
-            lot[0] -= matched
-            if lot[0] <= 1e-9:
-                opposite.pop(0)
-        if remaining > 1e-9:
-            self.lots[side].append([remaining, price])
-
-    def next_pair_sum_cap(self, cap: float, shares: float) -> float:
-        """Maximum next pair sum that preserves the cumulative average cap."""
-        return (cap * (self.paired_shares + shares) - self.paired_value) / shares
-
-    def completion_price_cap(self, cap: float, quote_shares: float) -> float:
-        """Maximum opposite price after crediting completed-pair surplus."""
-        side = self.open_side
-        if side is None:
-            raise RuntimeError("no open pair lot")
-        remaining = min(quote_shares, self.open_shares)
-        matched = remaining
-        open_value = 0.0
-        for shares, price in self.lots[side]:
-            take = min(remaining, shares)
-            open_value += take * price
-            remaining -= take
-            if remaining <= 1e-9:
-                break
-        return (cap * (self.paired_shares + matched)
-                - self.paired_value - open_value) / matched
 
 
 def _tick_price(value: float, tick: float, round_up: bool) -> float:
@@ -351,7 +288,7 @@ class PairWindow:
     def _record_sell_pair(self, now: float, side: bool,
                           shares: float, net_price: float) -> None:
         before = self.sell_pairs.open_side
-        self.sell_pairs.add(side, shares, net_price)
+        self.sell_pairs.add(side, shares, net_price, now)
         after = self.sell_pairs.open_side
         if after is None:
             self.sell_opened_at = None
@@ -462,7 +399,7 @@ class PairWindow:
             self.cash -= notional
             self.peak = max(self.peak, -self.cash)
             self.buys += 1
-            self.buy_pairs.add(side_up, fill, order.price)
+            self.buy_pairs.add(side_up, fill, order.price, now)
             signed_cash = -notional
         else:
             self.inventory[side_up] -= fill
@@ -485,7 +422,7 @@ class PairWindow:
         for key in list(self.orders):
             self._close_order(key, now, cancelled=True)
 
-    def settle(self, now: float, outcome_up: int) -> tuple[dict[str, float | int], dict[str, float]]:
+    def settle(self, now: float, outcome_up: int) -> tuple[dict[str, float | int], dict[str, object]]:
         self.pending = None
         for key in list(self.orders):
             self._close_order(key, now, cancelled=True)
@@ -514,6 +451,7 @@ class PairWindow:
             "paired_end": paired, "unmatched_end": abs(self.inventory[True] - self.inventory[False]),
             "buy_pair_shares": self.buy_pairs.paired_shares,
             "buy_pair_cost": self.buy_pairs.paired_value,
+            "buy_pair_delays": self.buy_pairs.completion_delays,
             "sell_pair_shares": self.sell_pairs.paired_shares,
             "sell_pair_proceeds": self.sell_pairs.paired_value,
         }

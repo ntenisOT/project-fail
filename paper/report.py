@@ -7,6 +7,8 @@ import json
 import sqlite3
 import time
 
+from paper.pair_lots import weighted_quantile
+
 
 @dataclasses.dataclass(frozen=True)
 class Snapshot:
@@ -33,6 +35,8 @@ class Snapshot:
     action_ms: float
     post_only_rejects: int
     pre_activation_trades: int
+    pair_delay_p50_s: float
+    pair_delay_p90_s: float
 
 
 @dataclasses.dataclass(frozen=True)
@@ -59,6 +63,29 @@ def _metrics(db: sqlite3.Connection, strategy: str) -> dict[str, float]:
             if isinstance(value, (int, float)):
                 totals[key] = totals.get(key, 0.0) + float(value)
     return totals
+
+
+def _pair_delays(db: sqlite3.Connection, strategy: str) -> tuple[float, float]:
+    samples: list[tuple[float, float]] = []
+    rows = db.execute("SELECT data FROM window_metrics WHERE strategy=?", (strategy,))
+    for (raw,) in rows:
+        try:
+            values = json.loads(raw)
+        except (TypeError, json.JSONDecodeError):
+            continue
+        delays = values.get("buy_pair_delays") if isinstance(values, dict) else None
+        if not isinstance(delays, list):
+            continue
+        for row in delays:
+            if not isinstance(row, (list, tuple)) or len(row) != 2:
+                continue
+            try:
+                delay, shares = float(row[0]), float(row[1])
+            except (TypeError, ValueError):
+                continue
+            if delay >= 0 and shares > 0:
+                samples.append((delay, shares))
+    return weighted_quantile(samples, 0.5), weighted_quantile(samples, 0.9)
 
 
 def _bankroll(rows: list[tuple[float, str, float]]) -> float:
@@ -88,6 +115,7 @@ def snapshot_one(db: sqlite3.Connection, strategy: str) -> Snapshot:
         (strategy,),
     ).fetchall()
     metrics = _metrics(db, strategy)
+    pair_delay_p50_s, pair_delay_p90_s = _pair_delays(db, strategy)
     windows = len(rows)
     if any(float(row[7]) < -1e-8 or float(row[8]) - float(row[7]) < -1e-8
            for row in rows):
@@ -130,6 +158,8 @@ def snapshot_one(db: sqlite3.Connection, strategy: str) -> Snapshot:
                                       metrics.get("action_batches", 0.0)) or 0.0),
         post_only_rejects=int(metrics.get("post_only_rejects", 0.0)),
         pre_activation_trades=int(metrics.get("pre_activation_trades", 0.0)),
+        pair_delay_p50_s=pair_delay_p50_s,
+        pair_delay_p90_s=pair_delay_p90_s,
     )
 
 
@@ -161,6 +191,35 @@ def _format_sum(value: float | None) -> str:
     return "-" if value is None else f"{value:.3f}"
 
 
+def _integrity_lines(db: sqlite3.Connection) -> list[str]:
+    scored = int(db.execute("SELECT count(*) FROM settlements").fetchone()[0])
+    has_invalid_audit = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='invalid_windows'"
+    ).fetchone()
+    if has_invalid_audit is None:
+        return (["cohort integrity | invalid-window audit unavailable for legacy DB"]
+                if scored else [])
+    invalid, invalid_fills, max_capital = db.execute(
+        """SELECT count(*),COALESCE(sum(n_fills),0),COALESCE(max(capital),0)
+           FROM invalid_windows"""
+    ).fetchone()
+    invalid = int(invalid)
+    if not scored and not invalid:
+        return []
+    total = scored + invalid
+    reasons = ", ".join(
+        f"{reason}={count}" for reason, count in db.execute(
+            "SELECT reason,count(*) FROM invalid_windows GROUP BY reason ORDER BY reason"
+        )
+    ) or "none"
+    return [
+        f"cohort integrity | scored strategy-windows={scored} | invalid={invalid} | "
+        f"validity={100 * scored / total:.1f}% | invalid fills={int(invalid_fills)} | "
+        f"max invalid committed=${float(max_capital):.2f}",
+        f"invalid reasons | {reasons}",
+    ]
+
+
 def text(db_path: str = "paper/paper.db") -> str:
     db = sqlite3.connect(db_path)
     strategies = [row[0] for row in db.execute(
@@ -168,8 +227,12 @@ def text(db_path: str = "paper/paper.db") -> str:
     )]
     if not strategies:
         fills = db.execute("SELECT count(*) FROM fills").fetchone()[0]
+        integrity = _integrity_lines(db)
         db.close()
-        return f"FOCUSED PAIR PAPER warming up | provisional fills={fills} | awaiting official outcomes"
+        return "\n".join([
+            f"FOCUSED PAIR PAPER warming up | provisional fills={fills} | awaiting official outcomes",
+            *integrity,
+        ])
     snapshots = sorted((snapshot_one(db, strategy) for strategy in strategies),
                        key=lambda row: row.neutral_pnl, reverse=True)
     last = float(db.execute("SELECT COALESCE(max(ts),0) FROM settlements").fetchone()[0])
@@ -179,7 +242,8 @@ def text(db_path: str = "paper/paper.db") -> str:
         f"{'edge$':>8}{'neutral$':>9}{'outcome$':>9}{'worst$':>8}{'bank$':>8}"
         f"{'ROC':>7}{'buySum':>8}{'sellSum':>9}{'fee$':>7}{'rebate$':>9}"
         f"{'unmat':>7}{'post/w':>8}{'rest':>7}"
-        f"{'qAhead':>8}{'act':>8}{'reject':>8}{'preAct':>8}",
+        f"{'qAhead':>8}{'act':>8}{'reject':>8}{'preAct':>8}"
+        f"{'d50':>8}{'d90':>8}",
     ]
     for row in snapshots:
         out.append(
@@ -194,7 +258,9 @@ def text(db_path: str = "paper/paper.db") -> str:
             f"{row.posts_per_window:>8.1f}{row.rest_seconds:>6.1f}s"
             f"{row.queue_consumed:>8.0f}{row.action_ms:>6.0f}ms"
             f"{row.post_only_rejects:>8}{row.pre_activation_trades:>8}"
+            f"{row.pair_delay_p50_s:>7.1f}s{row.pair_delay_p90_s:>7.1f}s"
         )
+    out.extend(_integrity_lines(db))
     out.extend((
         "asset breakdown; pnl/neutral/worst keep directional luck and concentration visible",
         f"{'strategy':<14}{'asset':<6}{'wnd':>5}{'pnl$':>10}"
@@ -207,6 +273,7 @@ def text(db_path: str = "paper/paper.db") -> str:
                    f"{asset_row.unmatched:>8.1f}")
     out.extend((
         "buySum/sellSum are FIFO-matched opposite-token fills; unmat is end inventory.",
+        "pair completion d50/d90 are share-weighted FIFO delays between opposite fills.",
         "edge is FIFO-paired economics; neutral marks every end token at 50 cents.",
         "outcome is realized PnL minus neutral, isolating settlement-direction luck.",
         "fee$ is taker fee; rebate$ is the documented 20% maker baseline, not payout truth.",

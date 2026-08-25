@@ -358,6 +358,7 @@ class FocusedPairTests(unittest.TestCase):
         config = PairConfig(
             "dust-repair", "mint", 0.01, action_latency_s=0,
             mint_sets=5, sell_sum_floor=1.005, taker_hedge_after_s=5,
+            taker_dust_round_shares=0.1,
         )
         window = PairWindow(config, "btc", "btc-updown-5m-0", 0, "up", "down", 0)
         up = book(0.58, 5, 0.60, 5)

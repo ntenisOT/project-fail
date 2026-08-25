@@ -48,3 +48,29 @@ def test_five_share_taker_completion_is_fee_and_minimum_aware() -> None:
     assert partial.on_trade(2, True, 0.70, 4, "SELL") is not None
     assert not partial.on_books(5, high, cheap)
     assert partial.inventory == {True: 4, False: 0}
+
+
+def test_taker_completion_can_round_only_near_minimum_dust() -> None:
+    config = PairConfig(
+        "dust", "accumulate", 0.01, 0, clip_shares=5, max_inventory=20,
+        buy_sum_ceiling=0.99, basket_average_cap=True, buy_taker_after_s=5,
+        taker_dust_round_shares=0.1,
+    )
+    up = book(0.30, 0.31)
+    down = book(0.60, 0.65)
+    rounded = PairWindow(config, "btc", "btc-updown-5m-0", 0, "up", "down", 0)
+    rounded.on_books(1, up, down)
+    assert rounded.on_trade(2, True, 0.30, 4.98, "SELL") is not None
+
+    fills = rounded.on_books(5, up, down)
+
+    assert [(fill["action"], fill["size"]) for fill in fills] == [
+        ("taker_buy", 5),
+    ]
+    assert rounded.inventory == {True: 4.98, False: 5}
+
+    far = PairWindow(config, "btc", "btc-updown-5m-0", 0, "up", "down", 0)
+    far.on_books(1, up, down)
+    assert far.on_trade(2, True, 0.30, 2.04, "SELL") is not None
+    assert not far.on_books(5, up, down)
+    assert far.inventory == {True: 2.04, False: 0}

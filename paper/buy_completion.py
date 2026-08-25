@@ -31,10 +31,18 @@ def plan_buy_completion(
             or elapsed_s < max(after, opened_elapsed_s) + config.action_latency_s):
         return None
     hedge_side = not open_side
-    shares = min(pairs.open_shares, config.max_inventory - inventory[hedge_side])
-    legs = sweep(up if hedge_side else down, "buy", shares)
+    capacity = config.max_inventory - inventory[hedge_side]
+    requested_shares = min(pairs.open_shares, capacity)
+    book = up if hedge_side else down
+    target_shares = requested_shares
+    dust = config.taker_dust_round_shares
+    if (dust > 0 and book.min_order_size - dust <= requested_shares
+            < book.min_order_size and capacity + 1e-9 >= book.min_order_size):
+        target_shares = book.min_order_size
+    legs = sweep(book, "buy", target_shares)
     if not legs:
         return None
+    shares = sum(leg.shares for leg in legs)
     total_cost = sum(leg.price * leg.shares + leg.fee for leg in legs)
     cap = (
         pairs.completion_price_cap(config.buy_sum_ceiling, shares)

@@ -346,7 +346,9 @@ class PairWindow:
         )
         book = up if hedge_side else down
         target_shares = requested_shares
-        if (book.min_order_size - 0.1 <= requested_shares < book.min_order_size
+        dust = self.config.taker_dust_round_shares
+        if (dust > 0 and book.min_order_size - dust <= requested_shares
+                < book.min_order_size
                 and self.inventory[hedge_side] + 1e-9 >= book.min_order_size):
             target_shares = book.min_order_size
         legs = sweep(book, "sell", target_shares)

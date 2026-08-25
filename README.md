@@ -16,26 +16,29 @@ simultaneous asks or direct CTF minting. Mint-and-ask is not the winner replica.
 
 | | |
 |---|---|
-| Host | `ubuntu@3.254.130.64` (AWS eu-west-1; currently geoblocked for orders) |
+| Host | `ubuntu@3.254.130.64` (AWS eu-west-1; paper/tooling only) |
 | SSH | `ssh -i ~/.ssh/pm_deploy ubuntu@3.254.130.64` |
 | Code | `~/project-fail` (deployed by `scp` from the local repo — **not** a git checkout) |
 | Python | `~/project-fail/.venv/bin/python` (always use the venv binary) |
-| Measured latency | Repeated CLOB `/time` GET **27–28 ms** median / **31–36 ms** p90; boundary-aligned discovery was **21–42 ms** and eight-token subscription **176–218 ms**; paper action proxy **65 ms** (authenticated POST/cancel unmeasured) |
+| Measured latency | CLOB `/time` GET **27–32 ms** median / **31–70 ms** p90 across probes; ordinary WS event age **8–13 ms** p50 / **9–24 ms** p90 with separate observed 0.4–3.8 s tails; paper action proxy **65 ms** (authenticated POST/cancel unmeasured) |
 
 **Both machines are paper-and-tooling only.** On 2026-08-25 Polymarket's live
 `/api/geoblock` endpoint returned `blocked=true` for both the UK/local machine
-(`GB`) and this Ireland box (`IE`). `DEPLOY_REGION=eu-west-1` is only a legacy
-topology label; it is not proof of geographic eligibility and must never
+(`GB`) and this Ireland box (`IE`). Polymarket's current documentation is
+internally inconsistent: the developer geoblock page classifies Ireland as
+frontend-only and calls `eu-west-1` the closest non-georestricted server region,
+while the Help Center lists Ireland as fully blocked. `DEPLOY_REGION=eu-west-1`
+is only a topology label; it is not proof of user eligibility and must never
 authorize order placement. Every place-mode component remains hard-disabled.
-A future launch requires a fresh official geoblock check and independently
-confirmed user eligibility; servers, VPNs, or proxies must not be used to
-circumvent a physical-location restriction.
+A future launch requires an unblocked live check, independently confirmed
+physical-location eligibility, and resolution of any documentation conflict;
+servers, VPNs, or proxies must not be used to circumvent a restriction.
 
 ### tmux sessions on the box
 
 | Session | Command it runs | What it is |
 |---|---|---|
-| `paper` | `python -m paper.run` | four queue-aware paired-bid hypotheses (writes `paper/paper.db`) |
+| `paper` | `python -m paper.run` | five queue-aware paired-bid hypotheses (writes `paper/paper.db`) |
 | `mintbot` | `MINTBOT_MODE=shadow python -m live.mintbot` | feed/quote soak only; place mode is currently forbidden |
 
 View: `tmux attach -t paper` (detach `Ctrl-b d`) or `tmux capture-pane -t paper -p | tail -20`.
@@ -99,6 +102,9 @@ endpoint before comparing total wallet economics. Paper's `rebate$` is only the
 current documented 20% fee-equivalent baseline because actual pool payouts can differ.
 `tools/latency_probe.py` measures GET and feed surfaces without calling an order
 endpoint, then compares the configured paper delay with twice the GET p90 proxy.
+`tools/order_latency_probe.py` is a separate dry-run-by-default, account-owner-run
+diagnostic for one bounded post-only order, targeted cancellation, and final
+zero-open-order verification; it never enables a strategy or cancels prior orders.
 `tools/wallet_timing.py` tests the stronger all-window-maker claim by separating
 pre-event, early, middle, late, and post-event volume, maker share, and full-span
 market participation for explicitly supplied wallets. `tools/wallet_cycles.py`
@@ -120,16 +126,16 @@ The legacy 49-arm board was retired after every execution-shaped pair/mint arm
 remained negative. V2-corrected forensics then identified the clean leader as a
 paired-bid accumulator. Strict inside-$0.98 won the first price-priority screen.
 Basket99 later reached winner-like pair cost/completion timing but left
-outcome-risk residue. The current board isolates cap, clip scale, and fee-aware
-final completion:
+outcome-risk residue. The current board isolates cap, late pair creation, and
+fee-aware completion:
 
 | Strategy | Mechanic |
 |---|---|
-| `strict98` | Strict control: improve both bids one tick; every completed pair costs ≤$0.98 |
 | `basket98` | Keep the cumulative completed-pair average ≤$0.98 |
 | `basket99` | Five-share maker baseline; keep cumulative completed-pair average ≤$0.99 |
-| `basket99x10` | Ten-share maker twin with a 40-share inventory ceiling |
-| `basket99tk10` | Ten-share twin; after T+120, cross displayed depth only when explicit taker fees preserve the ≤$0.99 basket average and the $1 minimum |
+| `basket99c180` | Basket99 twin that stops opening fresh pairs after T+180 but can finish an existing leg |
+| `basket99tk120` | Cutoff twin; from T+120, cross displayed depth only when explicit fees preserve the ≤$0.99 basket average and the $1 minimum |
+| `basket99tk180` | Same completion rule, delayed until T+180 to give maker quotes longer to fill |
 
 All five arms wait until T+30 seconds and until both token feeds have caught up
 before starting a pair. This deliberately gives up the subscription-backlog
@@ -144,9 +150,8 @@ ten-share arms are reported independently, maker fees/rebates are excluded, and
 official resolved Gamma outcomes settle each window. A window whose first usable
 paired books
 arrive more than ten seconds late is observed but not scored. Actions activate
-after a configurable 65 ms delay: approximately twice fresh Ireland GET p90,
-but still only a lower-bound proxy because authenticated POST/cancel is
-unmeasured. Existing orders can
+after a configurable 65 ms delay: a fixed ordinary-path proxy, not a measured
+authenticated POST/cancel distribution. Existing orders can
 still fill while a delayed cancellation is in flight, and stale post-only
 replacements are rejected. Once one token fills, its exact open-leg price caps
 or floors the opposite-token quote; the reported pair sums are FIFO-matched
@@ -214,12 +219,25 @@ Nonce-locked sends (4 assets share close boundaries). Minimal ABI encoder
 `0x4D97...6045`, pUSD collateral `0xC011...82DFB`, and CTF Exchange
 `0xE111...996B`. USDC.e is only an onramp input after the April 2026 migration.
 
-### Minter wallet (EOA — separate from the site account)
+### Minter wallet (EOA — separate from the site account) — DEPRECATED PATH
 `0xbb791E91F284E077a0a848C821690BB6A2dcfda7` — separate EOA, keys only in the
-box `.env`. Any legacy USDC.e must be wrapped into pUSD before it can serve as
-CLOB V2 collateral. V2 split/merge requires the collateral-adapter route; the
-old direct-CTF scripts are disabled until that route and its approvals are
-ported and verified. Mintbot place mode is also hard-disabled in code.
+box `.env`, still holding ~$891.93 legacy USDC.e + POL (consolidating it is a
+user money-moving decision, not a software task). Any legacy USDC.e must be
+wrapped into pUSD before it can serve as CLOB V2 collateral.
+
+**Architecture correction (2026-08-25):** the separate EOA was never a protocol
+requirement. Polymarket's official Relayer executes gasless split / merge /
+redeem / approvals **from the Safe/Proxy wallet itself**, and CLOB orders use
+that same wallet as funder (docs: trading/gasless, market-makers/getting-
+started). We built the EOA + raw-RPC path only because our code lacked Builder
+Relayer integration — an implementation shortcut, stated at the time as "the
+proxy cannot mint," which was wrong. **Decision: do not repair the direct-EOA
+place path.** If minting ever becomes evidence-backed, rebuild the thin
+on-chain part around the existing Safe + official Relayer (one account, one
+inventory ledger: `POLY_FUNDER Safe → Relayer split/merge/redeem → CLOB
+quote/fill`). Blockers for that route today: no Relayer/Builder API credentials
+on the box, and the USDC.e→pUSD collateral migration. The old direct-CTF
+scripts stay disabled; mintbot place mode stays hard-disabled in code.
 
 ### `live/lockbot.py` — RETIRED
 In-process taker set-arb. Lifetime: ~10 detections, 0 completed locks, ~$4.35

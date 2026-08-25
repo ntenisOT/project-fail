@@ -190,8 +190,6 @@ class PairWindow:
 
     def _mint_desired(self, now: float, up: OrderBook,
                       down: OrderBook) -> dict[tuple[bool, str], float]:
-        if now >= self.start + self.config.new_pair_cutoff_s:
-            return {}
         assert up.best_ask is not None and down.best_ask is not None
         prices = guarded_pair_prices(
             up.best_ask, down.best_ask,
@@ -199,6 +197,27 @@ class PairWindow:
             sum_floor=self.config.sell_sum_floor,
         )
         if prices is None:
+            return {}
+        open_side = self.sell_pairs.open_side
+        if open_side is not None:
+            side = not open_side
+            book = up if side else down
+            floor = self.config.sell_sum_floor - self.sell_pairs.worst_open_price(False)
+            completion_price = max(
+                prices[0 if side else 1], _tick_price(floor, book.tick, True),
+            )
+            completion_order = self.orders.get((side, "sell"))
+            if completion_order is not None and completion_order.price + 1e-9 >= floor:
+                reprice = should_reprice(
+                    (completion_order.price, completion_order.price),
+                    (completion_price, completion_price),
+                    now - completion_order.placed_at,
+                )
+                if not reprice:
+                    completion_price = completion_order.price
+            return ({(side, "sell"): completion_price}
+                    if 0 < completion_price < 1 else {})
+        if now >= self.start + self.config.new_pair_cutoff_s:
             return {}
         plan = plan_pair_quotes(
             minted=self.config.mint_sets,

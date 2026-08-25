@@ -397,17 +397,20 @@ class Mintbot:
     # ---- feed -------------------------------------------------------------
     async def ws_task(self):
         import websockets
+        retry_delay = 0.1
         while True:
             self.resub.clear()
             toks = list(self.tok_asset)
             if not toks:
                 await self.resub.wait()
                 continue
+            connected_at = None
             try:
                 self.books.clear()
                 async with websockets.connect(MKT_WS, ping_interval=None,
                                               open_timeout=12,
                                               close_timeout=0.1) as ws:
+                    connected_at = time.monotonic()
                     await ws.send(json.dumps({"assets_ids": toks, "type": "market"}))
                     last_ping = time.monotonic()
                     log.info("ws subscribed %d tokens (mode=%s mint=$%.0f spread=%.2f)",
@@ -449,8 +452,12 @@ class Mintbot:
             except SystemExit:
                 raise
             except Exception as e:
-                log.warning("ws reconnect: %s", type(e).__name__)
-                await asyncio.sleep(1)
+                if connected_at is not None and time.monotonic() - connected_at >= 5:
+                    retry_delay = 0.1
+                wait = retry_delay
+                retry_delay = min(2.0, retry_delay * 2)
+                log.warning("ws reconnect in %.1fs: %s: %s", wait, type(e).__name__, e)
+                await asyncio.sleep(wait)
 
     async def cancel_everything(self):
         if not (MODE == "place" and self.clob):

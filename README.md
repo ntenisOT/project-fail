@@ -107,7 +107,7 @@ signature, not one universal mechanism. The current board tests only:
 | `pair_carry20` | Join both best bids only when their sum is ≤0.99; hold completed sets through settlement |
 | `pair_churn20` | Same 20 ms decision cadence plus balanced best-ask resale when the ask sum is ≥1.01 |
 | `pair_inside20` | Improve both maker prices by one tick when pair sums remain ≤0.99/≥1.01, trading margin for queue priority |
-| `mint_parity20` | Paper twin of mintbot: opposite-ask +2¢ anchors, five-tick/15 s residence, ten-tick escape, and asymmetric-fill stop |
+| `mint_cycle20` | Minted inventory with opposite-ask +2¢ anchors; after one side fills, quote only the other side above the realized pair floor before starting another clip |
 
 The simulator reconstructs public price levels from authoritative snapshots and
 `price_change` deltas. Joining the best price puts the displayed level size in
@@ -155,10 +155,11 @@ priority with a five-tick/15-second band (10-tick adverse override), and
 stops quoting after asymmetric fills. A joint-sum
 floor constrains a quoted pair but cannot guarantee paired fills. Position
 polling still cannot reconstruct exact fill prices, so reported PnL is not yet
-authoritative. `mint_parity20` now shares this exact price planner, cadence,
-residence policy, and stop rule; mintbot logs measured average residence and
-the share below 15 seconds. Keep both in shadow/paper until the remaining gates
-and strategy edge are proven.
+authoritative. `mint_cycle20` shares the same anchor and residence policy but,
+unlike the shadow bot, uses immediate simulated fills to complete an asymmetric
+clip. The shadow bot still stops after an inferred imbalance because its delayed
+position poll cannot prove fill price or order ownership. Keep both out of place
+mode until authenticated receipts and strategy edge are proven.
 
 ### `live/chain.py` — Polygon layer (no web3 dependency)
 Raw JSON-RPC + eth_account. RPC pool w/ fallback (reads) but **single-attempt
@@ -240,6 +241,7 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 18 | 08-25 03:xx | retire zero-edge taker hedge; add one-tick maker-priority churn and neutral/outcome PnL decomposition |
 | 19 | 08-25 03:xx | replace fast best-ask mint proxy with the shared mintbot quote planner and residence policy |
 | 20 | 08-25 03:xx | bound WebSocket close handshakes to 100 ms and remove mintbot's empty-token one-second poll |
+| 21 | 08-25 03:xx | replace rejected asymmetric-stop mint paper arm with one-leg cycle completion; bound transient WebSocket retry from 100 ms |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

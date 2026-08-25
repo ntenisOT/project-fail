@@ -149,7 +149,7 @@ class FocusedPairTests(unittest.TestCase):
         self.assertAlmostEqual(metrics["taker_fees"], fee)
         self.assertAlmostEqual(metrics["unmatched_end"], 0)
 
-    def test_mint_parity_anchors_and_stops_after_asymmetric_fill(self) -> None:
+    def test_mint_cycle_anchors_and_completes_asymmetric_fill(self) -> None:
         config = PairConfig(
             "mint", "mint", 0.5, action_latency_s=0,
             new_pair_start_s=3, new_pair_cutoff_s=275,
@@ -164,7 +164,11 @@ class FocusedPairTests(unittest.TestCase):
         self.assertEqual(window.orders[(False, "sell")].price, 0.62)
         window.on_trade(3.1, True, 0.42, 5, "BUY")
         window.on_books(3.5, up, down)
-        self.assertFalse(window.orders)
+        self.assertNotIn((True, "sell"), window.orders)
+        self.assertEqual(window.orders[(False, "sell")].price, 0.62)
+        window.on_trade(3.6, False, 0.62, 5, "BUY")
+        window.on_books(4.0, up, down)
+        self.assertEqual(set(window.orders), {(True, "sell"), (False, "sell")})
 
     def test_churn_buys_below_one_and_sells_above_one(self) -> None:
         window = PairWindow(PairConfig("churn", "churn", 0.6, action_latency_s=0),

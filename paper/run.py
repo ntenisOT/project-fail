@@ -42,7 +42,7 @@ STRATEGIES = (
                action_latency_s=ACTION_LATENCY_S),
     PairConfig("pair_inside20", "churn", 0.02,
                action_latency_s=ACTION_LATENCY_S, improve_ticks=1),
-    PairConfig("mint_parity20", "mint", 0.5,
+    PairConfig("mint_cycle20", "mint", 0.5,
                action_latency_s=ACTION_LATENCY_S,
                sell_sum_floor=1.005, new_pair_start_s=3,
                new_pair_cutoff_s=275, mint_anchor_spread=0.02),
@@ -204,17 +204,20 @@ def handle_event(event: dict[str, object]) -> None:
 
 
 async def market_task() -> None:
+    retry_delay = 0.1
     while True:
         S.tokens_changed.clear()
         tokens = list(S.tokens)
         if not tokens:
             await S.tokens_changed.wait()
             continue
+        connected_at: float | None = None
         try:
             S.books.clear()
             async with websockets.connect(
                 MKT_WS, ping_interval=None, open_timeout=12, close_timeout=0.1,
             ) as ws:
+                connected_at = time.monotonic()
                 await ws.send(json.dumps({"assets_ids": tokens, "type": "market"}))
                 last_ping = time.monotonic()
                 log.info("market ws subscribed %d tokens", len(tokens))
@@ -239,8 +242,13 @@ async def market_task() -> None:
                         if isinstance(event, dict):
                             handle_event(event)
         except Exception as exc:
-            log.warning("market ws reconnect: %s", exc.__class__.__name__)
-            await asyncio.sleep(2)
+            if connected_at is not None and time.monotonic() - connected_at >= 5:
+                retry_delay = 0.1
+            wait = retry_delay
+            retry_delay = min(2.0, retry_delay * 2)
+            log.warning("market ws reconnect in %.1fs: %s: %s",
+                        wait, exc.__class__.__name__, exc)
+            await asyncio.sleep(wait)
 
 
 async def quote_task() -> None:

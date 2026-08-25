@@ -392,14 +392,16 @@ class Mintbot:
     async def ws_task(self):
         import websockets
         while True:
-            while not self.tok_asset:
-                await asyncio.sleep(1)
             self.resub.clear()
             toks = list(self.tok_asset)
+            if not toks:
+                await self.resub.wait()
+                continue
             try:
                 self.books.clear()
                 async with websockets.connect(MKT_WS, ping_interval=None,
-                                              open_timeout=12) as ws:
+                                              open_timeout=12,
+                                              close_timeout=0.1) as ws:
                     await ws.send(json.dumps({"assets_ids": toks, "type": "market"}))
                     last_ping = time.monotonic()
                     log.info("ws subscribed %d tokens (mode=%s mint=$%.0f spread=%.2f)",
@@ -410,7 +412,9 @@ class Mintbot:
                             await ws.send("PING")
                             last_ping = time.monotonic()
                         try:
-                            raw = await asyncio.wait_for(ws.recv(), timeout=min(5, max(0.1, 10-elapsed)))
+                            raw = await asyncio.wait_for(
+                                ws.recv(), timeout=min(0.5, max(0.1, 10 - elapsed)),
+                            )
                         except asyncio.TimeoutError:
                             continue                       # re-check resub fast
                         if raw == "PONG":

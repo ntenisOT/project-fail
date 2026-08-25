@@ -212,7 +212,9 @@ async def market_task() -> None:
             continue
         try:
             S.books.clear()
-            async with websockets.connect(MKT_WS, ping_interval=None, open_timeout=12) as ws:
+            async with websockets.connect(
+                MKT_WS, ping_interval=None, open_timeout=12, close_timeout=0.1,
+            ) as ws:
                 await ws.send(json.dumps({"assets_ids": tokens, "type": "market"}))
                 last_ping = time.monotonic()
                 log.info("market ws subscribed %d tokens", len(tokens))

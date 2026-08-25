@@ -403,6 +403,7 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 64 | 08-25 16:20 | retire the repeatedly loss-making 20-set mint arm; add an opt-in T+270 near-minimum buy-completion twin after Gen63 locked one late pair but exposed a 4.98-share minimum dead zone |
 | 65 | 08-25 16:56 | let the dust twin exceed its per-token inventory cap by at most 0.1 share after Gen64 proved saturation made it inert; replace the redundant T+180 arm with a $1.00 mint-repair floor A/B |
 | 66 | 08-25 17:29 | accept only the configured dust allowance at settlement and isolate a broken paper arm instead of killing the cohort; retain the $0.95/$1.00 A/B because the second $0.95 repair capped a $2.30 unmatched loss at $0.19 |
+| 67 | 08-25 17:40 | preserve every strategy parameter; after another 1013 with shallow application queues, add frame/event counts, JSON parse peaks, and event-loop scheduling lag to localize transport backpressure without guessing at a latency constant |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

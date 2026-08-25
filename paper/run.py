@@ -28,6 +28,7 @@ from live.feed_pump import (
     WebSocketLike,
     subscription_messages,
 )
+from live.loop_health import EventLoopHealth
 from paper.ladder_engine import LadderWindow
 from paper.ledger_writer import LedgerWriter
 from paper.market_metadata import ActiveMarket, fetch_active_market
@@ -118,6 +119,7 @@ class State:
         self.feed_health = FeedHealth()
         self.feed_pump: FeedPump | None = None
         self.feed_pump_stats = FeedPumpStats()
+        self.loop_health = EventLoopHealth()
         self.fresh_tokens: set[str] = set()
         self.stale_assets: set[str] = set()
         self.reference_feed = ReferenceFeed(ASSETS)
@@ -435,10 +437,11 @@ async def heartbeat_task() -> None:
                      for window in windows.values())
         feed_queue = S.feed_pump_stats.snapshot(reset_interval=True)
         log.info("hb | events=%s fills=%s active_orders=%d pending_resolution=%d "
-                 "feed_paused=%s feed=%s feed_queue=%s reference=%s errors=%s",
+                 "feed_paused=%s feed=%s feed_queue=%s loop=%s reference=%s errors=%s",
                  dict(S.events), active, orders, len(S.pending),
                  sorted(S.stale_assets),
                  S.feed_health.snapshot(reset_interval=True), feed_queue,
+                 S.loop_health.snapshot(reset_interval=True),
                  S.reference_feed.snapshot(),
                  dict(S.resolution_errors))
 
@@ -474,7 +477,8 @@ async def main() -> None:
     try:
         await asyncio.gather(window_task(), settlement_task(), market_task(),
                              S.reference_feed.run(_record_reference), quote_task(),
-                             heartbeat_task(), report_task(), kill_task(),
+                             S.loop_health.run(), heartbeat_task(), report_task(),
+                             kill_task(),
                              asyncio.to_thread(
                                  S.notify.send,
                                  f"focused pair paper started ({len(names)} strategies, "

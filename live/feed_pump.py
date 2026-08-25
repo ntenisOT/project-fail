@@ -29,6 +29,13 @@ class FeedPumpStats:
         self.interval_high_water = 0
         self.residence_max_ms = 0.0
         self.interval_residence_max_ms = 0.0
+        self.frames = 0
+        self.interval_frames = 0
+        self.frame_events = 0
+        self.interval_frame_events = 0
+        self.frame_event_max = 0
+        self.parse_max_ms = 0.0
+        self.interval_parse_max_ms = 0.0
 
     def observe_depth(self, depth: int) -> None:
         self.high_water = max(self.high_water, depth)
@@ -40,16 +47,35 @@ class FeedPumpStats:
             self.interval_residence_max_ms, residence_ms,
         )
 
-    def snapshot(self, *, reset_interval: bool = False) -> dict[str, int]:
+    def observe_frame(self, events: int, parse_ms: float) -> None:
+        self.frames += 1
+        self.interval_frames += 1
+        self.frame_events += events
+        self.interval_frame_events += events
+        self.frame_event_max = max(self.frame_event_max, events)
+        self.parse_max_ms = max(self.parse_max_ms, parse_ms)
+        self.interval_parse_max_ms = max(self.interval_parse_max_ms, parse_ms)
+
+    def snapshot(self, *, reset_interval: bool = False) -> dict[str, int | float]:
         snapshot = {
             "hwm": self.high_water,
             "interval_hwm": self.interval_high_water,
             "residence_max_ms": round(self.residence_max_ms),
             "interval_residence_max_ms": round(self.interval_residence_max_ms),
+            "frames": self.frames,
+            "interval_frames": self.interval_frames,
+            "frame_events": self.frame_events,
+            "interval_frame_events": self.interval_frame_events,
+            "frame_event_max": self.frame_event_max,
+            "parse_max_ms": round(self.parse_max_ms, 3),
+            "interval_parse_max_ms": round(self.interval_parse_max_ms, 3),
         }
         if reset_interval:
             self.interval_high_water = 0
             self.interval_residence_max_ms = 0.0
+            self.interval_frames = 0
+            self.interval_frame_events = 0
+            self.interval_parse_max_ms = 0.0
         return snapshot
 
 
@@ -97,13 +123,20 @@ class FeedPump:
                 continue
             if raw == "PONG":
                 continue
+            parse_started = time.monotonic()
             try:
                 payload = json.loads(raw)
             except (json.JSONDecodeError, UnicodeDecodeError):
                 continue
-            for event in payload if isinstance(payload, list) else [payload]:
-                if not isinstance(event, dict):
-                    continue
+            events = [
+                event for event in payload if isinstance(event, dict)
+            ] if isinstance(payload, list) else (
+                [payload] if isinstance(payload, dict) else []
+            )
+            self.stats.observe_frame(
+                len(events), (time.monotonic() - parse_started) * 1000,
+            )
+            for event in events:
                 try:
                     self.queue.put_nowait((event, time.monotonic()))
                 except asyncio.QueueFull as exc:
@@ -142,5 +175,5 @@ class FeedPump:
                     task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    def snapshot(self, *, reset_interval: bool = False) -> dict[str, int]:
+    def snapshot(self, *, reset_interval: bool = False) -> dict[str, int | float]:
         return self.stats.snapshot(reset_interval=reset_interval)

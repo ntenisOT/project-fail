@@ -295,6 +295,23 @@ bug is also fixed and covered by one focused test.
   single-pair control, to test whether repeated churn compounds residue. Maker
   activation now also enforces the market's share minimum and available token
   inventory; this prevents impossible dust-sized or under-collateralized posts.
+- Gen59 rejected both a one-pair cap as a profitability fix and the existing
+  timed repair. Across three official BTC windows, `mintcycle5` realized
+  -$1.70 with +$0.80 neutral PnL and a -$1.70 adverse floor; `mintcycle20`
+  realized -$3.85 with +$1.15 neutral PnL and a -$3.85 adverse floor. The cap
+  reduced tail damage, but its first five-share sale was still toxic when that
+  outcome won. In the clean profitable window it stopped after one $1.03 pair
+  for +$0.15 while the larger arm completed four pairs for +$0.60. In the
+  third window it again stopped at +$0.15 while the larger arms reopened and
+  stranded five shares of the winning Down token. `minthedge60p95` finished at
+  -$4.28: three repair episodes produced one execution, two execution blocks,
+  and three price-floor blocks. Its best observed fee-inclusive repair sum was
+  $0.953, yet the one executed repair still made it worse than the baseline.
+  The exposure classifier also passed its direct A/B: a 979 ms event after
+  `mintcycle5` was flat left that arm clean while `mintcycle20`, still carrying
+  an open leg, remained lagged. Gen60 therefore changes no trading parameter.
+  It records actual maker order age and signed 1/5/15-second midpoint markouts
+  so the next repricing or fair-value gate is based on measured pick-off cost.
 
 A 15-minute generation is realistic for rejecting a mechanism or catching a
 runtime defect. It is not realistic for estimating edge. Promotion requires at

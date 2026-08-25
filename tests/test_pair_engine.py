@@ -149,6 +149,21 @@ class FocusedPairTests(unittest.TestCase):
         self.assertEqual(metrics["exposed_stale_market_events"], 1)
         self.assertEqual(metrics["max_exposed_stale_event_lag_ms"], 800)
 
+    def test_pair_window_persists_fill_age_and_signed_markout(self) -> None:
+        config = PairConfig(
+            "probe", "accumulate", 0.01, action_latency_s=0, max_inventory=5,
+        )
+        window = PairWindow(config, "btc", "btc-updown-5m-0", 0, "up", "down", 0)
+        window.on_books(1, book(0.48, 0, 0.52, 5), book(0.49, 0, 0.51, 5))
+        window.on_trade(1.2, True, 0.48, 5, "SELL")
+        window.on_books(2.2, book(0.50, 5, 0.54, 5), book(0.46, 5, 0.50, 5))
+
+        _, metrics = window.settle(300, 1)
+
+        self.assertAlmostEqual(metrics["maker_fill_ages"][0][0], 0.2)
+        self.assertEqual(metrics["maker_fill_ages"][0][1], 5)
+        self.assertAlmostEqual(metrics["maker_markouts"]["1"][0][0], 0.04)
+
     def test_settlement_scores_valid_strategies_independently(self) -> None:
         valid = PairWindow(PairConfig("valid", "accumulate", 0.01, 0),
                            "btc", "btc-updown-5m-0", 0, "up", "down", 0)

@@ -7,6 +7,7 @@ import math
 from live.mint_quotes import guarded_pair_prices, plan_pair_quotes, should_reprice
 from paper.buy_completion import plan_buy_completion
 from paper.exposure import ExposureTimeline
+from paper.fill_probe import FillProbe
 from paper.order_book import OrderBook
 from paper.pair_lots import PairLots
 from paper.pair_types import PairConfig, PendingRequote, RestingOrder
@@ -73,6 +74,7 @@ class PairWindow:
         self.sell_hedge_shares = 0.0
         self.sell_hedge_best_pair_sum = 0.0
         self.exposure = ExposureTimeline()
+        self.fill_probe = FillProbe()
 
     def _sync_exposure(self, now: float) -> None:
         open_leg = (self.buy_pairs.open_side is not None
@@ -382,6 +384,7 @@ class PairWindow:
 
     def on_books(self, now: float, up: OrderBook,
                  down: OrderBook) -> list[dict[str, float | str]]:
+        self.fill_probe.observe(now, up, down)
         if self.first_books_at is None:
             self.first_books_at = now
             if now > self.start + 10:
@@ -445,6 +448,10 @@ class PairWindow:
         fill = min(order.size, executable, max(0.0, capacity))
         if fill <= 0:
             return None
+        self.fill_probe.record(
+            now, side_up, order_side, order.price, fill,
+            now - order.placed_at,
+        )
         order.size -= fill
         notional = fill * order.price
         self.filled_shares += fill
@@ -547,6 +554,7 @@ class PairWindow:
             "sell_pair_proceeds": self.sell_pairs.paired_value,
             "sell_pair_delays": self.sell_pairs.completion_delays,
         }
+        metrics.update(self.fill_probe.metrics())
         if self.config.taker_hedge_after_s is not None:
             metrics.update({
                 "sell_hedge_due_episodes": self.sell_hedge_due_episodes,

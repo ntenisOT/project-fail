@@ -8,6 +8,7 @@ import sqlite3
 import time
 
 from paper.feed_quality import snapshots as feed_quality_snapshots
+from paper.fill_quality import snapshots as fill_quality_snapshots
 from paper.pair_lots import weighted_quantile
 
 
@@ -310,6 +311,21 @@ def text(db_path: str = "paper/paper.db") -> str:
             f"{quality_row.worst_pnl:>+10.2f}{quality_row.unmatched:>8.1f}"
             f"{quality_row.max_lag_ms:>8.0f}ms"
         )
+    fill_rows = fill_quality_snapshots(db)
+    if fill_rows:
+        out.extend((
+            "maker fill diagnostics; positive markout is favorable, negative is adverse selection",
+            f"{'strategy':<{strategy_width}}{'shares':>7}{'age50':>8}{'age90':>8}"
+            f"{'m1c':>8}{'cov1':>7}{'m5c':>8}{'cov5':>7}{'m15c':>8}{'cov15':>7}",
+        ))
+        for fill_row in fill_rows:
+            out.append(
+                f"{fill_row.strategy:<{strategy_width}}{fill_row.shares:>7.1f}"
+                f"{fill_row.age_p50_s:>7.1f}s{fill_row.age_p90_s:>7.1f}s"
+                f"{fill_row.markout_1_cents:>+8.2f}{fill_row.coverage_1:>7.0%}"
+                f"{fill_row.markout_5_cents:>+8.2f}{fill_row.coverage_5:>7.0%}"
+                f"{fill_row.markout_15_cents:>+8.2f}{fill_row.coverage_15:>7.0%}"
+            )
     out.extend((
         "asset breakdown; pnl/neutral/worst keep directional luck and concentration visible",
         f"{'strategy':<{strategy_width}}{'asset':<6}{'wnd':>5}{'pnl$':>10}"

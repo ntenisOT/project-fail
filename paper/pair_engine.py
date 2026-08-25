@@ -11,7 +11,7 @@ from paper.fill_probe import FillProbe
 from paper.order_book import OrderBook
 from paper.pair_lots import PairLots
 from paper.pair_types import PairConfig, PendingRequote, RestingOrder
-from paper.taker import crypto_maker_rebate, sweep
+from paper.taker import crypto_maker_rebate, sweep, sweep_available
 
 
 def _tick_price(value: float, tick: float, round_up: bool) -> float:
@@ -71,6 +71,7 @@ class PairWindow:
         self.sell_hedge_execution_blocks = 0
         self.sell_hedge_floor_blocks = 0
         self.sell_hedge_completions = 0
+        self.sell_hedge_partial_executions = 0
         self.sell_hedge_shares = 0.0
         self.sell_hedge_best_pair_sum = 0.0
         self.exposure = ExposureTimeline()
@@ -340,13 +341,23 @@ class PairWindow:
             self.sell_hedge_due_episodes += 1
             self.sell_hedge_due_seen = True
         hedge_side = not open_side
-        shares = min(self.sell_pairs.open_shares, self.inventory[hedge_side])
-        legs = sweep(up if hedge_side else down, "sell", shares)
+        requested_shares = min(
+            self.sell_pairs.open_shares, self.inventory[hedge_side],
+        )
+        book = up if hedge_side else down
+        target_shares = requested_shares
+        if (book.min_order_size - 0.1 <= requested_shares < book.min_order_size
+                and self.inventory[hedge_side] + 1e-9 >= book.min_order_size):
+            target_shares = book.min_order_size
+        legs = sweep(book, "sell", target_shares)
+        if not legs:
+            legs = sweep_available(book, "sell", target_shares)
         if not legs:
             if not self.sell_hedge_execution_seen:
                 self.sell_hedge_execution_blocks += 1
                 self.sell_hedge_execution_seen = True
             return []
+        shares = sum(leg.shares for leg in legs)
         net_cash = sum(leg.price * leg.shares - leg.fee for leg in legs)
         candidate_sum = (
             self.sell_pairs.worst_open_price(buying=False) + net_cash / shares
@@ -378,7 +389,10 @@ class PairWindow:
                 "action": "taker_sell", "price": leg.price, "size": leg.shares,
                 "signed_cash": net_cash, "outcome_up": int(hedge_side),
             })
-        self.sell_hedge_completions += 1
+        if self.sell_pairs.open_side is None:
+            self.sell_hedge_completions += 1
+        else:
+            self.sell_hedge_partial_executions += 1
         self.sell_hedge_shares += shares
         return records
 
@@ -561,6 +575,7 @@ class PairWindow:
                 "sell_hedge_execution_blocks": self.sell_hedge_execution_blocks,
                 "sell_hedge_floor_blocks": self.sell_hedge_floor_blocks,
                 "sell_hedge_completions": self.sell_hedge_completions,
+                "sell_hedge_partial_executions": self.sell_hedge_partial_executions,
                 "sell_hedge_shares": self.sell_hedge_shares,
                 "sell_hedge_best_pair_sum": self.sell_hedge_best_pair_sum,
             })

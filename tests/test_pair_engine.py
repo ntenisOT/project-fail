@@ -332,6 +332,49 @@ class FocusedPairTests(unittest.TestCase):
         expected_sum = 0.70 + (5 * 0.27 - fee) / 5
         self.assertAlmostEqual(metrics["sell_hedge_best_pair_sum"], expected_sum)
 
+    def test_mint_hedge_uses_partial_depth_above_minimum(self) -> None:
+        config = PairConfig(
+            "partial", "mint", 0.01, action_latency_s=0,
+            mint_sets=10, clip_shares=10, sell_sum_floor=1.005,
+            taker_hedge_after_s=5,
+        )
+        window = PairWindow(config, "btc", "btc-updown-5m-0", 0, "up", "down", 0)
+        up = book(0.58, 10, 0.60, 10)
+        down = book(0.43, 5, 0.44, 10)
+        window.on_books(1.0, up, down)
+        window.on_trade(1.1, True, 0.61, 10, "BUY")
+
+        fills = window.on_books(6.1, up, down)
+
+        self.assertEqual([(fill["action"], fill["size"]) for fill in fills],
+                         [("taker_sell", 5)])
+        self.assertEqual(window.inventory, {True: 0, False: 5})
+        _, metrics = window.settle(300, 0)
+        self.assertEqual(metrics["sell_hedge_partial_executions"], 1)
+        self.assertEqual(metrics["sell_hedge_completions"], 0)
+        self.assertEqual(metrics["sell_hedge_shares"], 5)
+
+    def test_mint_hedge_rounds_only_near_minimum_dust(self) -> None:
+        config = PairConfig(
+            "dust-repair", "mint", 0.01, action_latency_s=0,
+            mint_sets=5, sell_sum_floor=1.005, taker_hedge_after_s=5,
+        )
+        window = PairWindow(config, "btc", "btc-updown-5m-0", 0, "up", "down", 0)
+        up = book(0.58, 5, 0.60, 5)
+        down = book(0.43, 5, 0.44, 5)
+        window.on_books(1.0, up, down)
+        window.on_trade(1.1, True, 0.61, 4.999, "BUY")
+
+        fills = window.on_books(6.1, up, down)
+
+        self.assertEqual([(fill["action"], fill["size"]) for fill in fills],
+                         [("taker_sell", 5)])
+        self.assertAlmostEqual(window.inventory[True], 0.001)
+        self.assertEqual(window.inventory[False], 0)
+        _, metrics = window.settle(300, 0)
+        self.assertEqual(metrics["sell_hedge_partial_executions"], 1)
+        self.assertAlmostEqual(metrics["unmatched_end"], 0.001)
+
     def test_mint_flatten_crosses_below_floor_after_action_delay(self) -> None:
         config = PairConfig(
             "flatten", "mint", 0.01, action_latency_s=0.065,

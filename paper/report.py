@@ -248,6 +248,7 @@ def _hedge_lines(db: sqlite3.Connection, strategies: list[str]) -> list[str]:
         lines.append(
             f"mint hedge | {strategy} due={metrics['sell_hedge_due_episodes']:.0f} "
             f"completed={metrics.get('sell_hedge_completions', 0):.0f} "
+            f"partial={metrics.get('sell_hedge_partial_executions', 0):.0f} "
             f"execution-blocked={metrics.get('sell_hedge_execution_blocks', 0):.0f} "
             f"floor-blocked={metrics.get('sell_hedge_floor_blocks', 0):.0f} "
             f"shares={metrics.get('sell_hedge_shares', 0):.1f} "

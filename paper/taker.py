@@ -44,3 +44,14 @@ def sweep(book: OrderBook, side: Literal["buy", "sell"], shares: float) -> list[
         if remaining <= 1e-9:
             break
     return legs if remaining <= 1e-9 else []
+
+
+def sweep_available(
+    book: OrderBook, side: Literal["buy", "sell"], max_shares: float,
+) -> list[TakerLeg]:
+    """Fill as much displayed depth as possible without posting below minimum."""
+    levels = book.asks if side == "buy" else book.bids
+    shares = min(max_shares, sum(levels.values()))
+    if shares + 1e-9 < book.min_order_size:
+        return []
+    return sweep(book, side, shares)

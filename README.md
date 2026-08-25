@@ -119,18 +119,22 @@ from outcome alignment and screen public-tape signals after slippage and fees.
 order so aggregate token averages cannot disguise completion coverage, pair-cost
 distribution, residual imbalance, or pairing delay.
 
-Latest bounded refresh (2026-08-25 05:55–11:50 UTC, BTC): current leader
-`0xce50…` made +$4,667 but paired only 53.8% of bought shares and left 37,044
-residual shares. `0x0cb…` made +$2,929 with a fee-inclusive $1.020 average pair,
-54.9% completion, and 86,104 residual shares. High-maker `0x21f4…` completed
-89.9% with 24 s / 66 s FIFO d50/d90, but still paid $1.005 per pair; its profit
-was directional. None showed direct split/merge value at the trading address.
-The corrected local ladder arm was rejected for repeated directional residue;
-neither pure accumulation nor direct minting is a durable winner claim.
+Latest bounded refresh separates two regimes. During 2026-08-23 15:25 through
+08-24 15:20 UTC, `0xb27…` made +$18,844 on $1.28m as a 99.5%-maker paired-bid
+accumulator: 96.8% completion, $0.980 average pair, and 9 s / 43 s FIFO d50/d90.
+Its neutral mechanics made about +$30,251 while direction cost about $11,106.
+During the following 24 hours, `0x0cb…` made +$5,894 on $516k primarily from
+early directional flow: about +$15,858 direction versus -$9,963 neutral. Its
+T+30/T+60 calls underperformed the contemporaneous public favorite. A public
+T+60 favorite screen changed from -3.83 cents/share in the prior day to +3.89
+cents/share in the current day after optimistic 1% slippage and modeled fees.
+There is no durable fixed momentum rule, no observed direct split value at these
+trading addresses, and no single strategy shared by every current PnL leader.
+See `reports/2026-08-25-gen62-winner-regimes.md`.
 
 ---
 
-## 3. Focused pair-inventory experiment (five strategies)
+## 3. Focused pair-inventory experiment (six strategies)
 
 The legacy 49-arm board was retired after every execution-shaped pair/mint arm
 remained negative. V2-corrected forensics then identified the clean leader as a
@@ -143,11 +147,12 @@ count, and fee-aware completion:
 |---|---|
 | `basket99` | Five-share maker baseline; keep cumulative completed-pair average ≤$0.99 |
 | `basket99c180` | Basket99 twin that stops opening fresh pairs after T+180 but can finish an existing leg |
+| `basket99t270` | Basket99 twin that waits until T+270, then takes only a displayed complement whose fee-inclusive cost preserves the rolling $0.99 cap |
 | `mintcycle5` | One five-share complete-set pair per window; tests whether repeated mint churn compounds residue risk |
 | `mintcycle20` | Queue-aware $20 complete-set control: paired maker asks with a $1.005 joint floor, realistic 65 ms actions, and T+30/T+240 entry bounds |
-| `minthedge60p95` | Mintcycle twin that gives maker completion 60 seconds, then crosses displayed depth only when the fee-inclusive pair sum remains at least $0.95 |
+| `mintrepair5p95` | Five-set mint twin that gives maker completion 60 seconds, then reduces executable residual depth only above a fee-inclusive $0.95 pair floor; near-minimum dust may round up by at most 0.1 share |
 
-The next measurement generation adds the official
+The observer records the official
 `crypto_prices_twap_sixty` RTDS stream as a **shadow-only** reference. It stores
 the exact E18 value plus observation and local-receive timestamps, reconstructs
 only samples causally available at T+30, and reports every missing or late
@@ -157,11 +162,13 @@ five-minute crypto markets ([Chainlink TWAP](https://docs.polymarket.com/market-
 [prediction changelog](https://docs.polymarket.com/changelog/predictions)).
 
 Market discovery carries each market's Gamma `orderMinSize` into maker and
-taker simulation. A partial residual below that share minimum cannot be posted
-or force-filled; five-share low-price orders are not incorrectly rejected on
-dollar notional.
+taker simulation. A partial residual below that share minimum cannot normally
+be posted or force-filled. The repair arm may submit exactly the minimum only
+when the open residual is within 0.1 share of it, deliberately flipping at most
+0.1 share of dust instead of retaining almost five shares. Five-share low-price
+orders are not incorrectly rejected on dollar notional.
 
-All five arms wait until T+30 seconds and until both token feeds have caught up
+All six arms wait until T+30 seconds and until both token feeds have caught up
 before starting a pair. This deliberately gives up the subscription-backlog
 period; a stale causal update freezes decisions and labels exposed settlement
 economics `lagged` rather than removing the window.
@@ -392,6 +399,7 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 60 | 08-25 13:40 | preserve the strategy board; add share-weighted maker fill age and signed 1/5/15-second midpoint markouts before testing repricing or a signal gate |
 | 61 | 08-25 14:55 | preserve all trading behavior; collect the official 60-second Chainlink TWAP causally at T+30 and audit exact-opening coverage before designing any signal gate |
 | 62 | 08-25 15:27 | decouple official market outcomes from strategy validity so reconnect-invalidated windows remain usable for the shadow-signal audit; no quote changes |
+| 63 | 08-25 15:51 | add a T+270 fee-aware Basket99 completion A/B and replace the inert full-depth mint hedge with a five-set partial-depth/dust repair twin; keep signal shadow-only |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

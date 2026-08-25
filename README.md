@@ -298,7 +298,7 @@ No place-mode or approval command is published while the launch gate is closed.
 `PAPER_ACTION_LATENCY_MS`, `PAPER_MAX_EVENT_LAG_MS` ·
 optional `POLYGON_RPC_URL`,
 `MINT_USD`, `MINT_DAY_CAP`, `MINT_SPREAD`, `MINT_BOOK_FRESH_MS`,
-`LIVE_EXECUTOR_MODE`, `MINTBOT_MODE`.
+`MINTBOT_ASSETS`, `LIVE_EXECUTOR_MODE`, `MINTBOT_MODE`.
 
 ---
 
@@ -353,7 +353,7 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 46 | 08-25 09:11 | replace the nearly redundant Basket985 arm with 5-share versus 10-share Basket99 twins and a fee-aware T+120 taker-completion twin; retain strict and Basket98 controls |
 | 47 | 08-25 09:49 | reject the 10-share arms after five windows; keep 5-share Basket99 control and isolate a T+180 new-pair cutoff from fee-aware completion at T+120/T+180 |
 | 48 | 08-25 10:05 | retain Basket98/Basket99/cutoff controls; replace redundant taker twins with a stable two-level replenishing ladder and an honest queue-aware mint-cycle control |
-| 49 | 08-25 10:3x | preserve the Gen48 board; decouple WebSocket draining from ordered processing after another real 1013 slow-consumer disconnect; share the pump with mintbot and require fresh timestamped updates for each outcome token |
+| 49 | 08-25 10:33 | preserve the Gen48 board; decouple WebSocket draining from ordered processing after another real 1013 slow-consumer disconnect; share the pump with mintbot and require fresh timestamped updates for each outcome token |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

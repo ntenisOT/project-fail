@@ -52,6 +52,13 @@ log = logging.getLogger("mintbot")
 MODE = os.environ.get("MINTBOT_MODE", "shadow")
 ASSETS = {"btc": "btc-updown-5m", "eth": "eth-updown-5m",
           "sol": "sol-updown-5m", "xrp": "xrp-updown-5m"}
+requested_assets = os.environ.get("MINTBOT_ASSETS")
+if requested_assets:
+    wanted_assets = {item.strip() for item in requested_assets.split(",")}
+    ASSETS = {asset: prefix for asset, prefix in ASSETS.items()
+              if asset in wanted_assets}
+    if not ASSETS:
+        raise RuntimeError("MINTBOT_ASSETS selected no supported assets")
 MKT_WS = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 KILL = "paper/KILL"
 DB = "live/mintbot.db"

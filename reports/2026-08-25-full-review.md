@@ -169,6 +169,18 @@ bug is also fixed and covered by one focused test.
   the real hole was a global freshness timestamp. Gen49 requires recent
   timestamped updates for both outcome-token caches so unrelated traffic cannot
   bless a stale quote pair.
+- The shared pump held only 88 queued events when mintbot's eight-token socket
+  still received another server-side `1013`. Paper's two-token BTC socket stayed
+  connected. Gen49 therefore narrows the shadow mintbot to the same BTC cohort;
+  scaling back to four assets requires clean evidence or one connection per
+  market, not a larger in-process queue.
+- Gen48's one later officially scored window was also tail-exposed, so it is not
+  clean edge evidence, but its mechanics expose the core small-bank risk. The
+  two-level ladder filled 10 Down shares at a $0.465 weighted price at T+35 and
+  never completed an Up leg: neutral +$0.35 but adverse settlement -$4.65. The
+  mint control sold a five-share pair at $1.03, then sold another five Up at
+  $0.57 without a Down completion: neutral +$0.50 but adverse -$2.00. A few
+  cents of paired spread cannot pay for one five-share directional remainder.
 
 A 15-minute generation is realistic for rejecting a mechanism or catching a
 runtime defect. It is not realistic for estimating edge. Promotion requires at

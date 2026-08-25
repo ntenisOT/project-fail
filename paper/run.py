@@ -97,6 +97,10 @@ MKT_WS = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 KILL = "paper/KILL"
 
 
+class PaperKill(Exception):
+    pass
+
+
 @dataclasses.dataclass
 class PendingWindow:
     asset: str
@@ -461,7 +465,7 @@ async def report_task() -> None:
 async def kill_task() -> None:
     while not os.path.exists(KILL):
         await asyncio.sleep(1)
-    raise SystemExit("paper KILL present")
+    raise PaperKill("paper KILL present")
 
 
 async def main() -> None:
@@ -491,5 +495,7 @@ async def main() -> None:
 if __name__ == "__main__":
     try:
         asyncio.run(main())
+    except PaperKill:
+        log.info("stopped by paper KILL")
     except KeyboardInterrupt:
         log.info("stopped")

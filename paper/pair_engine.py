@@ -29,6 +29,7 @@ class PairConfig:
     improve_ticks: int = 0
     new_pair_start_s: float = 0.0
     mint_anchor_spread: float | None = None
+    require_both_to_start: bool = False
 
 
 @dataclasses.dataclass
@@ -167,6 +168,7 @@ class PairWindow:
             )
             if open_side is None and sum(improved_bids.values()) > self.config.buy_sum_ceiling:
                 buy_sides = ()
+            candidates: dict[tuple[bool, str], float] = {}
             for side in buy_sides:
                 inv, other = self.inventory[side], self.inventory[not side]
                 if inv > other + 0.1 or inv + self.config.clip_shares > self.config.max_inventory:
@@ -177,7 +179,10 @@ class PairWindow:
                            - self.buy_pairs.worst_open_price(buying=True))
                     price = min(price, _tick_price(cap, books[side].tick, round_up=False))
                 if 0 < price < 1:
-                    desired[(side, "buy")] = price
+                    candidates[(side, "buy")] = price
+            if not (self.config.require_both_to_start and open_side is None
+                    and len(candidates) != 2):
+                desired.update(candidates)
 
         up_ask, down_ask = up.best_ask, down.best_ask
         if (self.config.mode in ("churn", "mint", "inventory")
@@ -194,6 +199,7 @@ class PairWindow:
             )
             if open_side is None and sum(improved_asks.values()) < self.config.sell_sum_floor:
                 sell_sides = ()
+            candidates = {}
             for side in sell_sides:
                 inv, other = self.inventory[side], self.inventory[not side]
                 if inv + 0.1 >= other and inv >= self.config.clip_shares:
@@ -203,7 +209,10 @@ class PairWindow:
                                  - self.sell_pairs.worst_open_price(buying=False))
                         price = max(price, _tick_price(floor, books[side].tick, round_up=True))
                     if 0 < price < 1:
-                        desired[(side, "sell")] = price
+                        candidates[(side, "sell")] = price
+            if not (self.config.require_both_to_start and open_side is None
+                    and len(candidates) != 2):
+                desired.update(candidates)
         return desired
 
     def _mint_desired(self, now: float, up: OrderBook,

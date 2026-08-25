@@ -41,8 +41,9 @@ if requested:
 STRATEGIES = (
     PairConfig("inv_churn20", "inventory", 0.02,
                action_latency_s=ACTION_LATENCY_S, initial_sets=20),
-    PairConfig("inv_mm20", "churn", 0.02,
-               action_latency_s=ACTION_LATENCY_S, initial_sets=20),
+    PairConfig("inv_pairmm20", "churn", 0.02,
+               action_latency_s=ACTION_LATENCY_S, initial_sets=20,
+               require_both_to_start=True),
     PairConfig("pair_inside20", "churn", 0.02,
                action_latency_s=ACTION_LATENCY_S, improve_ticks=1),
     PairConfig("mint_cycle20", "mint", 0.5,

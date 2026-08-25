@@ -29,7 +29,7 @@ old approval/setup commands, and CTF split/merge fail closed in code.
 
 ## Strategy evidence required
 
-The four current hypotheses are `inv_churn20`, `inv_mm20`, `pair_inside20`,
+The four current hypotheses are `inv_churn20`, `inv_pairmm20`, `pair_inside20`,
 and `mint_cycle20`. A candidate cannot advance unless a clean
 generation demonstrates all of the following:
 

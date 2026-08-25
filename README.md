@@ -105,7 +105,7 @@ signature, not one universal mechanism. The current board tests only:
 | Strategy | Mechanic |
 |---|---|
 | `inv_churn20` | Start with 20 complete sets, finish one maker sell pair, then phase into below-$1 replenishment |
-| `inv_mm20` | Start with 20 complete sets and continuously quote guarded maker bids and asks as inventory permits |
+| `inv_pairmm20` | Start with 20 complete sets and continuously make markets, but start a cycle only when both guarded legs are inventory-eligible |
 | `pair_inside20` | Improve both maker prices by one tick when pair sums remain ≤0.99/≥1.01, trading margin for queue priority |
 | `mint_cycle20` | Minted inventory with opposite-ask +2¢ anchors; after one side fills, quote only the other side above the realized pair floor before starting another clip |
 
@@ -260,6 +260,7 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 33 | 08-25 05:xx | phase inventory sell and replenishment cycles so crossed partial fills cannot deadlock accounting |
 | 34 | 08-25 05:xx | move per-fill SQLite commits to a single owned writer thread after another paper-only feed stall |
 | 35 | 08-25 05:xx | A/B phased inventory against continuous two-sided complete-set market making; retire rejected taker flattening |
+| 36 | 08-25 06:xx | forbid inventory filtering from turning a guarded pair start into a loss-making single-leg quote |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

@@ -39,8 +39,9 @@ if requested:
     ASSETS = {asset: prefix for asset, prefix in ASSETS.items() if asset in wanted}
 
 STRATEGIES = (
-    PairConfig("inv_churn20", "inventory", 0.02,
-               action_latency_s=ACTION_LATENCY_S, initial_sets=20),
+    PairConfig("inv_pairinside20", "churn", 0.02,
+               action_latency_s=ACTION_LATENCY_S, initial_sets=20,
+               improve_ticks=1, require_both_to_start=True),
     PairConfig("inv_pairmm20", "churn", 0.02,
                action_latency_s=ACTION_LATENCY_S, initial_sets=20,
                require_both_to_start=True),

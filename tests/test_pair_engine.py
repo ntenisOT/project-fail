@@ -110,6 +110,23 @@ class FocusedPairTests(unittest.TestCase):
         self.assertEqual(metrics["exposed_delayed_trade_events"], 1)
         self.assertEqual(metrics["max_exposed_delayed_trade_lag_ms"], 1716)
 
+    def test_feed_tail_after_pair_and_orders_close_is_not_exposed(self) -> None:
+        config = PairConfig(
+            "flat", "accumulate", 0.01, action_latency_s=0, max_inventory=5,
+        )
+        window = PairWindow(config, "btc", "btc-updown-5m-0", 0, "up", "down", 0)
+        window.on_books(1.0, book(0.48, 0, 0.52, 5), book(0.49, 0, 0.51, 5))
+        window.on_trade(1.1, True, 0.48, 5, "SELL")
+        window.on_trade(1.2, False, 0.49, 5, "SELL")
+
+        window.observe_stale_market_event(800, event_at=1.05)
+        window.observe_stale_market_event(900, event_at=2.0)
+
+        _, metrics = window.settle(300, 1)
+        self.assertEqual(metrics["stale_market_events"], 2)
+        self.assertEqual(metrics["exposed_stale_market_events"], 1)
+        self.assertEqual(metrics["max_exposed_stale_event_lag_ms"], 800)
+
     def test_settlement_scores_valid_strategies_independently(self) -> None:
         valid = PairWindow(PairConfig("valid", "accumulate", 0.01, 0),
                            "btc", "btc-updown-5m-0", 0, "up", "down", 0)

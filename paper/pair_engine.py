@@ -6,6 +6,7 @@ import math
 
 from live.mint_quotes import guarded_pair_prices, plan_pair_quotes, should_reprice
 from paper.buy_completion import plan_buy_completion
+from paper.exposure import ExposureTimeline
 from paper.order_book import OrderBook
 from paper.pair_lots import PairLots
 from paper.pair_types import PairConfig, PendingRequote, RestingOrder
@@ -71,6 +72,12 @@ class PairWindow:
         self.sell_hedge_completions = 0
         self.sell_hedge_shares = 0.0
         self.sell_hedge_best_pair_sum = 0.0
+        self.exposure = ExposureTimeline()
+
+    def _sync_exposure(self, now: float) -> None:
+        open_leg = (self.buy_pairs.open_side is not None
+                    or self.sell_pairs.open_side is not None)
+        self.exposure.update(now, bool(self.orders) or self.pending is not None or open_leg)
 
     def _desired(self, now: float, up: OrderBook,
                  down: OrderBook) -> dict[tuple[bool, str], float]:
@@ -381,6 +388,7 @@ class PairWindow:
         records = self._hedge_buy_pair(now, up, down)
         records.extend(self._hedge_sell_pair(now, up, down))
         if self.pending is not None or now - self.last_requote < self.config.requote_s:
+            self._sync_exposure(now)
             return records
         complete = (up.best_bid is not None and down.best_bid is not None
                     and up.best_ask is not None and down.best_ask is not None)
@@ -388,11 +396,13 @@ class PairWindow:
         self.last_requote = now
         current = {key: order.price for key, order in self.orders.items()}
         if current == desired:
+            self._sync_exposure(now)
             return records
         self.pending = PendingRequote(
             now + self.config.action_latency_s, now,
         )
         self._activate_pending(now, up, down)
+        self._sync_exposure(now)
         return records
 
     def on_trade(self, now: float, side_up: bool, price: float, size: float,
@@ -425,6 +435,7 @@ class PairWindow:
                     if order_side == "buy" else self.inventory[side_up])
         if capacity <= 0:
             self._close_order(key, now, cancelled=True)
+            self._sync_exposure(known_at)
             return None
         fill = min(order.size, executable, max(0.0, capacity))
         if fill <= 0:
@@ -449,6 +460,7 @@ class PairWindow:
         if order.size <= 1e-9:
             self._close_order(key, now, cancelled=False)
         self._update_peak()
+        self._sync_exposure(known_at)
         return {"action": order_side, "price": order.price, "size": fill,
                 "signed_cash": signed_cash, "outcome_up": int(side_up)}
 
@@ -462,23 +474,26 @@ class PairWindow:
         self.pending = None
         for key in list(self.orders):
             self._close_order(key, now, cancelled=True)
+        self._sync_exposure(now)
 
-    def observe_stale_market_event(self, event_lag_ms: float | None) -> None:
+    def observe_stale_market_event(self, event_lag_ms: float | None,
+                                   event_at: float | None = None) -> None:
         """Record a feed tail without pretending an exchange order disappeared."""
         lag_ms = 0.0 if event_lag_ms is None else event_lag_ms
         self.stale_market_events += 1
         self.max_stale_event_lag_ms = max(self.max_stale_event_lag_ms, lag_ms)
-        if self.orders or self.pending is not None or self.buys or self.sells:
+        if self.exposure.active_at(event_at):
             self.exposed_stale_market_events += 1
             self.max_exposed_stale_event_lag_ms = max(
                 self.max_exposed_stale_event_lag_ms, lag_ms,
             )
 
-    def observe_delayed_trade_event(self, event_lag_ms: float) -> None:
+    def observe_delayed_trade_event(self, event_lag_ms: float,
+                                    event_at: float | None = None) -> None:
         """Record late fill awareness separately from causal book staleness."""
         self.delayed_trade_events += 1
         self.max_delayed_trade_lag_ms = max(self.max_delayed_trade_lag_ms, event_lag_ms)
-        if self.orders or self.pending is not None or self.buys or self.sells:
+        if self.exposure.active_at(event_at):
             self.exposed_delayed_trade_events += 1
             self.max_exposed_delayed_trade_lag_ms = max(
                 self.max_exposed_delayed_trade_lag_ms, event_lag_ms,
@@ -488,6 +503,7 @@ class PairWindow:
         self.pending = None
         for key in list(self.orders):
             self._close_order(key, now, cancelled=True)
+        self._sync_exposure(now)
         if (min(self.inventory.values()) < -1e-8
                 or max(self.inventory.values()) > self.config.max_inventory + 1e-8):
             raise RuntimeError(f"inventory invariant violated in {self.slug}: {self.inventory}")

@@ -193,13 +193,15 @@ class LadderWindow:
         for lane in self.lanes:
             lane.invalidate(now, reason, event_lag_ms)
 
-    def observe_stale_market_event(self, event_lag_ms: float | None) -> None:
+    def observe_stale_market_event(self, event_lag_ms: float | None,
+                                   event_at: float | None = None) -> None:
         for lane in self.lanes:
-            lane.observe_stale_market_event(event_lag_ms)
+            lane.observe_stale_market_event(event_lag_ms, event_at)
 
-    def observe_delayed_trade_event(self, event_lag_ms: float) -> None:
+    def observe_delayed_trade_event(self, event_lag_ms: float,
+                                    event_at: float | None = None) -> None:
         for lane in self.lanes:
-            lane.observe_delayed_trade_event(event_lag_ms)
+            lane.observe_delayed_trade_event(event_lag_ms, event_at)
 
     def settle(
         self, now: float, outcome_up: int,

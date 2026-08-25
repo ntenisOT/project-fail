@@ -12,19 +12,24 @@ simultaneous asks or direct CTF minting. Mint-and-ask is not the winner replica.
 
 ---
 
-## 1. The Ireland box (the only machine that may trade)
+## 1. The Ireland box (paper monitoring only)
 
 | | |
 |---|---|
-| Host | `ubuntu@3.254.130.64` (AWS eu-west-1 — Polymarket's recommended region) |
+| Host | `ubuntu@3.254.130.64` (AWS eu-west-1; currently geoblocked for orders) |
 | SSH | `ssh -i ~/.ssh/pm_deploy ubuntu@3.254.130.64` |
 | Code | `~/project-fail` (deployed by `scp` from the local repo — **not** a git checkout) |
 | Python | `~/project-fail/.venv/bin/python` (always use the venv binary) |
 | Measured latency | Repeated CLOB `/time` GET **27–28 ms** median / **31–36 ms** p90; boundary-aligned discovery was **21–42 ms** and eight-token subscription **176–218 ms**; paper action proxy **65 ms** (authenticated POST/cancel unmeasured) |
 
-**The UK/local machine is paper-and-tooling only** (trading from the UK is
-blocked). The geo interlock (`DEPLOY_REGION=eu-west-1` in the box `.env`)
-hard-blocks every place-mode component anywhere else.
+**Both machines are paper-and-tooling only.** On 2026-08-25 Polymarket's live
+`/api/geoblock` endpoint returned `blocked=true` for both the UK/local machine
+(`GB`) and this Ireland box (`IE`). `DEPLOY_REGION=eu-west-1` is only a legacy
+topology label; it is not proof of geographic eligibility and must never
+authorize order placement. Every place-mode component remains hard-disabled.
+A future launch requires a fresh official geoblock check and independently
+confirmed user eligibility; servers, VPNs, or proxies must not be used to
+circumvent a physical-location restriction.
 
 ### tmux sessions on the box
 
@@ -203,7 +208,9 @@ hard-refuses before constructing a client or touching its database.
 
 ## 5. Operating rules (standing, user-set)
 
-1. **Parity rule**: nothing changes in production without paper/replay first.
+1. **Eligibility and parity rule**: no order path may run unless Polymarket's
+   live geoblock check and the user's physical-location eligibility both pass.
+   Nothing changes in production without paper/replay first.
    A green queue-aware paper arm alone is insufficient; order/fill/position reconciliation
    and measured execution behaviour must also pass.
 2. **Every runner restart archives the DB**: verify the runner is DEAD first
@@ -226,7 +233,8 @@ No place-mode or approval command is published while the launch gate is closed.
 ### `.env` on the box (names only — never commit values)
 `POLY_PRIVATE_KEY`, `POLY_FUNDER`, `POLY_SIGNATURE_TYPE` (site/CLOB identity) ·
 `MINTER_PRIVATE_KEY`, `MINTER_ADDRESS` (mint EOA) · `DEPLOY_REGION=eu-west-1`
-(geo interlock) · `TELEGRAM_*` (reports) · `PAPER_SUMMARY_MINS`, `PAPER_ASSETS`,
+(legacy topology label, **not** an eligibility check) · `TELEGRAM_*` (reports) ·
+`PAPER_SUMMARY_MINS`, `PAPER_ASSETS`,
 `PAPER_ACTION_LATENCY_MS` ·
 optional `POLYGON_RPC_URL`,
 `MINT_USD`, `MINT_DAY_CAP`, `MINT_SPREAD`, `LIVE_EXECUTOR_MODE`, `MINTBOT_MODE`.

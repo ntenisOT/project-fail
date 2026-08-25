@@ -372,6 +372,10 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 51 | 08-25 11:00 | preserve the board; prove stale-count/heartbeat discrepancies are timestamped feed tails hidden by the 4,096-event rolling display, not missing timestamps |
 | 52 | 08-25 11:16 | measurement-only reset: conserve each public trade's size across ladder lanes and cap through-price fills by observed print size; report interval/lifetime feed peaks that cannot age out before heartbeat |
 | 53 | 08-25 11:31 | preserve the corrected board; timestamp pump enqueue/handler residence to split upstream event age from local queue/processing delay |
+| 54 | 08-25 11:49 | persist feed lifetime counters across socket generations; retire the failed ladder and add a bounded 60-second, $0.95 fee-inclusive mint-repair A/B arm |
+| 55 | 08-25 12:05 | pre-fix diagnostic: expose sub-minimum mint residue; replace the false fixed-$1 notional rule with each market's official share minimum |
+| 56 | 08-25 12:17 | first corrected-minimum cohort: two profitable sell pairs were overwhelmed by one unmatched five-share winning liability; hedge encountered both depth and price blocks |
+| 57 | 08-25 12:33 | measurement-only reset: retain all parameters and record the best executable fee-inclusive repair sum after the hedge timer |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

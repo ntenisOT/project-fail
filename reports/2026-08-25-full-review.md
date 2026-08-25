@@ -258,6 +258,16 @@ bug is also fixed and covered by one focused test.
   both ended at -$0.14 adverse versus +$0.44 neutral PnL. A 2.232-second feed
   tail also labels the window lagged. This confirms the dust mechanism, not the
   profitability of the hedge.
+- Gen56 is the first official window under the corrected five-share market
+  minimum. Both mint arms sold two complete five-share pairs at a $1.03 sum,
+  earning only +$0.30 of paired edge, then sold an unmatched five-share Down
+  leg. Down settled, turning $0.40 of neutral PnL into -$2.10 realized/adverse
+  PnL. The 60-second hedge became due once and completed zero times; during the
+  episode it encountered both sub-minimum executable depth and a fee-inclusive
+  pair price below $0.95. A measured 858 ms causal tail labels the exposed
+  window lagged, while local queue residence stayed at 1–3 ms. Gen57 therefore
+  changes no strategy parameter: it only records the best executable repair
+  pair sum after the timer so the next floor decision is evidence-based.
 
 A 15-minute generation is realistic for rejecting a mechanism or catching a
 runtime defect. It is not realistic for estimating edge. Promotion requires at

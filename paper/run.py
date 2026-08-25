@@ -61,10 +61,6 @@ if requested:
     ASSETS = {asset: prefix for asset, prefix in ASSETS.items() if asset in wanted}
 
 STRATEGIES = (
-    PairConfig("basket98", "accumulate", 0.02,
-               action_latency_s=ACTION_LATENCY_S, buy_sum_ceiling=0.98,
-               improve_ticks=1, require_both_to_start=True, basket_average_cap=True,
-               new_pair_start_s=30),
     PairConfig("basket99", "accumulate", 0.02,
                action_latency_s=ACTION_LATENCY_S, buy_sum_ceiling=0.99,
                improve_ticks=1, require_both_to_start=True, basket_average_cap=True,
@@ -73,6 +69,10 @@ STRATEGIES = (
                action_latency_s=ACTION_LATENCY_S, buy_sum_ceiling=0.99,
                improve_ticks=1, require_both_to_start=True, basket_average_cap=True,
                new_pair_start_s=30, new_pair_cutoff_s=180),
+    PairConfig("mintcycle5", "mint", 0.5,
+               action_latency_s=ACTION_LATENCY_S, mint_sets=5,
+               sell_sum_floor=1.005, new_pair_start_s=30,
+               new_pair_cutoff_s=240, mint_anchor_spread=0.02),
     PairConfig("mintcycle20", "mint", 0.5,
                action_latency_s=ACTION_LATENCY_S, mint_sets=20,
                sell_sum_floor=1.005, new_pair_start_s=30,

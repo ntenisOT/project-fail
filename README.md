@@ -135,20 +135,21 @@ The legacy 49-arm board was retired after every execution-shaped pair/mint arm
 remained negative. V2-corrected forensics then identified the clean leader as a
 paired-bid accumulator. Strict inside-$0.98 won the first price-priority screen.
 Basket99 later reached winner-like pair cost/completion timing but left
-outcome-risk residue. The current board isolates cap, late pair creation, and
-fee-aware completion:
+outcome-risk residue. The current board isolates late pair creation, mint churn
+count, and fee-aware completion:
 
 | Strategy | Mechanic |
 |---|---|
-| `basket98` | Keep the cumulative completed-pair average ≤$0.98 |
 | `basket99` | Five-share maker baseline; keep cumulative completed-pair average ≤$0.99 |
 | `basket99c180` | Basket99 twin that stops opening fresh pairs after T+180 but can finish an existing leg |
+| `mintcycle5` | One five-share complete-set pair per window; tests whether repeated mint churn compounds residue risk |
 | `mintcycle20` | Queue-aware $20 complete-set control: paired maker asks with a $1.005 joint floor, realistic 65 ms actions, and T+30/T+240 entry bounds |
 | `minthedge60p95` | Mintcycle twin that gives maker completion 60 seconds, then crosses displayed depth only when the fee-inclusive pair sum remains at least $0.95 |
 
-Market discovery carries each market's Gamma `orderMinSize` into taker
-simulation. A partial residual below that share minimum cannot be force-filled;
-five-share low-price orders are not incorrectly rejected on dollar notional.
+Market discovery carries each market's Gamma `orderMinSize` into maker and
+taker simulation. A partial residual below that share minimum cannot be posted
+or force-filled; five-share low-price orders are not incorrectly rejected on
+dollar notional.
 
 All five arms wait until T+30 seconds and until both token feeds have caught up
 before starting a pair. This deliberately gives up the subscription-backlog
@@ -377,6 +378,7 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 56 | 08-25 12:17 | first corrected-minimum cohort: two profitable sell pairs were overwhelmed by one unmatched five-share winning liability; hedge encountered both depth and price blocks |
 | 57 | 08-25 12:33 | measurement-only reset: retain all parameters and record the best executable fee-inclusive repair sum after the hedge timer |
 | 58 | 08-25 12:54 | retain the board; attribute stale and delayed events only when their exchange timestamp overlaps an actual order, pending action, or unpaired leg |
+| 59 | 08-25 13:xx | retire the repeatedly unproductive Basket98 arm; compare one-pair versus four-pair mint churn and enforce market share minimums on maker posts |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

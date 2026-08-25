@@ -257,6 +257,11 @@ class PairWindow:
                 continue
             side, order_side = key
             book = books[side]
+            capacity = (self.config.max_inventory - self.inventory[side]
+                        if order_side == "buy" else self.inventory[side])
+            order_size = min(self.config.clip_shares, max(0.0, capacity))
+            if order_size + 1e-9 < book.min_order_size:
+                continue
             crossed = (order_side == "buy" and book.best_ask is not None
                        and price >= book.best_ask)
             crossed = crossed or (order_side == "sell" and book.best_bid is not None
@@ -265,7 +270,7 @@ class PairWindow:
                 self.post_only_rejects += 1
                 continue
             self.orders[key] = RestingOrder(
-                price, self.config.clip_shares,
+                price, order_size,
                 book.size_at(order_side, price), now,
             )
             self.quote_posts += 1

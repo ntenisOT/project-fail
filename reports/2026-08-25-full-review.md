@@ -283,6 +283,18 @@ bug is also fixed and covered by one focused test.
   actual order, pending-action, and open-leg intervals and attributes each
   delayed event by its exchange timestamp. Missing timestamps remain
   conservative. This changes classification only, not fills or strategy rules.
+- Gen58's first valid window confirmed both the fix and the remaining strategy
+  defect. The mint arms completed one pair at $1.03, then stranded a five-share
+  Down sale at $0.44. Down settled, so +$0.15 paired edge became -$0.15 neutral
+  and -$2.65 realized/adverse PnL. The hedge saw both depth and price blocks;
+  its best fee-inclusive repair sum was only $0.863. A measured 862 ms event
+  overlapped the actual open leg, so the new classifier correctly retained the
+  lagged label, while a no-exposure Basket98 window remained clean. Lowering the
+  floor to $0.90 would not have repaired this episode and is not justified.
+  Gen59 replaces the repeatedly unproductive Basket98 arm with `mintcycle5`, a
+  single-pair control, to test whether repeated churn compounds residue. Maker
+  activation now also enforces the market's share minimum and available token
+  inventory; this prevents impossible dust-sized or under-collateralized posts.
 
 A 15-minute generation is realistic for rejecting a mechanism or catching a
 runtime defect. It is not realistic for estimating edge. Promotion requires at

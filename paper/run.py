@@ -36,8 +36,6 @@ if requested:
     ASSETS = {asset: prefix for asset, prefix in ASSETS.items() if asset in wanted}
 
 STRATEGIES = (
-    PairConfig("pair_carry20", "accumulate", 0.02,
-               action_latency_s=ACTION_LATENCY_S),
     PairConfig("pair_churn20", "churn", 0.02,
                action_latency_s=ACTION_LATENCY_S),
     PairConfig("pair_inside20", "churn", 0.02,
@@ -46,6 +44,11 @@ STRATEGIES = (
                action_latency_s=ACTION_LATENCY_S,
                sell_sum_floor=1.005, new_pair_start_s=3,
                new_pair_cutoff_s=275, mint_anchor_spread=0.02),
+    PairConfig("mint_hedge40", "mint", 0.5,
+               action_latency_s=ACTION_LATENCY_S,
+               sell_sum_floor=1.005, new_pair_start_s=3,
+               new_pair_cutoff_s=275, mint_anchor_spread=0.02,
+               taker_hedge_after_s=40),
 )
 MKT_WS = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 KILL = "paper/KILL"

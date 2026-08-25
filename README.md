@@ -104,10 +104,10 @@ signature, not one universal mechanism. The current board tests only:
 
 | Strategy | Mechanic |
 |---|---|
-| `pair_carry20` | Join both best bids only when their sum is ≤0.99; hold completed sets through settlement |
-| `pair_churn20` | Same 20 ms decision cadence plus balanced best-ask resale when the ask sum is ≥1.01 |
+| `pair_churn20` | Join both best bids when their sum is ≤0.99, then offer balanced inventory when the ask sum is ≥1.01 |
 | `pair_inside20` | Improve both maker prices by one tick when pair sums remain ≤0.99/≥1.01, trading margin for queue priority |
 | `mint_cycle20` | Minted inventory with opposite-ask +2¢ anchors; after one side fills, quote only the other side above the realized pair floor before starting another clip |
+| `mint_hedge40` | Same mint cycle, but after 40 seconds an unmatched leg is sold through displayed bid depth with official taker fees |
 
 The simulator reconstructs public price levels from authoritative snapshots and
 `price_change` deltas. Joining the best price puts the displayed level size in
@@ -243,6 +243,7 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 19 | 08-25 03:xx | replace fast best-ask mint proxy with the shared mintbot quote planner and residence policy |
 | 20 | 08-25 03:xx | bound WebSocket close handshakes to 100 ms and remove mintbot's empty-token one-second poll |
 | 21 | 08-25 03:xx | replace rejected asymmetric-stop mint paper arm with one-leg cycle completion; bound transient WebSocket retry from 100 ms |
+| 22 | 08-25 04:xx | retire outcome-dependent carry; compare mint-cycle tail against 40-second depth-and-fee taker cleanup |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

@@ -295,6 +295,7 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 39 | 08-25 07:xx | retain strict inside-$0.98 control; compare rolling basket-average caps after winner pairing-delay and sizing reconstruction |
 | 40 | 08-25 07:4x | reject four-asset and initial BTC-only samples after causal feed lag exceeded 400 ms without a disconnect |
 | 41 | 08-25 07:5x | pause through the repeatable subscription backlog; start BTC pairs at T+30 only after both token feeds catch up |
+| 42 | 08-25 08:15 | score feed validity per strategy and include resting-bid collateral in capital; continue the BTC basket control |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

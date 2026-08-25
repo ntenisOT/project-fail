@@ -41,6 +41,7 @@ import urllib.request
 from live.market_book import BestAskCache
 from live.feed_health import FeedHealth
 from live.mint_quotes import Quote, guarded_pair_prices, plan_pair_quotes, should_reprice
+from live.window_clock import boundary_aligned_delay
 from paper import envload
 
 envload.load()
@@ -171,7 +172,7 @@ class Mintbot:
                 if (not st or st["base"] != base) and a not in self.opening:
                     self.opening.add(a)
                     self.spawn(self.open_window(a, base))
-            await asyncio.sleep(2)
+            await asyncio.sleep(boundary_aligned_delay(time.time()))
 
     async def open_window(self, asset, base):
         from live import chain

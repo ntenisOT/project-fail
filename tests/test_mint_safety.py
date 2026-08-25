@@ -16,9 +16,15 @@ from live.mint_quotes import (
     should_reprice,
     target_pair_prices,
 )
+from live.window_clock import boundary_aligned_delay
 
 
 class MintSafetyTests(unittest.TestCase):
+    def test_rotation_poll_aligns_to_window_boundary(self) -> None:
+        self.assertAlmostEqual(boundary_aligned_delay(299.8), 0.2)
+        self.assertEqual(boundary_aligned_delay(250.0), 0.5)
+        self.assertEqual(boundary_aligned_delay(299.999), 0.01)
+
     def test_feed_health_measures_server_lag_and_reconnects(self) -> None:
         health = FeedHealth(sample_size=3)
         health.observe({"timestamp": "1787631300.000"}, 1787631300.025)

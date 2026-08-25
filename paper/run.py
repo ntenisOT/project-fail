@@ -14,6 +14,7 @@ import time
 import websockets
 
 from live.feed_health import FeedHealth, event_time_s
+from live.window_clock import boundary_aligned_delay
 from paper import envload, report
 from paper.ledger import Ledger
 from paper.market_metadata import ActiveMarket, fetch_active_market
@@ -137,7 +138,7 @@ async def window_task() -> None:
                     log.info("opened %s %s with %d focused strategies", asset, market.slug,
                              len(STRATEGIES))
             _refresh_tokens()
-        await asyncio.sleep(1)
+        await asyncio.sleep(boundary_aligned_delay(time.time()))
 
 
 async def settlement_task() -> None:

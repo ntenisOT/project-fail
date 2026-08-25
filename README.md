@@ -20,7 +20,7 @@ mint strategy is therefore a hypothesis to test, not "the winners' mechanic."
 | SSH | `ssh -i ~/.ssh/pm_deploy ubuntu@3.254.130.64` |
 | Code | `~/project-fail` (deployed by `scp` from the local repo — **not** a git checkout) |
 | Python | `~/project-fail/.venv/bin/python` (always use the venv binary) |
-| Measured latency | Repeated CLOB `/time` GET **27–28 ms** median / **31–33 ms** p90; legacy 1 s poll added **546 ms** median / **928 ms** p90 and has been removed; paper action proxy **65 ms** (authenticated POST/cancel unmeasured) |
+| Measured latency | Repeated CLOB `/time` GET **27–28 ms** median / **31–36 ms** p90; legacy fixed polling added avoidable window-rotation jitter and is boundary-aligned; paper action proxy **65 ms** (authenticated POST/cancel unmeasured) |
 
 **The UK/local machine is paper-and-tooling only** (trading from the UK is
 blocked). The geo interlock (`DEPLOY_REGION=eu-west-1` in the box `.env`)
@@ -248,6 +248,7 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 22 | 08-25 04:xx | retire outcome-dependent carry; compare mint-cycle tail against 40-second depth-and-fee taker cleanup |
 | 23 | 08-25 04:xx | invalidate reconnect-tainted windows; increase burst queue to 64 frames and measure server-event lag directly |
 | 24 | 08-25 04:xx | match trades at exchange event time and reject delayed prints that predate simulated order activation |
+| 25 | 08-25 04:xx | align paper and mintbot discovery wakeups to exact five-minute boundaries instead of fixed-loop phase |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

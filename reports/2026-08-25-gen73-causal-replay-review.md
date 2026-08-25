@@ -321,6 +321,16 @@ Corrected one-probe board hash:
 Execution-model-v2 hash:
 `c806b8389691239fa38332cfe6b84e8c4413a97a66eec33f58d8e7ddec096e29`.
 
+The corrected Ireland paper runner started at 23:37 UTC with capture label
+`gen74-fillprobe-20260825T2340Z`, the hashes above, BTC only, 65 ms action
+proxy, 400 ms stale cutoff, 10 ms decision cadence, and a 15-minute Telegram
+summary. Its first heartbeat had exact accepted/written capture counts, zero
+drops/cap/error/future timestamps, and no reconnect. Local queue residence was
+at most 6 ms while the same interval already contained a 4.270-second upstream
+event-age tail. SQLite `integrity_check` returned `ok`, and its run metadata
+matched the capture label, board hash, and model hash. The passive four-feed
+cross-venue capture remained uninterrupted. No real-order process was started.
+
 ## Decision process from here
 
 1. Keep passive causal covariate capture running and run only the corrected

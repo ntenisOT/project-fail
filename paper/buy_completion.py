@@ -37,7 +37,8 @@ def plan_buy_completion(
     target_shares = requested_shares
     dust = config.taker_dust_round_shares
     if (dust > 0 and book.min_order_size - dust <= requested_shares
-            < book.min_order_size and capacity + 1e-9 >= book.min_order_size):
+            < book.min_order_size
+            and capacity + dust + 1e-9 >= book.min_order_size):
         target_shares = book.min_order_size
     legs = sweep(book, "buy", target_shares)
     if not legs:

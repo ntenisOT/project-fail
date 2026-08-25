@@ -146,11 +146,11 @@ completion, and the smallest mint falsification controls:
 | Strategy | Mechanic |
 |---|---|
 | `basket99` | Five-share maker baseline; keep cumulative completed-pair average ≤$0.99 |
-| `basket99c180` | Basket99 twin that stops opening fresh pairs after T+180 but can finish an existing leg |
 | `basket99t270` | Basket99 twin that waits until T+270, then takes only a displayed complement whose fee-inclusive cost preserves the rolling $0.99 cap |
-| `basket99t270d` | T+270 twin that may round a 4.90–4.999-share complement to the five-share market minimum, leaving at most 0.1 opposite-token dust |
+| `basket99t270d` | T+270 twin that may round a 4.90–4.999-share complement to the five-share market minimum, leaving at most 0.1 opposite-token dust and exceeding the per-token cap by at most that dust |
 | `mintcycle5` | One five-share complete-set pair per window; tests whether repeated mint churn compounds residue risk |
 | `mintrepair5p95` | Five-set mint twin that gives maker completion 60 seconds, then reduces executable residual depth only above a fee-inclusive $0.95 pair floor; near-minimum dust may round up by at most 0.1 share |
+| `mintrepair5p100` | Same repair twin with a $1.00 fee-inclusive floor; tests non-loss flattening against the 0.95 arm that can deliberately lock a loss |
 
 The observer records the official
 `crypto_prices_twap_sixty` RTDS stream as a **shadow-only** reference. It stores
@@ -401,6 +401,7 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 62 | 08-25 15:27 | decouple official market outcomes from strategy validity so reconnect-invalidated windows remain usable for the shadow-signal audit; no quote changes |
 | 63 | 08-25 15:51 | add a T+270 fee-aware Basket99 completion A/B and replace the inert full-depth mint hedge with a five-set partial-depth/dust repair twin; keep signal shadow-only |
 | 64 | 08-25 16:20 | retire the repeatedly loss-making 20-set mint arm; add an opt-in T+270 near-minimum buy-completion twin after Gen63 locked one late pair but exposed a 4.98-share minimum dead zone |
+| 65 | 08-25 16:56 | let the dust twin exceed its per-token inventory cap by at most 0.1 share after Gen64 proved saturation made it inert; replace the redundant T+180 arm with a $1.00 mint-repair floor A/B |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

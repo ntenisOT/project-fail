@@ -61,6 +61,9 @@ class BestAskCache:
     def drop(self, token: str) -> None:
         self._books.pop(token, None)
 
+    def clear(self) -> None:
+        self._books.clear()
+
     def apply(self, event: Mapping[str, object], received_at: float) -> set[str]:
         """Apply authoritative snapshots or best-ask values from delta events."""
         changed: set[str] = set()

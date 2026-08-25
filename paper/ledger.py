@@ -1,6 +1,7 @@
 """Isolated SQLite ledger for the paper trader — strategy-tagged for A/B comparison."""
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 
@@ -20,9 +21,21 @@ class Ledger:
               ts REAL, strategy TEXT, asset TEXT, slug TEXT, cash REAL, residual REAL,
               pnl REAL, capital REAL, buys INT, sells INT, resid_shares REAL,
               n_fills INT, outcome_up INT);
+            CREATE TABLE IF NOT EXISTS window_metrics(
+              ts REAL, strategy TEXT, asset TEXT, slug TEXT, data TEXT);
             """
         )
         self.db.commit()
+
+    def record_metrics(self, ts, strategy, asset, slug, metrics) -> None:
+        self.db.execute(
+            "INSERT INTO window_metrics VALUES(?,?,?,?,?)",
+            (ts, strategy, asset, slug, json.dumps(metrics, sort_keys=True)),
+        )
+        self.db.commit()
+
+    def close(self) -> None:
+        self.db.close()
 
     def record_fill(self, ts, strategy, asset, slug, rec) -> None:
         self.db.execute(

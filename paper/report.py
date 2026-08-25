@@ -1,168 +1,160 @@
-"""Paper-trader A/B report: each strategy vs the recorder/sim baseline.
+"""Focused report for the queue-aware pair inventory experiment."""
 
-Run standalone:  python -m paper.report
-Baseline (mm_sim v2 TWAP model, 116 recorded windows): win ~65%, ROC ~10%/window.
-"""
 from __future__ import annotations
 
+import dataclasses
+import json
 import sqlite3
-
-BASE_WIN = 0.65
-BASE_ROC = 0.10
-# xf twin races: original vs exit-first variant of the SAME signal (+ the two set-arbs)
-PAIRS = [("roundtrip", "xf_roundtrip"), ("opp_size", "xf_opp"), ("neutral", "xf_neutral"),
-         ("twap_confirm", "xf_twap_con"), ("twap_binance", "xf_twap_bin"),
-         ("twap_deribit", "xf_twap_der"), ("binance_only", "xf_binance"),
-         ("deribit_only", "xf_deribit"), ("lock_arb", "split_sell"),
-         ("xf_twap_der", "ta_twap_der"), ("xf_neutral", "ta_neutral"), ("pair_mm", "ta_pair"),
-         ("neutral", "lv_neutral"), ("pair_mm", "lv_pair"), ("ta_pair", "lv_ta_pair"),
-         ("pair_mm", "hl_pair"), ("hl_pair", "lv_hl_pair"),
-         ("hold", "lv_hold"), ("roundtrip", "lv_roundtrip"), ("rt_wide", "lv_rt_wide"),
-         ("twap_confirm", "lv_twap_con"), ("twap_binance", "lv_twap_bin"), ("twap_deribit", "lv_twap_der"),
-         ("binance_only", "lv_binance"), ("deribit_only", "lv_deribit"),
-         ("xf_roundtrip", "lv_xf_rt"), ("xf_twap_der", "lv_xf_td"), ("xf_binance", "lv_xf_bin"),
-         ("xf_deribit", "lv_xf_der"), ("xf_neutral", "lv_xf_neu"),
-         ("ta_twap_der", "lv_ta_td"), ("ta_neutral", "lv_ta_neu"),
-         ("lock_arb", "lock_fast"), ("split_sell", "split_fast"),
-         ("sq_twap_con", "lv_twap_con"), ("sq_neutral", "lv_neutral"),
-         ("sq_pair", "lv_pair"), ("sq_hl_pair", "lv_hl_pair"),
-         ("pair_mm", "mint_hl"), ("hl_pair", "mint_hl"), ("mint_hl", "mint_tw")]
+import time
 
 
-def _since(db, strat, t0):
-    """windows/pnl/win%/sell-buy/resid for one strategy since t0 (same-period compare)."""
-    r = db.execute("""SELECT count(*), COALESCE(sum(pnl),0),
-                      COALESCE(sum(pnl > 0),0), COALESCE(sum(sells),0), COALESCE(sum(buys),0),
-                      COALESCE(sum(resid_shares),0)
-                      FROM settlements WHERE n_fills>0 AND strategy=? AND ts>=?""", (strat, t0)).fetchone()
-    n, pnl, wins, sells, buys, resid = r
-    return {"n": n, "pnl": pnl, "win": (wins / n if n else 0.0),
-            "sb": (sells / buys if buys else 0.0), "resid": resid}
+@dataclasses.dataclass(frozen=True)
+class Snapshot:
+    strategy: str
+    windows: int
+    trades: int
+    volume: float
+    pnl: float
+    win_rate: float
+    bankroll: float
+    roc: float
+    buy_sum: float | None
+    sell_sum: float | None
+    unmatched: float
+    posts_per_window: float
+    rest_seconds: float
+    queue_consumed: float
+    action_ms: float
+    post_only_rejects: int
 
 
-def pair_text(db) -> list[str]:
-    t0 = db.execute("SELECT COALESCE(min(ts), 0) FROM settlements WHERE strategy LIKE 'xf_%' OR strategy='split_sell'").fetchone()[0]
-    if not t0:
-        return ["(xf twins warming up - no settled twin windows yet)"]
-    import time as _t
-    out = [f"XF TWIN RACES - both sides since {_t.strftime('%H:%M', _t.gmtime(t0))}Z (same tape, same signal; only inventory policy differs)",
-           f"{'family':<14}{'orig pnl$':>10}{'xf pnl$':>9}{'edge$':>8}{'o.s/b':>7}{'xf.s/b':>7}{'o.resid':>9}{'xf.resid':>9}{'wins':>6}"]
-    for orig, xf in PAIRS:
-        o = _since(db, orig, t0)
-        x = _since(db, xf, t0)
-        if o["n"] == 0 and x["n"] == 0:
+def _metrics(db: sqlite3.Connection, strategy: str) -> dict[str, float]:
+    totals: dict[str, float] = {}
+    rows = db.execute("SELECT data FROM window_metrics WHERE strategy=?", (strategy,))
+    for (raw,) in rows:
+        try:
+            values = json.loads(raw)
+        except (TypeError, json.JSONDecodeError):
             continue
-        out.append(f"{orig[:14]:<14}{o['pnl']:>+10.1f}{x['pnl']:>+9.1f}{x['pnl']-o['pnl']:>+8.1f}"
-                   f"{o['sb']:>7.2f}{x['sb']:>7.2f}{o['resid']:>9.0f}{x['resid']:>9.0f}{min(o['n'],x['n']):>6}")
-    out.append("edge$ = xf minus original | resid = shares carried into settlement (the carry)")
-    return out
-REDEMPTION_LOCK = 600   # seconds: MEASURED live 2026-08-24 - auto-redeem lands ~5-10 min after settle (old 2h assumption was wrong)
+        for key, value in values.items():
+            if isinstance(value, (int, float)):
+                totals[key] = totals.get(key, 0.0) + float(value)
+    return totals
 
 
-def _strategies(db):
-    return [r[0] for r in db.execute(
-        "SELECT DISTINCT strategy FROM settlements WHERE n_fills>0 ORDER BY strategy")]
+def _bankroll(rows: list[tuple[float, str, float]]) -> float:
+    """Conservative peak: each window's peak capital remains locked for 10m."""
+    events: list[tuple[float, float]] = []
+    for settled_at, slug, capital in rows:
+        try:
+            start = float(slug.rsplit("-", 1)[1])
+        except (IndexError, ValueError):
+            start = settled_at - 300
+        events.extend(((start, capital), (start + 900, -capital)))
+    running = peak = 0.0
+    for _, delta in sorted(events):
+        running += delta
+        peak = max(peak, running)
+    return peak
 
 
-def snapshot_one(db, strat: str) -> dict:
-    settled = db.execute(
-        "SELECT pnl, capital FROM settlements WHERE n_fills>0 AND strategy=?", (strat,)).fetchall()
-    n = len(settled)
-    wins = sum(1 for r in settled if r[0] > 0)
-    pnl = sum(r[0] for r in settled)
-    cap_sum = sum(r[1] for r in settled)
-    # budget = peak SIMULTANEOUS capital-at-risk = bankroll you must hold in the account.
-    # A buy deploys capital; a SELL recovers it immediately (round-trip); but capital left
-    # in the HELD residual stays locked until redemption ~REDEMPTION_LOCK (~2h) after the
-    # window settles. So round-trippers recover fast and barely lock anything, while pure
-    # hold locks its whole stack for 2h -> needs far more. (For runs < 2h the hold-heavy
-    # number is still climbing toward its steady-state peak, since nothing has redeemed yet.)
-    fills = db.execute("SELECT ts, signed_cash FROM fills WHERE strategy=?", (strat,)).fetchall()
-    budget = 0.0
-    if fills:
-        ev = [(r[0], -r[1]) for r in fills]
-        ev += [(r[0] + REDEMPTION_LOCK, r[1]) for r in db.execute(   # residual released 2h after settle
-            "SELECT ts, cash FROM settlements WHERE strategy=? AND n_fills>0", (strat,))]
-        ev.sort(key=lambda e: e[0])
-        run = 0.0
-        for _, c in ev:
-            run += c
-            budget = max(budget, run)
-    # deployments that are NOT fills (mint outlay, lock sets) only appear in the
-    # capital field - bankroll must cover at least one window's peak of those.
-    cap_peak = db.execute("SELECT COALESCE(max(capital),0) FROM settlements WHERE strategy=?",
-                          (strat,)).fetchone()[0]
-    budget = max(budget, cap_peak)
-    buys, sells = db.execute(
-        "SELECT COALESCE(sum(buys),0), COALESCE(sum(sells),0) FROM settlements WHERE strategy=?",
-        (strat,)).fetchone()
-    volume = db.execute("SELECT COALESCE(sum(abs(signed_cash)),0) FROM fills WHERE strategy=?",
-                        (strat,)).fetchone()[0]  # total $ traded (buys + sells notional)
-    return {"strategy": strat, "settled": n, "win_rate": (wins / n if n else 0.0),
-            "pnl": pnl, "roc_window": (pnl / cap_sum if cap_sum else 0.0),
-            "budget": budget, "roc_budget": (pnl / budget if budget else 0.0),
-            "buys": buys, "sells": sells, "volume": volume,
-            "sell_buy": (sells / buys if buys else 0.0)}
+def _sum_or_none(numerator: float, denominator: float) -> float | None:
+    return numerator / denominator if denominator else None
+
+
+def snapshot_one(db: sqlite3.Connection, strategy: str) -> Snapshot:
+    rows = db.execute(
+        "SELECT ts,slug,pnl,capital,buys,sells FROM settlements WHERE strategy=?",
+        (strategy,),
+    ).fetchall()
+    metrics = _metrics(db, strategy)
+    windows = len(rows)
+    pnl = sum(float(row[2]) for row in rows)
+    trades = sum(int(row[4]) + int(row[5]) for row in rows)
+    volume = float(db.execute(
+        "SELECT COALESCE(sum(abs(signed_cash)),0) FROM fills WHERE strategy=?",
+        (strategy,),
+    ).fetchone()[0])
+    bankroll = _bankroll([(float(row[0]), str(row[1]), float(row[3])) for row in rows])
+    closed = metrics.get("closed_orders", 0.0)
+    return Snapshot(
+        strategy=strategy, windows=windows, trades=trades, volume=volume, pnl=pnl,
+        win_rate=sum(float(row[2]) > 0 for row in rows) / windows if windows else 0.0,
+        bankroll=bankroll, roc=pnl / bankroll if bankroll else 0.0,
+        buy_sum=_sum_or_none(metrics.get("buy_pair_cost", 0.0),
+                             metrics.get("buy_pair_shares", 0.0)),
+        sell_sum=_sum_or_none(metrics.get("sell_pair_proceeds", 0.0),
+                              metrics.get("sell_pair_shares", 0.0)),
+        unmatched=metrics.get("unmatched_end", 0.0),
+        posts_per_window=metrics.get("quote_posts", 0.0) / windows if windows else 0.0,
+        rest_seconds=metrics.get("rest_seconds", 0.0) / closed if closed else 0.0,
+        queue_consumed=metrics.get("queue_consumed", 0.0),
+        action_ms=1000 * (_sum_or_none(metrics.get("action_seconds", 0.0),
+                                      metrics.get("action_batches", 0.0)) or 0.0),
+        post_only_rejects=int(metrics.get("post_only_rejects", 0.0)),
+    )
+
+
+def _format_sum(value: float | None) -> str:
+    return "-" if value is None else f"{value:.3f}"
 
 
 def text(db_path: str = "paper/paper.db") -> str:
     db = sqlite3.connect(db_path)
-    strats = _strategies(db)
-    if not strats:
-        warm = db.execute("SELECT count(*) FROM fills").fetchone()[0]
-        return f"(warming up — no settled windows with fills yet; sim-fills so far: {warm})"
-    snaps = sorted((snapshot_one(db, st) for st in strats), key=lambda s: s["pnl"], reverse=True)
-    import time as _t
-    last = db.execute("SELECT max(ts) FROM settlements WHERE n_fills>0").fetchone()[0] or 0
-    out = [f"PAPER A/B — vs recorder baseline (win ~65%, ROC/win ~10%) | last settle "
-           f"{_t.strftime('%H:%M:%S', _t.gmtime(last))} UTC (5-min cycles)",
-           f"{'strategy':<13}{'windows':>8}{'fills':>7}{'vol$':>9}{'avg$':>7}{'win%':>6}{'pnl$':>9}{'budget$':>9}{'ROC/bud':>9}{'sell/buy':>9}"]
-    for s in snaps:
-        nf = s['buys'] + s['sells']
-        out.append(f"{s['strategy']:<13}{s['settled']:>8}{nf:>7}{s['volume']:>9.0f}{(s['volume']/nf if nf else 0):>7.2f}"
-                   f"{s['win_rate']*100:>5.0f}%{s['pnl']:>+9.1f}{s['budget']:>9.1f}"
-                   f"{s['roc_budget']*100:>+8.0f}%{s['sell_buy']:>9.2f}")
-    out.append("windows=settled; fills=buys+sells; budget$=peak capital-at-risk = bankroll needed")
-    out.append("(sells recover instantly; HELD residual locked ~10min to auto-redeem (measured)). sell/buy: 0=pure hold.")
-    out.append("")
-    out.extend(pair_text(db))
-    return "\n".join(out)
+    strategies = [row[0] for row in db.execute(
+        "SELECT DISTINCT strategy FROM settlements ORDER BY strategy"
+    )]
+    if not strategies:
+        fills = db.execute("SELECT count(*) FROM fills").fetchone()[0]
+        db.close()
+        return f"FOCUSED PAIR PAPER warming up | provisional fills={fills} | awaiting official outcomes"
+    snapshots = sorted((snapshot_one(db, strategy) for strategy in strategies),
+                       key=lambda row: row.pnl, reverse=True)
+    last = float(db.execute("SELECT COALESCE(max(ts),0) FROM settlements").fetchone()[0])
+    out = [
+        f"FOCUSED PAIR PAPER | official outcomes | last settle {time.strftime('%H:%M:%S', time.gmtime(last))} UTC",
+        f"{'strategy':<14}{'wnd':>5}{'trd':>6}{'vol$':>8}{'win%':>6}{'pnl$':>9}{'bank$':>8}"
+        f"{'ROC':>7}{'buySum':>8}{'sellSum':>9}{'unmat':>7}{'post/w':>8}{'rest':>7}"
+        f"{'qAhead':>8}{'act':>8}{'reject':>8}",
+    ]
+    for row in snapshots:
+        out.append(
+            f"{row.strategy:<14}{row.windows:>5}{row.trades:>6}"
+            f"{row.volume:>8.0f}{row.win_rate*100:>5.0f}%"
+            f"{row.pnl:>+9.2f}{row.bankroll:>8.1f}"
+            f"{row.roc*100:>+6.1f}%{_format_sum(row.buy_sum):>8}"
+            f"{_format_sum(row.sell_sum):>9}{row.unmatched:>7.1f}"
+            f"{row.posts_per_window:>8.1f}{row.rest_seconds:>6.1f}s"
+            f"{row.queue_consumed:>8.0f}{row.action_ms:>6.0f}ms"
+            f"{row.post_only_rejects:>8}"
+        )
+    out.extend((
+        "buySum/sellSum are matched-share proxies; unmat is end-of-window unmatched shares.",
+        "Queue-ahead depth is consumed before a maker fill; rebates are excluded.",
+        "act is measured simulated action activation; reject is stale post-only prevention.",
+    ))
+    result = "\n".join(out)
+    db.close()
+    return result
 
 
 def tg_text(db_path: str = "paper/paper.db") -> str:
-    """Phone-width (~36 char) monospace layout for Telegram. Full detail stays
-    in the terminal report / logs."""
-    import time as _t
     db = sqlite3.connect(db_path)
-    strats = _strategies(db)
-    if not strats:
-        return "(warming up - no settled windows yet)"
-    snaps = sorted((snapshot_one(db, st) for st in strats), key=lambda s: s["pnl"], reverse=True)
-    hours = 0.0
-    row = db.execute("SELECT min(ts), max(ts) FROM settlements WHERE n_fills>0").fetchone()
-    if row and row[0]:
-        hours = (row[1] - row[0]) / 3600
-    last = row[1] or 0
-    out = [f"PAPER A/B v2.1 · {hours:.1f}h · settled@{_t.strftime('%H:%M', _t.gmtime(last))}Z",
-           f"{'strategy':<10}{'pnl$':>5}{'ROC%':>5}{'vol$':>6}{'avg$':>5}{'win%':>5}{'bud$':>5}"]
-    for s in snaps:
-        roc = max(-999, min(999, s['roc_budget'] * 100))
-        nf = s['buys'] + s['sells']
-        avg = s['volume'] / nf if nf else 0.0
-        out.append(f"{s['strategy'][:10]:<10}{s['pnl']:>+5.0f}{roc:>+5.0f}{min(99999, s['volume']):>6.0f}"
-                   f"{min(99.99, avg):>5.2f}{s['win_rate']*100:>4.0f}%{min(99999, s['budget']):>5.0f}")
-    out.append("ROC=pnl/bankroll. full cols in logs")
-    t0 = db.execute("SELECT COALESCE(min(ts),0) FROM settlements WHERE strategy LIKE 'xf_%' OR strategy='split_sell'").fetchone()[0]
-    if t0:
-        out.append("")
-        out.append("XF RACES since launch (e=xf-orig)")
-        for orig, xf in PAIRS:
-            o = _since(db, orig, t0)
-            x = _since(db, xf, t0)
-            if x["n"] == 0 and o["n"] == 0:
-                continue
-            out.append(f"{orig[:11]:<11}{o['pnl']:>+6.0f}{x['pnl']:>+6.0f} e{x['pnl']-o['pnl']:>+5.0f}")
-    return "\n".join(out)
+    strategies = [row[0] for row in db.execute(
+        "SELECT DISTINCT strategy FROM settlements ORDER BY strategy"
+    )]
+    if not strategies:
+        db.close()
+        return "PAIR PAPER warming up - official outcomes pending"
+    rows = sorted((snapshot_one(db, strategy) for strategy in strategies),
+                  key=lambda row: row.pnl, reverse=True)
+    out = ["PAIR PAPER · queue-aware · no orders", f"{'strategy':<13}{'pnl':>7}{'ROC':>6}{'unm':>5}"]
+    for row in rows:
+        out.append(f"{row.strategy[:13]:<13}{row.pnl:>+7.1f}"
+                   f"{row.roc*100:>+5.0f}%{row.unmatched:>5.0f}")
+    result = "\n".join(out)
+    db.close()
+    return result
 
 
 if __name__ == "__main__":

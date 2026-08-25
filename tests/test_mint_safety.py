@@ -25,6 +25,8 @@ class MintSafetyTests(unittest.TestCase):
         assert book is not None
         self.assertEqual(book.price, 0.63)
         self.assertEqual(book.received_at, 2.0)
+        books.clear()
+        self.assertIsNone(books.get("up"))
 
     def test_asymmetric_fill_stops_further_quotes(self) -> None:
         plan = plan_pair_quotes(minted=20, sold_up=5, sold_down=0,
@@ -42,8 +44,8 @@ class MintSafetyTests(unittest.TestCase):
     def test_repricing_preserves_queue_but_urgent_underpricing_bypasses_rest(self) -> None:
         self.assertFalse(should_reprice((0.50, 0.51), (0.51, 0.50), 10.0))
         self.assertFalse(should_reprice((0.50, 0.51), (0.53, 0.48), 2.0))
-        self.assertTrue(should_reprice((0.50, 0.51), (0.53, 0.48), 6.0))
-        self.assertTrue(should_reprice((0.50, 0.51), (0.56, 0.45), 0.2))
+        self.assertTrue(should_reprice((0.50, 0.51), (0.55, 0.46), 16.0))
+        self.assertTrue(should_reprice((0.50, 0.51), (0.60, 0.41), 0.2))
 
 
 if __name__ == "__main__":

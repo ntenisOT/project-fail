@@ -19,11 +19,11 @@ def should_reprice(
     age_seconds: float,
     *,
     tick: float = 0.01,
-    hysteresis_ticks: int = 3,
-    min_rest_seconds: float = 5.0,
-    urgent_ticks: int = 6,
+    hysteresis_ticks: int = 5,
+    min_rest_seconds: float = 15.0,
+    urgent_ticks: int = 10,
 ) -> bool:
-    """Preserve queue priority unless stale asks are materially underpriced."""
+    """Target durable queue residence, escaping only a severe adverse move."""
     moves = [new - old for old, new in zip(current, target)]
     if max(abs(move) for move in moves) + 1e-9 < hysteresis_ticks * tick:
         return False

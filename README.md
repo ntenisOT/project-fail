@@ -20,7 +20,7 @@ mint strategy is therefore a hypothesis to test, not "the winners' mechanic."
 | SSH | `ssh -i ~/.ssh/pm_deploy ubuntu@3.254.130.64` |
 | Code | `~/project-fail` (deployed by `scp` from the local repo — **not** a git checkout) |
 | Python | `~/project-fail/.venv/bin/python` (always use the venv binary) |
-| Measured latency | CLOB `/time` GET **28 ms** median; intent-to-1s-poll **566 ms** median / **857 ms** p90; new-order lower bound ~**594 ms** median (POST acknowledgement unmeasured) |
+| Measured latency | Repeated CLOB `/time` GET **27–28 ms** median / **31–33 ms** p90; legacy 1 s poll added **546 ms** median / **928 ms** p90 and has been removed; paper action proxy **65 ms** (authenticated POST/cancel unmeasured) |
 
 **The UK/local machine is paper-and-tooling only** (trading from the UK is
 blocked). The geo interlock (`DEPLOY_REGION=eu-west-1` in the box `.env`)
@@ -30,8 +30,7 @@ hard-blocks every place-mode component anywhere else.
 
 | Session | Command it runs | What it is |
 |---|---|---|
-| `paper` | `python -m paper.run` | the 49-arm paper A/B (writes `paper/paper.db`) |
-| `shadow` | `LIVE_EXECUTOR_MODE=shadow python -m live.executor` | executor soak: real client + feeds, orders suppressed |
+| `paper` | `python -m paper.run` | four queue-aware pair/inventory hypotheses (writes `paper/paper.db`) |
 | `mintbot` | `MINTBOT_MODE=shadow python -m live.mintbot` | feed/quote soak only; place mode is currently forbidden |
 
 View: `tmux attach -t paper` (detach `Ctrl-b d`) or `tmux capture-pane -t paper -p | tail -20`.
@@ -41,9 +40,9 @@ View: `tmux attach -t paper` (detach `Ctrl-b d`) or `tmux capture-pane -t paper 
 ```bash
 touch ~/project-fail/paper/KILL
 ```
-Every component checks this file each loop: the executor cancels everything and
-exits; the mintbot cancels all asks and exits (balanced pairs can merge, but any
-unpaired residue remains outcome risk); the paper gate stops emitting intents.
+Every component checks this file: the executor cancels everything and exits;
+the mintbot cancels all asks and exits (balanced pairs can merge, but any
+unpaired residue remains outcome risk); the paper simulator exits.
 Remove the file before restarting anything.
 
 ---
@@ -52,12 +51,12 @@ Remove the file before restarting anything.
 
 All read-only; run from anywhere with the SSH key.
 
-**Full paper report (all 10 columns + races)** — the canonical status:
+**Focused paper report** — PnL, pair sums, unmatched inventory, queue depth and quote residence:
 ```bash
 ssh -i ~/.ssh/pm_deploy ubuntu@3.254.130.64 'cd ~/project-fail && ./.venv/bin/python -m paper.report'
 ```
 
-**Heartbeat** (is the runner alive; feeds; per-arm action counts):
+**Heartbeat** (runner, feed events, fills, resting paper orders and pending official outcomes):
 ```bash
 ssh -i ~/.ssh/pm_deploy ubuntu@3.254.130.64 'grep "hb |" ~/project-fail/paper/run.log | tail -1'
 ```
@@ -72,7 +71,7 @@ Plus live narrative: `tail -30 ~/project-fail/live/mintbot.log` (`MINTED`, `ASK`
 `FILLED`, `CLOSE ... est_pnl`).
 
 **Telegram**: the paper runner pushes the phone-formatted report every
-`PAPER_TG_MINS` minutes (monospace, sorted by pnl desc) — configured via `.env`.
+`PAPER_SUMMARY_MINS` minutes (monospace, sorted by pnl) — configured via `.env`.
 
 **Legacy benchmark vs real winners** (local machine — currently not a launch
 gate because its outcome/fill comparison is not execution-normalised):
@@ -85,57 +84,47 @@ Prints the real-wallet pool/best/median for the same windows next to our arms.
 official resolved slugs, full token lifecycles, per-token inventory, and
 read-only ClickHouse external tables. It separates direct CTF events from
 unexplained inventory and reports matched-share buy/sell price-sum proxies.
-`tools/latency_probe.py` measures GET/feed/poll surfaces while leaving order
-POST acknowledgement explicitly unknown.
+`tools/latency_probe.py` measures GET and feed surfaces without calling an order
+endpoint, then compares the configured paper delay with twice the GET p90 proxy.
 
 ---
 
-## 3. Legacy broad strategy roster (49 paper arms + accumulators)
+## 3. Focused pair-inventory experiment (four strategies)
 
-Everything races simultaneously in `paper/run.py::STRATEGIES` on the same tape.
-This is an exploration board, not 49 independent confirmations; multiple
-comparisons and shared fill assumptions make a one-window leader meaningless.
-Prefixes are composable lenses over the same signals:
+The legacy 49-arm board was retired after every execution-shaped pair/mint arm
+remained negative and corrected wallet forensics showed that “both tokens” is a
+signature, not one universal mechanism. The current board tests only:
 
-| Prefix | Meaning |
+| Strategy | Mechanic |
 |---|---|
-| *(none)* | original research arm, f-skim fills (f=0.2 of each print) |
-| `xf_` | exit-first twin: asks anchored at avg entry +2¢, forced taker dump last 40s |
-| `ta_` | time-aware fair (`fair_up_t`: tanh, scaled by √(time left)) + late-floor |
-| `lv_` | live-size/cap approximation; **not execution parity** because queue position, order acknowledgement, partial fills and exact live order state are absent |
-| `sq_` | 1.0 s tail-stress reference for four execution-shaped candidates |
-| `mint_` | mint-basis hypothesis: 20 sets at $1, never bids, asks track fair, matched leftovers merge; current paper fills do not prove profitability |
+| `pair_carry20` | Join both best bids only when their sum is ≤0.99; keep balanced complete sets through close |
+| `pair_churn20` | Same 20 ms decision cadence plus balanced best-ask resale when the ask sum is ≥1.01 |
+| `pair_churn600` | Identical churn with 600 ms decision cadence to test queue patience, not network latency |
+| `mint_sell20` | Start with twenty $1 paper sets; maker-sell balanced five-share clips, never bid |
 
-Signals: `twap` (Chainlink TWAP vs window ref), `binance`/`deribit` (external
-spot), `mid` (market mid = "neutral"), `pair` (1 − other side's last price),
-`pair_hl` (1 − other side's **best ask** — beat last-price anchoring by ~+84
-over 52 windows), `twap_t` (time-aware). Confirm lists gate entries on feed
-agreement. Board cadence (`PAPER_REQUOTE_S`) is a sensitivity; execution-shaped
-twins use the measured 0.60 s lower-bound cadence and `sq_*` keeps a 1.0 s tail
-stress case. Neither includes order POST acknowledgement.
+The simulator reconstructs public price levels from authoritative snapshots and
+`price_change` deltas. Joining the best price puts the displayed level size in
+front of our hypothetical order; trades consume that queue before we receive a
+fill. Same-price quotes retain queue position, repricing loses it. All strategies
+use five-share clips, maker fees/rebates are excluded, and official resolved
+Gamma outcomes settle each window. A partial startup window is observed but not
+scored. Actions activate after a configurable 65 ms delay: approximately twice
+fresh Ireland GET p90 as a conservative cancel/replace proxy. Existing orders can
+still fill while a delayed cancellation is in flight, and stale post-only
+replacements are rejected.
 
-Accumulators (not arms): `lock_arb`/`split_sell` (book-crossing set arb at 1.0 s
-persistence = today's pipeline) and `lock_fast`/`split_fast` (0.15 s = in-process
-pipeline). **Verdict from live probes: the taker-arb edge is ≈ zero** — the
-lockbot went 0-for-lifetime on completed locks and was retired.
-
-Key races the report prints: every `X vs xf_X / lv_X`, `sq_ vs lv_` (value of the
-fast pipeline), `pair_mm vs hl_pair vs mint_hl` (entry mechanics), `mint_hl vs
-mint_tw` (ask anchor).
-
-### Fill-model limits
-Fills execute at the posted quote and settlements skip missing references, but
-the engine still has no queue model or order acknowledgement. `live_sim` can
-absorb an entire crossing print while the gate emits only five ask shares, and
-same-price refresh behaviour differs from the executor. Paper is useful for
-rejection and comparison; it is not currently a production parity proof.
+This is substantially less optimistic than the retired print-skimming model,
+but still cannot model private cancellations ahead of us, exchange order
+acknowledgement, authenticated fills or our own impact. It remains a rejection
+and comparison tool, not production-parity proof.
 
 ---
 
 ## 4. Live components
 
 ### `live/executor.py` — quote executor (file-driven)
-Consumes `paper/intents.jsonl` from the paper runner's LiveGate. Modes
+Legacy component that consumes `paper/intents.jsonl`. The focused runner emits
+no intents, so it is disconnected and must remain off. Modes
 `log-only` / `shadow` / `place`. Guards G1–G17: geo interlock, startup/exit
 cancel-all, per-action try/except, window-end cancels, $5 order cap,
 holdings-gated sells, session exposure cap, **balance-based day stop persisted
@@ -143,17 +132,16 @@ per UTC day** (`live/day_baseline.json` — trips on any wallet drift it didn't
 cause, incl. manual trading on the same wallet), action budget, KILL, rotation-
 safe reader, close-dump, placement-time spend cap with cancel refunds, post-only
 throttle (10 s cooldown), ledger tripwire, pair-recycler + lock-taker (dormant).
-Enabled strategies: `paper/live.json`. The latest quote-intent probe measured
-566 ms median / 857 ms p90 in the one-second poll loop before REST. Book-driven
-arb intents also have a one-second producer throttle and can approach two
-seconds.
+Enabled strategies: `paper/live.json`. A fresh legacy quote-intent probe measured
+546 ms median / 928 ms p90 before REST. That delay came from the one-second file
+poll; the focused paper runner neither emits intents nor starts this executor.
 
 ### `live/mintbot.py` — experimental mintbot (in-process; shadow only)
 Per window per asset: `splitPosition` mints $20 of sets in the first 60 s →
 maker asks on both sides, anchored `1 − opposite_ask + 2¢`. It consumes
 `price_change` deltas, sends the required heartbeat, verifies the old pair is
 gone before one batch replacement, posts five-share clips, preserves queue
-priority with a three-tick/five-second band (six-tick adverse override), and
+priority with a five-tick/15-second band (10-tick adverse override), and
 stops quoting after asymmetric fills. A joint-sum
 floor constrains a quoted pair but cannot guarantee paired fills. Position
 polling still cannot reconstruct exact fill prices, so reported PnL is not yet
@@ -187,20 +175,20 @@ selection on crossed books. Kept in-repo as reference.
 ## 5. Operating rules (standing, user-set)
 
 1. **Parity rule**: nothing changes in production without paper/replay first.
-   A green `lv_` arm alone is insufficient; order/fill/position reconciliation
+   A green queue-aware paper arm alone is insufficient; order/fill/position reconciliation
    and measured execution behaviour must also pass.
 2. **Every runner restart archives the DB**: verify the runner is DEAD first
    (`tmux kill-session -t paper`, then PID-checked wait), then
    `mv paper/paper.db paper/paper_genN_<date>end.db && rm -f paper/intents.jsonl`,
    then start fresh. Never mix generations in one sample.
-3. **Launch boundary**: Claude prepares everything; **the user runs every
+3. **Launch boundary**: the agent prepares everything; **the user runs every
    place-mode launch and every command that moves money**. Keys go from
    MetaMask to the box `.env` by the user's hands only.
 4. **Never `pkill` on the box.** The tmux server's argv contains session command
    strings — pattern kills murder every session (it happened three times).
    `tmux kill-session` + PID-targeted `kill` only.
-5. Deploys: local edit → syntax check → `scp` → verified restart → commit+push
-   to `main`. Reports always full 10-column output, sorted by pnl desc.
+5. Deploys: local edit → focused checks → `scp` → hash-verified restart →
+   commit+push to `main`. Reports are sorted by PnL and retain queue/inventory evidence.
 
 ### Launch commands
 
@@ -209,8 +197,9 @@ No place-mode or approval command is published while the launch gate is closed.
 ### `.env` on the box (names only — never commit values)
 `POLY_PRIVATE_KEY`, `POLY_FUNDER`, `POLY_SIGNATURE_TYPE` (site/CLOB identity) ·
 `MINTER_PRIVATE_KEY`, `MINTER_ADDRESS` (mint EOA) · `DEPLOY_REGION=eu-west-1`
-(geo interlock) · `TELEGRAM_*` (reports) · `PAPER_LIVE_INTENTS`, `PAPER_TG_MINS`,
-`PAPER_SUMMARY_MINS`, `PAPER_REQUOTE_S` · optional `POLYGON_RPC_URL`,
+(geo interlock) · `TELEGRAM_*` (reports) · `PAPER_SUMMARY_MINS`, `PAPER_ASSETS`,
+`PAPER_ACTION_LATENCY_MS` ·
+optional `POLYGON_RPC_URL`,
 `MINT_USD`, `MINT_DAY_CAP`, `MINT_SPREAD`, `LIVE_EXECUTOR_MODE`, `MINTBOT_MODE`.
 
 ---
@@ -220,7 +209,7 @@ No place-mode or approval command is published while the launch gate is closed.
 Every generation = one clean sample under one code state; archives live next to
 the DB as `paper/paper_genN_<date>{start,end}.db`.
 
-| Gen | When (UTC 08-24) | What changed |
+| Gen | When (UTC) | What changed |
 |---|---|---|
 | ≤5 | morning | research arms → fill model v2 → lv_ parity twins |
 | 6 | 17:32 | full lv_ coverage (45 arms), hl_pair debut |
@@ -229,6 +218,7 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 9 | 20:06 | whole board 0.15 s requote, sq_ slow twins, lock/split fast tiers |
 | 10 | 21:53 | mint_hl / mint_tw debut + mintbot v1 shadow |
 | 11 | 22:15 | **mintbot v2: 15 mint-stack review fixes**; paper mints 20 sets; order-sized sells restored; budget fix |
+| 12 | 08-25 02:xx | four queue-aware pair/inventory hypotheses; official outcomes; measured 65 ms action delay |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

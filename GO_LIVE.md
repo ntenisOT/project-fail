@@ -1,97 +1,83 @@
-# Go-live readiness — per-strategy graduation from paper to live
+# Go-live gate
 
-> **Current status (2026-08-25): NO-GO.** This is a legacy checklist, not a
-> readiness claim. `README.md` and the current code are authoritative; the
-> `lv_` simulator is not execution parity and the mint edge is unproven.
+> **Status: NO-GO.** No current strategy or component is approved to place an
+> order, approve collateral, split, merge, or otherwise move money.
 
-Paper stays the default. A strategy goes live only through the double opt-in
-below, one strategy at a time, smallest possible size first.
+## Current architecture
 
-## Architecture (who does what)
-
-```
-paper/run.py  ──►  paper/live_gate.py  ──►  paper/intents.jsonl  ──►  YOUR executor (live/executor.py)
-(strategies)       (risk caps, kill,        (desired quotes,          (holds YOUR keys, signs,
- all simulated      double opt-in)           no keys, no orders)       places/cancels, final risk)
+```text
+public CLOB market feed -> four-strategy queue-aware paper simulator -> SQLite report
+public CLOB market feed -> mintbot shadow quote planner               -> logs only
 ```
 
-- Paper and log-only modes hold no keys and submit no orders. `live/executor.py`
-  and `live/mintbot.py` can sign and submit in explicit place mode, so they are
-  money-path code and remain behind the closed manual launch gate.
-- The executor consumes `paper/intents.jsonl`, diffs desired quotes against its
-  tracked resting orders, then applies its own risk checks. That tracking is not
-  yet sufficient evidence of exchange-state parity; place mode remains NO-GO.
+The focused paper runner has no keys and emits no executor intents. The legacy
+file-driven executor is disconnected. Mintbot place mode, CTF split/merge, and
+the old approval/setup commands fail closed in code.
 
-## Verified market facts (2026-08-23, from gamma + CLOB metadata)
+## Market and execution facts
 
-- Fees: `crypto_fees_v2`, **taker-only** (`{rate 0.07, exponent 1, takerOnly: true}`)
-  → resting (maker) orders pay **0**; makers additionally earn rebates
-  (`rebateRate 0.2`) which our models ignore (conservative).
-- Taker fee = `shares × 0.07 × p × (1−p)` (docs-confirmed) → 1.75¢/share at
-  p=0.5, 0.2¢/share at p≈0.97 (cheap near-close exits, dear mid-range).
-- lock_arb lifts both asks = taker both legs → fee ≈ 3.45¢/set at balanced
-  prices vs 1-2¢ gross edge: modeled since fill v2.1; balanced sets need
-  YES+NO < ~0.965 to profit after fees.
-- Limit orders: **minimum 5 shares** to post, tick 0.01. Partial fills of a
-  posted order are valid at any size. Market orders: $1 minimum.
-- Recent observed auto-redemption was roughly 5-10 minutes after settlement;
-  treat this as deployment-specific and remeasure before sizing bankroll.
-  A complete YES+NO set merges to $1 instantly (lock_arb capital recycles).
+- Crypto makers pay no trading fee; maker rebates are excluded from paper
+  results because our future share of the daily pool is unknown.
+- Crypto takers pay `shares * 0.07 * p * (1-p)`.
+- Limit orders require at least five shares.
+- Repeated Ireland CLOB GET RTT is 27-28 ms median / 31-33 ms p90. The legacy one-second
+  file poll added 546 ms median / 928 ms p90 and is no longer in the paper path.
+  Paper activates actions after 65 ms: approximately twice GET p90 as a conservative
+  cancel/replace proxy. Authenticated POST/cancel timing remains unmeasured.
+- CLOB V2 uses pUSD and the V2 exchange/collateral adapters. The direct legacy
+  USDC.e CTF transaction path is forbidden.
 
-## Fill model v2 (what the paper numbers now assume)
+## Strategy evidence required
 
-- Execution-shaped twins hold posted quotes for 0.60s; `sq_*` uses 1.0s as a
-  tail-stress case. Both simulate stale-quote pick-off, but neither models CLOB
-  POST acknowledgement or exchange-state reconciliation.
-- Quotes only post with ≥5-share capacity (bid) / ≥5-share inventory (ask).
-- Maker fee 0 (matches metadata). f=0.2 queue-share assumption unchanged.
-- Known bias: cancels apply lazily at the next print, so v2 is slightly
-  **pessimistic** in sparse tape; v1 (archived `paper_fillv1_*.db`) was the
-  optimistic ceiling. Live should land between.
+The four current hypotheses are `pair_carry20`, `pair_churn20`,
+`pair_churn600`, and `mint_sell20`. A candidate cannot advance unless a clean
+generation demonstrates all of the following:
 
-## Checklist to enable ONE strategy
+- At least 288 full asset-windows (six hours across four assets); partial
+  startup windows are excluded.
+- Positive PnL and return on conservative overlapping bankroll, not merely high
+  win rate or volume.
+- The result is not explained by one asset, one outcome direction, or a handful
+  of windows.
+- Paired buy sum is below $1 and, for churn, paired sell sum is above $1.
+- Unmatched inventory and tail losses remain inside explicit caps.
+- Queue-ahead consumption, quote residence, post/cancel rate, and fill rate are
+  credible rather than print-skimming assumptions.
+- The 600 ms decision-cadence twin does not destroy the edge. This is a queue-
+  patience comparison; both twins use the same 65 ms action-delay model.
 
-- [ ] ≥ 6h of fill-model-v2 A/B data; strategy is top-3 by pnl$ with sane budget$
-- [ ] Copy `paper/live.json.example` → `paper/live.json`; set `enabled` to the
-      ONE strategy; keep `max_order_usd: 5`, `max_inventory_usd: 50`,
-      `daily_loss_stop_usd: 25` for the first session
-- [ ] Start runner with `PAPER_LIVE_INTENTS=1` (otherwise nothing is emitted)
-- [ ] Run the bundled executor yourself: `python -m live.executor` (log-only first;
-      set LIVE_EXECUTOR_MODE=place in .env when ready for real orders)
-- [ ] Confirm current CLOB V2 pUSD and outcome-token approvals (not legacy USDC.e/V1 exchange)
-- [ ] Dry pass: watch intents for 15 min with executor in log-only mode; check
-      quote churn vs CLOB rate limits before letting it place
-- [ ] Kill switch drill: `touch paper/KILL` stops intents instantly — verify once
-- [ ] First live session: 1 asset (btc), 30–60 min, then compare live fills vs
-      paper fills on the SAME windows (fill count, avg $, adverse-selection rate)
+Early negative evidence is enough to reject or alter a hypothesis; the minimum
+sample is a promotion gate, not a reason to preserve a losing configuration.
 
-## Open items before scaling size
+## Execution evidence required
 
-- [ ] Pull CLOB order/cancel rate limits; budget quote churn per asset
-- [ ] Live-vs-paper fill calibration report (auto-diff both ledgers per window)
-- [ ] Maker rebate accounting (currently ignored = hidden upside)
-- [ ] winner_clone build: open+close participation, sell/buy ≈ 1.0 target,
-      near-close taker exit at ≥0.97 (fee ~0.2% there)
+Before any strategy can place an order:
 
-## Deploy runbook — Ireland box (AWS eu-west-1)
+- Add the authenticated CLOB user/order channel and reconcile every order,
+  trade, position, collateral balance, and partial fill.
+- Stop replenishment whenever fill state is unknown; position polling alone is
+  insufficient.
+- Measure order POST acknowledgement and verified cancel/replace latency from
+  Ireland.
+- Prove startup, stale-feed, KILL, window-close, and shutdown cancellation with
+  authoritative open-order evidence.
+- Port and independently verify the V2 collateral-adapter split/merge route.
+- Compare paper queue estimates against a no-money shadow/order-log generation.
 
-CLOB matching runs in AWS eu-west-2 (London); eu-west-1 is the closest
-non-georestricted region (~1-5 ms RTT). Same region we used for project-magic.
+## Safe operations
 
-```
-git clone https://github.com/ntenisOT/project-fail && cd project-fail
-python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
-# copy .env by hand (scp) - NEVER commit it. Fill keys locally on the box.
-python -m live.latency          # read-only GET RTT only; do not infer order latency
-python -m live.balance          # confirm funds visible
-tmux new -d -s paper 'python -m paper.run'            # 13-arm paper + intents
-python -m live.executor         # log-only session first, watch [dry] churn
-# when ready: LIVE_EXECUTOR_MODE=place in .env, then
-tmux new -d -s exec 'python -m live.executor'         # YOU run this = live
-# instant stop from anywhere:  touch paper/KILL
+```bash
+# paper only
+tmux new -d -s paper 'cd ~/project-fail && ./.venv/bin/python -m paper.run'
+
+# feed and quote decisions only; place mode is hard-disabled
+tmux new -d -s mintbot 'cd ~/project-fail && MINTBOT_MODE=shadow ./.venv/bin/python -m live.mintbot'
+
+# immediate brake
+touch ~/project-fail/paper/KILL
 ```
 
-`live.latency` measures network RTT, not the file executor or order
-acknowledgement. Do not derive `PAPER_REQUOTE_S` from `2xRTT+50ms`; use measured
-intent-to-order timing for the actual pipeline and retain queue/fill-model
-limitations explicitly.
+Every restart gets a fresh database generation. Stop the exact tmux session,
+wait for its child PID to exit, archive the database and intent/log artifacts,
+then restart. Never use broad `pkill`, never overwrite `.env`, and never publish
+a place-mode command while this gate is closed.

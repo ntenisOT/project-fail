@@ -1,5 +1,7 @@
-"""Live executor: consumes paper/intents.jsonl (desired quotes from the paper
-runner's LiveGate) and maintains real resting limit orders on the Polymarket
+"""Dormant live executor for the legacy paper/intents.jsonl quote contract.
+
+The focused paper runner does not produce this file. If a future reviewed
+producer is added, this component can maintain real resting limit orders on the Polymarket
 CLOB. Run it YOURSELF:
 
     python -m live.executor
@@ -12,8 +14,8 @@ Modes (LIVE_EXECUTOR_MODE in .env):
              live-only code paths (fill recognition, caps, day-stop) at $0 -
              the stage the first incident proved necessary. Read-only: skips
              the startup/exit cancel_all too.
-  place    : REAL ORDERS. Needs POLY_PRIVATE_KEY (+ POLY_FUNDER for site
-             accounts) in .env AND DEPLOY_REGION=eu-west-1 (geo interlock).
+  place    : HARD-DISABLED. The focused paper runner emits no reviewed intents,
+             and authenticated order/fill reconciliation is incomplete.
 
 Guards (hardened audit 2026-08-23):
   G1  place-mode geo interlock (DEPLOY_REGION=eu-west-1)
@@ -280,6 +282,14 @@ class Clob:
 
 
 def main():
+    if MODE not in {"log-only", "shadow", "place"}:
+        raise SystemExit(f"invalid LIVE_EXECUTOR_MODE: {MODE}")
+    if MODE == "place":
+        raise SystemExit(
+            "PLACE DISABLED: focused paper emits no reviewed intents and "
+            "authenticated order/fill reconciliation is incomplete"
+        )
+
     conf = cfg()
     enabled = set(conf.get("enabled") or [])
     dump_strats = set(conf.get("dump_at_close") or [])       # G12: close-dump per strategy

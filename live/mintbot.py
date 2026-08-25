@@ -21,7 +21,8 @@ Inactive place-path guards (place mode is additionally hard-disabled):
   M6  3 INFRA merge failures -> stop minting entirely (no virtual fallback)
   M7  preflight: V2 exchange approval AND pUSD allowance >= 8x MINT_USD AND
       balance >= 4x MINT_USD
-  M8  quote sanity: delta-correct books fresh <3s, guarded prices, old pair
+  M8  quote sanity: delta-correct books plus market-channel heartbeat <12s,
+      guarded prices, old pair
       verified gone before batch replacement, and quoted sum >= 1.005
   M9  positions feed: a token ABSENT from the snapshot is UNKNOWN (not zero);
       closing windows are never fill-updated
@@ -55,7 +56,7 @@ MINT_USD = float(os.environ.get("MINT_USD", "20"))
 MINT_DAY_CAP = float(os.environ.get("MINT_DAY_CAP", "250"))
 SPREAD = float(os.environ.get("MINT_SPREAD", "0.02"))
 SUM_FLOOR = 1.005            # M8: two asks must sum above set cost + margin
-FRESH_S = 3.0
+FRESH_S = 12.0
 REQUOTE_S = 0.5
 MIN_SHARES = 5.0
 
@@ -133,6 +134,7 @@ class Mintbot:
         self.feed_counts = collections.Counter()
         self.quote_counts = collections.Counter()
         self.last_feed_log = 0.0
+        self.market_feed_at = 0.0
 
     def spawn(self, coro):
         t = asyncio.create_task(coro)
@@ -311,8 +313,7 @@ class Mintbot:
                     continue
                 bu, bd = self.books.get(st["up"]), self.books.get(st["dn"])
                 if (not bu or not bd or bu.price is None or bd.price is None
-                        or now - bu.received_at > FRESH_S
-                        or now - bd.received_at > FRESH_S):             # M8
+                        or now - self.market_feed_at > FRESH_S):        # M8
                     if any(st["asks"].values()):
                         await self.cancel_pair(st)
                         self.quote_counts["stale_pause"] += 1
@@ -395,6 +396,7 @@ class Mintbot:
             self.resub.clear()
             toks = list(self.tok_asset)
             try:
+                self.books.clear()
                 async with websockets.connect(MKT_WS, ping_interval=None,
                                               open_timeout=12) as ws:
                     await ws.send(json.dumps({"assets_ids": toks, "type": "market"}))
@@ -411,9 +413,11 @@ class Mintbot:
                         except asyncio.TimeoutError:
                             continue                       # re-check resub fast
                         if raw == "PONG":
+                            self.market_feed_at = time.time()
                             continue
                         items = json.loads(raw)
                         received_at = time.time()
+                        self.market_feed_at = received_at
                         for it in items if isinstance(items, list) else [items]:
                             if isinstance(it, dict):
                                 self.feed_counts[str(it.get("event_type", "?"))] += 1

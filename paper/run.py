@@ -1,595 +1,300 @@
-"""Paper trader runner — strategy variants in parallel on one live feed. PAPER ONLY.
+"""Focused, queue-aware maker inventory paper runner. No keys or orders."""
 
-Feeds (signal only; no capital anywhere but Polymarket):
-  - ws-live-data: crypto_prices_chainlink (60s TWAP) + crypto_prices (Binance spot)
-  - Deribit WS: deribit_price_index.<asset>_usd
-  - CLOB market WS: last_trade_price (fills) + book (lock_arb best asks)
-Fair value per strategy is computed here and passed into the engine.
-Run: python -m paper.run
-"""
-# ruff: noqa: E402
 from __future__ import annotations
 
 import asyncio
 import collections
+import dataclasses
 import json
 import logging
+import math
 import os
 import time
-import urllib.request
 
 import websockets
 
-from live.market_book import parse_book_updates
-from paper import envload
-envload.load()
-
-from paper import report
-from paper.engine import PaperWindow, TWAP, fair_up, fair_up_t
+from paper import envload, report
 from paper.ledger import Ledger
-from paper.live_gate import LiveGate
+from paper.market_metadata import ActiveMarket, fetch_active_market
 from paper.notify import notifier
+from paper.order_book import OrderBookCache
+from paper.pair_engine import PairConfig, PairWindow
+from tools.market_windows import ASSET_PREFIX, fetch_gamma_window
 
+envload.load()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 log = logging.getLogger("paper.run")
 
-ASSETS = {"btc": "btc-updown-5m", "eth": "eth-updown-5m", "sol": "sol-updown-5m", "xrp": "xrp-updown-5m"}
-_want = os.environ.get("PAPER_ASSETS")
-if _want:
-    ASSETS = {a: p for a, p in ASSETS.items() if a in _want.split(",")}
-BINANCE_SYM = {"btcusdt": "btc", "ethusdt": "eth", "solusdt": "sol", "xrpusdt": "xrp"}
-DERIBIT_IDX = {"btc": "btc_usd", "eth": "eth_usd", "sol": "sol_usd", "xrp": "xrp_usd"}
+ACTION_LATENCY_S = float(os.environ.get("PAPER_ACTION_LATENCY_MS", "65")) / 1000
+if not 0.01 <= ACTION_LATENCY_S <= 0.5:
+    raise RuntimeError("PAPER_ACTION_LATENCY_MS must be between 10 and 500")
 
-# 10 signal strategies (lock_arb handled separately)
-STRATEGIES = [
-    {"name": "hold",        "mode": "hold",      "signal": "twap",    "confirm": [],                    "spread": 0.03, "size_mode": "fixed"},
-    {"name": "roundtrip",   "mode": "roundtrip", "signal": "twap",    "confirm": [],                    "spread": 0.03, "size_mode": "fixed"},
-    {"name": "rt_wide",     "mode": "roundtrip", "signal": "twap",    "confirm": [],                    "spread": 0.05, "size_mode": "fixed"},
-    {"name": "opp_size",    "mode": "roundtrip", "signal": "twap",    "confirm": [],                    "spread": 0.03, "size_mode": "opp"},
-    {"name": "neutral",     "mode": "roundtrip", "signal": "mid",     "confirm": [],                    "spread": 0.03, "size_mode": "fixed"},
-    {"name": "twap_confirm","mode": "roundtrip", "signal": "twap",    "confirm": ["binance", "deribit"],"spread": 0.03, "size_mode": "fixed"},
-    {"name": "twap_binance","mode": "roundtrip", "signal": "twap",    "confirm": ["binance"],           "spread": 0.03, "size_mode": "fixed"},
-    {"name": "twap_deribit","mode": "roundtrip", "signal": "twap",    "confirm": ["deribit"],           "spread": 0.03, "size_mode": "fixed"},
-    {"name": "binance_only","mode": "roundtrip", "signal": "binance", "confirm": [],                    "spread": 0.03, "size_mode": "fixed"},
-    {"name": "deribit_only","mode": "roundtrip", "signal": "deribit", "confirm": [],                    "spread": 0.03, "size_mode": "fixed"},
-    # order-size experiment: clones of the leading arm with bigger participation
-    {"name": "td_f40",      "mode": "roundtrip", "signal": "twap",    "confirm": ["deribit"],           "spread": 0.03, "size_mode": "fixed", "f": 0.4},
-    {"name": "td_inv600",   "mode": "roundtrip", "signal": "twap",    "confirm": ["deribit"],           "spread": 0.03, "size_mode": "fixed", "maxinv": 600},
-    # exit-first (xf) twins: SAME signals, winner-style inventory policy --
-    # entry-anchored asks + forced near-close taker exit (carry ~0 to settlement)
-    {"name": "xf_roundtrip","mode": "roundtrip", "signal": "twap",    "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "xf": True},
-    {"name": "xf_opp",      "mode": "roundtrip", "signal": "twap",    "confirm": [],                    "spread": 0.03, "size_mode": "opp",   "xf": True},
-    {"name": "xf_neutral",  "mode": "roundtrip", "signal": "mid",     "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "xf": True},
-    {"name": "xf_twap_con", "mode": "roundtrip", "signal": "twap",    "confirm": ["binance", "deribit"],"spread": 0.03, "size_mode": "fixed", "xf": True},
-    {"name": "xf_twap_bin", "mode": "roundtrip", "signal": "twap",    "confirm": ["binance"],           "spread": 0.03, "size_mode": "fixed", "xf": True},
-    {"name": "xf_twap_der", "mode": "roundtrip", "signal": "twap",    "confirm": ["deribit"],           "spread": 0.03, "size_mode": "fixed", "xf": True},
-    {"name": "xf_binance",  "mode": "roundtrip", "signal": "binance", "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "xf": True},
-    {"name": "xf_deribit",  "mode": "roundtrip", "signal": "deribit", "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "xf": True},
-    # ta_*: TIME-AWARE twins (paper race per production rule) - terminal-prob
-    # fair + never bid <10c in final 90s + xf exits. Race vs their xf/base twins.
-    {"name": "ta_twap_der", "mode": "roundtrip", "signal": "twap_t",  "confirm": ["deribit"],           "spread": 0.03, "size_mode": "fixed", "xf": True, "late_floor": True},
-    {"name": "ta_neutral",  "mode": "roundtrip", "signal": "mid",     "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "xf": True, "late_floor": True},
-    {"name": "ta_pair",     "mode": "roundtrip", "signal": "pair",    "confirm": [],                    "spread": 0.02, "size_mode": "fixed", "pair_balance": True, "xf": True, "late_floor": True},
-    # hl_pair: HALF-LOCK pair - bids priced off the other side LIVE BEST ASK
-    # (not stale last trade): a fill is instantly completable into a set < $1.
-    {"name": "hl_pair",     "mode": "roundtrip", "signal": "pair_hl", "confirm": [],                    "spread": 0.02, "size_mode": "fixed", "pair_balance": True, "xf": True},
-    {"name": "lv_hl_pair",  "mode": "roundtrip", "signal": "pair_hl", "confirm": [],                    "spread": 0.02, "size_mode": "fixed", "pair_balance": True, "xf": True, "live_sim": True},
-    # FULL lv coverage (gen-6): every distinct strategy config gets a live-
-    # mechanics twin. td_f40/td_inv600/opp_size collapse into lv_roundtrip /
-    # lv_twap_der (f and maxinv knobs do not exist under live mechanics).
-    {"name": "lv_hold",     "mode": "hold",      "signal": "twap",    "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "live_sim": True},
-    {"name": "lv_roundtrip","mode": "roundtrip", "signal": "twap",    "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "live_sim": True},
-    {"name": "lv_rt_wide",  "mode": "roundtrip", "signal": "twap",    "confirm": [],                    "spread": 0.05, "size_mode": "fixed", "live_sim": True},
-    {"name": "lv_twap_con", "mode": "roundtrip", "signal": "twap",    "confirm": ["binance", "deribit"],"spread": 0.03, "size_mode": "fixed", "live_sim": True},
-    {"name": "lv_twap_bin", "mode": "roundtrip", "signal": "twap",    "confirm": ["binance"],           "spread": 0.03, "size_mode": "fixed", "live_sim": True},
-    {"name": "lv_twap_der", "mode": "roundtrip", "signal": "twap",    "confirm": ["deribit"],           "spread": 0.03, "size_mode": "fixed", "live_sim": True},
-    {"name": "lv_binance",  "mode": "roundtrip", "signal": "binance", "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "live_sim": True},
-    {"name": "lv_deribit",  "mode": "roundtrip", "signal": "deribit", "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "live_sim": True},
-    {"name": "lv_xf_rt",    "mode": "roundtrip", "signal": "twap",    "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "xf": True, "live_sim": True},
-    {"name": "lv_xf_td",    "mode": "roundtrip", "signal": "twap",    "confirm": ["deribit"],           "spread": 0.03, "size_mode": "fixed", "xf": True, "live_sim": True},
-    {"name": "lv_xf_bin",   "mode": "roundtrip", "signal": "binance", "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "xf": True, "live_sim": True},
-    {"name": "lv_xf_der",   "mode": "roundtrip", "signal": "deribit", "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "xf": True, "live_sim": True},
-    {"name": "lv_xf_neu",   "mode": "roundtrip", "signal": "mid",     "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "xf": True, "live_sim": True},
-    {"name": "lv_ta_td",    "mode": "roundtrip", "signal": "twap_t",  "confirm": ["deribit"],           "spread": 0.03, "size_mode": "fixed", "xf": True, "late_floor": True, "live_sim": True},
-    {"name": "lv_ta_neu",   "mode": "roundtrip", "signal": "mid",     "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "xf": True, "late_floor": True, "live_sim": True},
-    # lv_*: execution-shaped twins with $5 clips, G13-like spend caps and the
-    # measured 0.60s file-pipeline cadence. They are not exchange-state parity.
-    {"name": "lv_neutral",  "mode": "roundtrip", "signal": "mid",     "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "live_sim": True},
-    {"name": "lv_pair",     "mode": "roundtrip", "signal": "pair",    "confirm": [],                    "spread": 0.02, "size_mode": "fixed", "pair_balance": True, "xf": True, "live_sim": True},
-    # mint_*: experimental sell-only minted-inventory hypothesis. Corrected
-    # wallet evidence shows this is not a faithful model of the leading cohort.
-    {"name": "mint_hl",     "mode": "roundtrip", "signal": "pair_hl", "confirm": [],                    "spread": 0.02, "size_mode": "fixed", "live_sim": True, "mint_basis": True, "mint_sets": 20},
-    {"name": "mint_tw",     "mode": "roundtrip", "signal": "twap",    "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "live_sim": True, "mint_basis": True, "mint_sets": 20},
-    # sq_*: 1.0s tail-stress twins. The measured lower-bound p90 is ~0.89s;
-    # cancel+replace POST acknowledgement remains unmeasured.
-    {"name": "sq_twap_con", "mode": "roundtrip", "signal": "twap",    "confirm": ["binance", "deribit"],"spread": 0.03, "size_mode": "fixed", "live_sim": True, "requote": 1.0},
-    {"name": "sq_neutral",  "mode": "roundtrip", "signal": "mid",     "confirm": [],                    "spread": 0.03, "size_mode": "fixed", "live_sim": True, "requote": 1.0},
-    {"name": "sq_pair",     "mode": "roundtrip", "signal": "pair",    "confirm": [],                    "spread": 0.02, "size_mode": "fixed", "pair_balance": True, "xf": True, "live_sim": True, "requote": 1.0},
-    {"name": "sq_hl_pair",  "mode": "roundtrip", "signal": "pair_hl", "confirm": [],                    "spread": 0.02, "size_mode": "fixed", "pair_balance": True, "xf": True, "live_sim": True, "requote": 1.0},
-    {"name": "lv_ta_pair",  "mode": "roundtrip", "signal": "pair",    "confirm": [],                    "spread": 0.02, "size_mode": "fixed", "pair_balance": True, "xf": True, "late_floor": True, "live_sim": True},
-    # pair_mm: trades the SUM, matching the balanced BTC churn archetype.
-    # fair(token) = 1 - last price of the OTHER side  =>  bid fills only when
-    # up+down < 1-spread (buy sets below face, maker), asks when sum > 1+spread.
-    # Paired inventory settles at face value in engine.settle() by construction.
-    {"name": "pair_mm",     "mode": "roundtrip", "signal": "pair",    "confirm": [],                    "spread": 0.02, "size_mode": "fixed", "pair_balance": True, "xf": True},
-]
-NAMES = [s["name"] for s in STRATEGIES]
-F, MAXINV, MINSIG = 0.2, 200, 0.05
-# Board cadence is a simulation sensitivity, not measured order latency.
-REQUOTE = float(os.environ.get("PAPER_REQUOTE_S", "0.15"))
-EXEC_REQUOTE = 0.60
-for strategy in STRATEGIES:
-    if strategy.get("live_sim") and "requote" not in strategy:
-        strategy["requote"] = EXEC_REQUOTE
-LOCK_MARGIN, TAKER_RATE = 0.002, 0.07  # capture only sets with NET edge (after taker fees) > margin
+ASSETS = dict(ASSET_PREFIX)
+requested = os.environ.get("PAPER_ASSETS")
+if requested:
+    wanted = {item.strip() for item in requested.split(",")}
+    ASSETS = {asset: prefix for asset, prefix in ASSETS.items() if asset in wanted}
 
-CL_WS = "wss://ws-live-data.polymarket.com"
-DERIBIT_WS = "wss://www.deribit.com/ws/api/v2"
+STRATEGIES = (
+    PairConfig("pair_carry20", "accumulate", 0.02,
+               action_latency_s=ACTION_LATENCY_S),
+    PairConfig("pair_churn20", "churn", 0.02,
+               action_latency_s=ACTION_LATENCY_S),
+    PairConfig("pair_churn600", "churn", 0.60,
+               action_latency_s=ACTION_LATENCY_S),
+    PairConfig("mint_sell20", "mint", 0.02,
+               action_latency_s=ACTION_LATENCY_S,
+               sell_sum_floor=1.005),
+)
 MKT_WS = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
-GAMMA = "https://gamma-api.polymarket.com"
+KILL = "paper/KILL"
 
 
-def gamma_tokens(prefix, base):
-    try:
-        req = urllib.request.Request(f"{GAMMA}/events?slug={prefix}-{base}", headers={"User-Agent": "Mozilla/5.0"})
-        ev = json.load(urllib.request.urlopen(req, timeout=10))
-        m = (ev[0].get("markets") or [{}])[0]
-        ids = m.get("clobTokenIds")
-        ids = json.loads(ids) if isinstance(ids, str) else ids
-        return ids if ids and len(ids) >= 2 else None
-    except Exception:
-        return None
+@dataclasses.dataclass
+class PendingWindow:
+    asset: str
+    start: int
+    windows: dict[str, PairWindow]
 
 
 class State:
-    def __init__(self):
-        self.twap = {a: TWAP() for a in ASSETS}
-        self.binance: dict[str, float] = {}
-        self.deribit: dict[str, float] = {}
-        self.wref = {a: {"twap": None, "binance": None, "deribit": None} for a in ASSETS}
-        self.win = {n: {} for n in NAMES}
-        self.lock = {a: None for a in ASSETS}          # lock_arb accumulator per asset
-        self.split = {a: None for a in ASSETS}         # split_sell accumulator per asset
-        self.best_bid: dict[str, float] = {}
-        self.tok_map: dict[str, tuple[str, bool]] = {}
-        self.best_ask: dict[str, float] = {}
-        self.last_price: dict[str, float] = {}
+    def __init__(self) -> None:
+        self.active: dict[str, dict[str, PairWindow]] = {}
+        self.pending: list[PendingWindow] = []
+        self.books = OrderBookCache()
+        self.token_map: dict[str, tuple[str, bool]] = {}
         self.tokens: set[str] = set()
         self.tokens_changed = asyncio.Event()
         self.ledger = Ledger()
-        self.gate = LiveGate()
         self.notify = notifier()
-        self.counts = collections.Counter()
+        self.events: collections.Counter[str] = collections.Counter()
+        self.resolution_errors: collections.Counter[str] = collections.Counter()
 
 
 S = State()
 
 
-def src_fair(src, a):
-    if src == "twap":
-        return fair_up(S.twap[a].now(), S.wref[a]["twap"])
-    if src == "binance":
-        return fair_up(S.binance.get(a), S.wref[a]["binance"])
-    if src == "deribit":
-        return fair_up(S.deribit.get(a), S.wref[a]["deribit"])
-    return None
+def _new_windows(market: ActiveMarket, observed_at: float) -> dict[str, PairWindow]:
+    return {
+        config.name: PairWindow(
+            config, market.asset, market.slug, market.start,
+            market.up_token, market.down_token, observed_at,
+        )
+        for config in STRATEGIES
+    }
 
 
-def strat_fair_up(strat, a):
-    prim = src_fair(strat["signal"], a)
-    if prim is None:
-        return None
-    for c in strat["confirm"]:
-        cf = src_fair(c, a)
-        if cf is None or (cf - 0.5) * (prim - 0.5) <= 0:   # missing or disagrees on direction
-            return None
-    return prim
+def _refresh_tokens() -> None:
+    old_tokens = S.tokens
+    token_map: dict[str, tuple[str, bool]] = {}
+    for asset, windows in S.active.items():
+        if not windows:
+            continue
+        sample = next(iter(windows.values()))
+        token_map[sample.tokens[True]] = (asset, True)
+        token_map[sample.tokens[False]] = (asset, False)
+    S.token_map = token_map
+    S.tokens = set(token_map)
+    for token in old_tokens - S.tokens:
+        S.books.drop(token)
+    if S.tokens != old_tokens:
+        S.tokens_changed.set()
 
 
-async def ws_live_task():
+async def _discover(asset: str, base: int) -> tuple[str, ActiveMarket | None]:
+    try:
+        return asset, await asyncio.to_thread(fetch_active_market, asset, base)
+    except RuntimeError as exc:
+        log.warning("market discovery %s: %s", asset, exc)
+        return asset, None
+
+
+async def window_task() -> None:
+    current_base = -1
     while True:
-        try:
-            async with websockets.connect(CL_WS, ping_interval=None, open_timeout=12) as ws:
-                for topic in ("crypto_prices_chainlink", "crypto_prices"):
-                    await ws.send(json.dumps({"action": "subscribe", "subscriptions": [{"topic": topic, "type": "update"}]}))
-                lp = 0.0
-                while True:
-                    if time.time() - lp > 5:
-                        await ws.send("PING")
-                        lp = time.time()
-                    raw = await asyncio.wait_for(ws.recv(), timeout=15)
-                    try:
-                        d = json.loads(raw)
-                    except (json.JSONDecodeError, TypeError):
-                        continue          # PONG / non-JSON keepalive
-                    p = d.get("payload") or {}
-                    if d.get("topic") == "crypto_prices_chainlink":
-                        a = {v: k for k, v in DERIBIT_IDX.items()}.get(p.get("symbol", "").replace("/", "_"))
-                        if a and p.get("value"):
-                            S.twap[a].add(time.time(), float(p["value"]))
-                    elif d.get("topic") == "crypto_prices":
-                        a = BINANCE_SYM.get(p.get("symbol"))
-                        if a and p.get("value"):
-                            S.binance[a] = float(p["value"])
-        except Exception as e:
-            log.warning("ws-live reconnect: %s", e.__class__.__name__)
-            await asyncio.sleep(2)
+        base = int(time.time() // 300) * 300
+        if base != current_base:
+            for asset, windows in list(S.active.items()):
+                if windows:
+                    start = next(iter(windows.values())).start
+                    if start < base:
+                        S.pending.append(PendingWindow(asset, start, windows))
+                        S.active[asset] = {}
+            current_base = base
+            _refresh_tokens()
+        missing = [asset for asset in ASSETS if not S.active.get(asset)]
+        if missing:
+            discoveries = await asyncio.gather(*(_discover(asset, base) for asset in missing))
+            for asset, market in discoveries:
+                if market is not None:
+                    S.active[asset] = _new_windows(market, time.time())
+                    log.info("opened %s %s with %d focused strategies", asset, market.slug,
+                             len(STRATEGIES))
+            _refresh_tokens()
+        await asyncio.sleep(1)
 
 
-async def deribit_task():
-    chans = [f"deribit_price_index.{DERIBIT_IDX[a]}" for a in ASSETS]
-    inv = {DERIBIT_IDX[a]: a for a in ASSETS}
+async def settlement_task() -> None:
     while True:
-        try:
-            async with websockets.connect(DERIBIT_WS, ping_interval=None, open_timeout=12) as ws:
-                await ws.send(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "public/subscribe",
-                                          "params": {"channels": chans}}))
-                while True:
-                    raw = await asyncio.wait_for(ws.recv(), timeout=20)
-                    try:
-                        d = json.loads(raw)
-                    except (json.JSONDecodeError, TypeError):
-                        continue
-                    if d.get("method") == "subscription":
-                        pr = d["params"]
-                        data = pr.get("data") or {}
-                        a = inv.get(data.get("index_name"))
-                        if a and data.get("price"):
-                            S.deribit[a] = float(data["price"])
-        except Exception as e:
-            log.warning("deribit reconnect: %s", e.__class__.__name__)
-            await asyncio.sleep(3)
-
-
-async def window_task():
-    loop = asyncio.get_event_loop()
-    while True:
-        now = time.time()
-        base = int(now - (now % 300))
-        for a, prefix in ASSETS.items():
-            ref = S.win[NAMES[0]].get(a)
-            rolled = ref is not None and now >= ref.end
-            if rolled and not ref.settled:
-                endtw = S.twap[a].at(ref.end) or S.twap[a].now()
-                if endtw is None or not S.wref[a]["twap"]:
-                    # F2: refs missing (feed gap) -> outcome UNKNOWABLE. Mark settled
-                    # WITHOUT recording rather than fabricating DOWN for 45 arms.
-                    log.warning("settle SKIPPED %s %s: missing TWAP refs (feed gap)", a, ref.slug)
-                    for n in NAMES:
-                        w = S.win[n].get(a)
-                        if w and not w.settled:
-                            w.settled = True
-                else:
-                    outcome = 1 if endtw >= S.wref[a]["twap"] else 0
-                    for n in NAMES:
-                        w = S.win[n].get(a)
-                        if w and not w.settled:
-                            w.settled = True
-                            S.ledger.record_settlement(now, n, a, w.slug, w.settle(outcome))
-                    lk = S.lock.get(a)
-                    if lk and lk["n"] > 0:
-                        S.ledger.record_settlement(now, "lock_arb", a, lk["slug"],
-                            {"cash": lk["profit"], "residual": 0.0, "pnl": lk["profit"], "capital": lk["peak"],
-                             "buys": lk["n"], "sells": lk["n"], "resid_shares": 0.0, "n_fills": lk["n"], "outcome_up": outcome})
-                    if lk and lk.get("fast_n", 0) > 0:     # 150ms tier: the in-process-pipeline case
-                        S.ledger.record_settlement(now, "lock_fast", a, lk["slug"],
-                            {"cash": lk["fast_profit"], "residual": 0.0, "pnl": lk["fast_profit"], "capital": lk["fast_peak"],
-                             "buys": lk["fast_n"], "sells": lk["fast_n"], "resid_shares": 0.0, "n_fills": lk["fast_n"], "outcome_up": outcome})
-                    sp = S.split.get(a)
-                    if sp and sp["n"] > 0:
-                        S.ledger.record_settlement(now, "split_sell", a, sp["slug"],
-                            {"cash": sp["profit"], "residual": 0.0, "pnl": sp["profit"], "capital": sp["peak"],
-                             "buys": sp["n"], "sells": sp["n"], "resid_shares": 0.0, "n_fills": sp["n"], "outcome_up": outcome})
-                    if sp and sp.get("fast_n", 0) > 0:
-                        S.ledger.record_settlement(now, "split_fast", a, sp["slug"],
-                            {"cash": sp["fast_profit"], "residual": 0.0, "pnl": sp["fast_profit"], "capital": sp["fast_peak"],
-                             "buys": sp["fast_n"], "sells": sp["fast_n"], "resid_shares": 0.0, "n_fills": sp["fast_n"], "outcome_up": outcome})
-                    log.info("settled %s %s outcome=%d", a, ref.slug, outcome)
-            if ref is None or rolled:
-                ids = await loop.run_in_executor(None, gamma_tokens, prefix, base)
-                if ids:
-                    slug = f"{prefix}-{base}"
-                    S.wref[a] = {"twap": S.twap[a].at(base), "binance": S.binance.get(a), "deribit": S.deribit.get(a)}
-                    for s in STRATEGIES:
-                        w = PaperWindow(a, slug, base, s["spread"], s.get("f", F), s.get("maxinv", MAXINV),
-                                        MINSIG if (s["signal"] not in ("mid", "pair", "pair_hl")
-                                                   and not s.get("mint_basis")) else -1.0,
-                                        mode=s["mode"], size_mode=s["size_mode"], requote=s.get("requote", REQUOTE),
-                                        exit_first=s.get("xf", False), pair_balance=s.get("pair_balance", False),
-                                        late_floor=s.get("late_floor", False), live_sim=s.get("live_sim", False),
-                                        mint_basis=s.get("mint_basis", False),
-                                        mint_sets=s.get("mint_sets", 60.0))
-                        w.up_tok, w.down_tok = ids[0], ids[1]
-                        S.win[s["name"]][a] = w
-                    S.lock[a] = {"slug": slug, "up": ids[0], "dn": ids[1], "cost": 0.0, "profit": 0.0, "n": 0, "peak": 0.0}
-                    S.split[a] = {"slug": slug, "up": ids[0], "dn": ids[1], "cost": 0.0, "profit": 0.0, "n": 0, "peak": 0.0}
-        tok_map, toks = {}, set()
-        for a, w in S.win[NAMES[0]].items():
-            if w.up_tok:
-                tok_map[w.up_tok] = (a, True)
-                tok_map[w.down_tok] = (a, False)
-                toks.add(w.up_tok)
-                toks.add(w.down_tok)
-        S.tok_map = tok_map
-        if toks != S.tokens:
-            for dead in S.tokens - toks:         # F13: evict dead tokens' cached state
-                S.best_ask.pop(dead, None)
-                S.best_bid.pop(dead, None)
-                S.last_price.pop(dead, None)
-            S.tokens = toks
-            S.tokens_changed.set()
-        await asyncio.sleep(5)
-
-
-def check_split(a):
-    sp = S.split.get(a)
-    if not sp:
-        return
-    w = S.win[NAMES[0]].get(a)
-    if w is None or w.settled:
-        return                                   # F5: no post-settlement accrual
-    bu, bd = S.best_bid.get(sp["up"]), S.best_bid.get(sp["dn"])
-    if bu is None or bd is None:
-        return
-    s = bu + bd
-    # mint $1 -> SELL both sides at the bids = taker on both legs
-    fee = TAKER_RATE * (bu * (1 - bu) + bd * (1 - bd))
-    net = s - 1.0 - fee
-    if net <= LOCK_MARGIN:
-        sp["pend"] = None                        # dislocation gone before we could act
-        return
-    # gen-8 realism: the shadow soak (1Hz sampling) measured ~2 captures while
-    # paper counted ~650 - sub-second flickers are not reachable by a real taker.
-    # Two capture tiers, one per pipeline (probe-measured 2026-08-24):
-    #   fast 0.15s = in-process ws->FAK (~95-165ms end-to-end) - the upgrade case
-    #   slow 1.0s  = today's file/poll pipeline (~1s mean)
-    now = time.time()
-    pend = sp.get("pend")
-    if not pend or pend[0] != (bu, bd):
-        sp["pend"] = ((bu, bd), now)
-        return
-    age = now - pend[1]
-    size = F * 50
-    if age >= 0.15 and sp.get("last_cap_f") != (bu, bd):
-        sp["last_cap_f"] = (bu, bd)
-        sp["fast_profit"] = sp.get("fast_profit", 0.0) + size * net
-        sp["fast_peak"] = max(sp.get("fast_peak", 0.0), size * 1.0)
-        sp["fast_n"] = sp.get("fast_n", 0) + 1
-    if age >= 1.0 and sp.get("last_cap") != (bu, bd):
-        sp["last_cap"] = (bu, bd)
-        sp["cost"] += size * 1.0                   # mint cost, recycled on the immediate sells
-        sp["profit"] += size * net
-        sp["peak"] = max(sp["peak"], size * 1.0)
-        sp["n"] += 1
-
-
-def check_lock(a):
-    lk = S.lock.get(a)
-    if not lk:
-        return
-    w = S.win[NAMES[0]].get(a)
-    if w is None or w.settled:
-        return                                   # F5: no post-settlement accrual
-    ua, da = S.best_ask.get(lk["up"]), S.best_ask.get(lk["dn"])
-    if ua is None or da is None:
-        return
-    s = ua + da
-    # both legs lift the ask = TAKER: fee = 0.07*p*(1-p) per share on each leg
-    fee = TAKER_RATE * (ua * (1 - ua) + da * (1 - da))
-    net = 1.0 - s - fee
-    if net <= LOCK_MARGIN:
-        lk["pend"] = None                        # dislocation gone before we could act
-        return
-    # gen-8 realism: two persistence tiers, same rationale as check_split
-    now = time.time()
-    pend = lk.get("pend")
-    if not pend or pend[0] != (ua, da):
-        lk["pend"] = ((ua, da), now)
-        return
-    age = now - pend[1]
-    size = F * 50
-    cost = size * (s + fee)
-    if age >= 0.15 and lk.get("last_cap_f") != (ua, da):
-        lk["last_cap_f"] = (ua, da)
-        lk["fast_profit"] = lk.get("fast_profit", 0.0) + size * net
-        lk["fast_peak"] = max(lk.get("fast_peak", 0.0), cost)
-        lk["fast_n"] = lk.get("fast_n", 0) + 1
-    if age >= 1.0 and lk.get("last_cap") != (ua, da):
-        # YES+NO cheap enough to survive fees: buy both, merge to $1
-        lk["last_cap"] = (ua, da)
-        lk["cost"] += cost
-        lk["profit"] += size * net
-        lk["peak"] = max(lk["peak"], cost)     # capital recycles via merge -> bankroll = peak single lock
-        lk["n"] += 1
-
-
-def handle_event(it):
-    et = it.get("event_type", "?")
-    S.counts[et] += 1
-    if et in ("book", "price_change", "best_bid_ask"):
-        for update in parse_book_updates(it):
-            tok = update.token
-            if update.has_ask:
-                if update.ask is None:
-                    S.best_ask.pop(tok, None)
-                else:
-                    S.best_ask[tok] = update.ask
-            if update.has_bid:
-                if update.bid is None:
-                    S.best_bid.pop(tok, None)
-                else:
-                    S.best_bid[tok] = update.bid
-            info = S.tok_map.get(tok)
-            if not info:
+        await asyncio.sleep(15)
+        for pending in list(S.pending):
+            try:
+                resolved = await asyncio.to_thread(
+                    fetch_gamma_window, pending.asset, pending.start, 1
+                )
+            except RuntimeError as exc:
+                S.resolution_errors[pending.asset] += 1
+                log.warning("resolution fetch %s-%d: %s", pending.asset, pending.start, exc)
                 continue
-            check_lock(info[0])
-            check_split(info[0])
-            if S.gate.active:
-                a, is_up = info
-                w = S.win[NAMES[0]].get(a)
-                if w and not w.settled:
-                    S.gate.emit_book(w.slug, tok, is_up, S.best_bid.get(tok), S.best_ask.get(tok))
+            if resolved is None:
+                continue
+            now = time.time()
+            sample = next(iter(pending.windows.values()))
+            if not sample.full_window:
+                S.pending.remove(pending)
+                log.info("skipped partial startup window %s", sample.slug)
+                continue
+            for name, window in pending.windows.items():
+                settlement, metrics = window.settle(now, resolved.winner_up)
+                S.ledger.record_settlement(now, name, pending.asset, window.slug, settlement)
+                S.ledger.record_metrics(now, name, pending.asset, window.slug, metrics)
+            S.pending.remove(pending)
+            log.info("officially settled %s outcome=%s", resolved.slug,
+                     "Up" if resolved.winner_up else "Down")
+
+
+def _quote_windows(asset: str, now: float) -> None:
+    windows = S.active.get(asset) or {}
+    if not windows:
         return
-    if et != "last_trade_price":
+    sample = next(iter(windows.values()))
+    up, down = S.books.get(sample.tokens[True]), S.books.get(sample.tokens[False])
+    if up is None or down is None:
         return
-    info = S.tok_map.get(it.get("asset_id"))
-    if not info:
+    for window in windows.values():
+        window.on_books(now, up, down)
+
+
+def handle_event(event: dict[str, object]) -> None:
+    event_type = str(event.get("event_type") or "?")
+    S.events[event_type] += 1
+    now = time.time()
+    S.books.apply(event, now)
+    if event_type != "last_trade_price":
+        return
+    token = str(event.get("asset_id") or "")
+    info = S.token_map.get(token)
+    taker_side = str(event.get("side") or "").upper()
+    if info is None or taker_side not in ("BUY", "SELL"):
         return
     try:
-        price = float(it.get("price", 0))
-        size = float(it.get("size", 0))
-    except (TypeError, ValueError):
+        price, size = float(str(event["price"])), float(str(event["size"]))
+    except (KeyError, TypeError, ValueError):
         return
-    if price <= 0 or size <= 0:
+    if (not math.isfinite(price) or not math.isfinite(size)
+            or not 0 < price < 1 or size <= 0):
         return
-    a, is_up = info
-    tok = it.get("asset_id")
-    now = time.time()
-    prev_mid = S.last_price.get(tok)      # mid BEFORE this trade (for neutral MM)
-    is_sell = str(it.get("side", "")).upper() == "SELL"
-    for s in STRATEGIES:
-        w = S.win[s["name"]].get(a)
-        if not w or w.settled:
-            continue
-        if s["signal"] == "mid":
-            fair_tok = prev_mid
-        elif s["signal"] == "pair":
-            other = w.down_tok if is_up else w.up_tok
-            po = S.last_price.get(other)
-            fair_tok = None if po is None else max(0.02, min(0.98, 1.0 - po))
-        elif s["signal"] == "pair_hl":
-            other = w.down_tok if is_up else w.up_tok
-            oa = S.best_ask.get(other)                    # LIVE completable price, not stale last
-            fair_tok = None if oa is None else max(0.02, min(0.98, 1.0 - oa))
-        elif s["signal"] == "twap_t":
-            fu = fair_up_t(S.twap[a].now(), S.wref[a]["twap"], w.end - now)
-            if fu is not None:
-                for csig in s["confirm"]:
-                    cf = src_fair(csig, a)
-                    if cf is None or (cf - 0.5) * (fu - 0.5) <= 0:
-                        fu = None
-                        break
-            fair_tok = None if fu is None else (fu if is_up else 1 - fu)
-        else:
-            fu = strat_fair_up(s, a)
-            fair_tok = None if fu is None else (fu if is_up else 1 - fu)
-        pre = None
-        if S.gate.enabled(s["name"]):
-            qq = w.q[is_up]
-            pre = (qq["bid"], qq["ask"])
-        rec = w.on_trade(now, is_up, price, size, is_sell, fair_tok)
-        if rec:
-            S.ledger.record_fill(now, s["name"], a, w.slug, rec)
-        if pre is not None:
-            qq = w.q[is_up]
-            if (qq["bid"], qq["ask"]) != pre:
-                S.gate.emit_quotes(s["name"], a, w.slug, tok, is_up, qq["bid"], qq["ask"], w.deployed)
-    S.last_price[tok] = price
+    asset, side_up = info
+    for name, window in (S.active.get(asset) or {}).items():
+        fill = window.on_trade(now, side_up, price, size, taker_side)
+        if fill:
+            S.ledger.record_fill(now, name, asset, window.slug, fill)
 
 
-async def market_task():
+async def market_task() -> None:
     while True:
         if not S.tokens:
             await asyncio.sleep(1)
             continue
-        S.tokens_changed.clear()                 # F15: clear FIRST; a roll mid-handshake re-sets it
-        toks = list(S.tokens)
+        S.tokens_changed.clear()
+        tokens = list(S.tokens)
         try:
+            S.books.clear()
             async with websockets.connect(MKT_WS, ping_interval=None, open_timeout=12) as ws:
-                await ws.send(json.dumps({"assets_ids": toks, "type": "market"}))
+                await ws.send(json.dumps({"assets_ids": tokens, "type": "market"}))
                 last_ping = time.monotonic()
+                log.info("market ws subscribed %d tokens", len(tokens))
                 while not S.tokens_changed.is_set():
                     elapsed = time.monotonic() - last_ping
                     if elapsed >= 10:
                         await ws.send("PING")
                         last_ping = time.monotonic()
                     try:
-                        raw = await asyncio.wait_for(ws.recv(), timeout=min(5, max(0.1, 10-elapsed)))
+                        raw = await asyncio.wait_for(
+                            ws.recv(), timeout=min(5, max(0.1, 10 - elapsed))
+                        )
                     except asyncio.TimeoutError:
                         continue
                     if raw == "PONG":
                         continue
                     try:
-                        d = json.loads(raw)
+                        payload = json.loads(raw)
                     except json.JSONDecodeError:
                         continue
-                    for it in (d if isinstance(d, list) else [d]):
-                        if isinstance(it, dict):
-                            handle_event(it)
-        except Exception as e:
-            log.warning("market ws reconnect: %s", e.__class__.__name__)
+                    for event in payload if isinstance(payload, list) else [payload]:
+                        if isinstance(event, dict):
+                            handle_event(event)
+        except Exception as exc:
+            log.warning("market ws reconnect: %s", exc.__class__.__name__)
             await asyncio.sleep(2)
 
 
-async def heartbeat():
+async def quote_task() -> None:
+    """Poll after feed bursts so post-trade deltas cannot erase prior fills."""
+    while True:
+        now = time.time()
+        for asset in S.active:
+            _quote_windows(asset, now)
+        await asyncio.sleep(0.01)
+
+
+async def heartbeat_task() -> None:
     while True:
         await asyncio.sleep(20)
-        feeds = {a: (round(S.twap[a].now() or 0, 1), S.binance.get(a), S.deribit.get(a)) for a in ASSETS}
-        acts = {n: sum(w.buys + w.sells for w in S.win[n].values()) for n in NAMES}
-        locks = sum(lk["n"] for lk in S.lock.values() if lk)
-        log.info("hb | feeds(twap,bin,der)=%s | events=%s | acts=%s | lock_caps=%d",
-                 feeds, dict(S.counts), acts, locks)
+        active = {
+            name: sum(window.buys + window.sells for windows in S.active.values()
+                      for candidate, window in windows.items() if candidate == name)
+            for name in (config.name for config in STRATEGIES)
+        }
+        orders = sum(len(window.orders) for windows in S.active.values()
+                     for window in windows.values())
+        log.info("hb | events=%s fills=%s active_orders=%d pending_resolution=%d errors=%s",
+                 dict(S.events), active, orders, len(S.pending), dict(S.resolution_errors))
 
 
-async def summary_task():
-    mins = float(os.environ.get("PAPER_SUMMARY_MINS", "15"))
-    delay = 120.0                     # first report ~2 min after start, then every interval
+async def report_task() -> None:
+    delay = 120.0
+    interval = float(os.environ.get("PAPER_SUMMARY_MINS", "15")) * 60
     while True:
         await asyncio.sleep(delay)
-        delay = mins * 60
-        txt = report.text()
-        for line in txt.splitlines():
+        delay = interval
+        text = report.text()
+        for line in text.splitlines():
             log.info(line)
         S.notify.send(report.tg_text(), pre=True)
 
 
-async def live_report_task():
-    import sqlite3
-    mins = float(os.environ.get("PAPER_TG_MINS", "10"))
-    delay = 150.0                     # first report ~2.5 min after start, then every interval
-    while True:
-        await asyncio.sleep(delay)
-        delay = mins * 60
-        en = sorted((S.gate._config().get("enabled") or []))
-        if not (S.gate.active and en):
-            continue
-        real = os.path.exists("live/live.db")
-        lines = [(f"LIVE · REAL fills · {time.strftime('%H:%M')}" if real else
-                  f"LIVE-CANDIDATES · paper sim · {time.strftime('%H:%M')}")]
-        try:
-            if real:
-                ld = sqlite3.connect("live/live.db")
-                day0 = time.time() // 86400 * 86400
-                n, cash = ld.execute("""SELECT count(*), COALESCE(sum(CASE WHEN side='BUY' THEN -usd ELSE usd END),0)
-                                        FROM live_fills WHERE ts>=?""", (day0,)).fetchone()
-                no, nc = ld.execute("SELECT sum(action='place'), sum(action='cancel') FROM live_orders WHERE ts>=?", (day0,)).fetchone()
-                lines.append(f"today {n}f · net {cash:+.2f}$ · ord {no or 0}/{nc or 0}")
-                ld.close()
-            for st in en:
-                s = report.snapshot_one(S.ledger.db, st)
-                nf = s['buys'] + s['sells']
-                avg = s['volume'] / nf if nf else 0.0
-                lines.append(f"{st[:12]:<12}{s['pnl']:>+7.1f}$ {s['win_rate']*100:>3.0f}% {s['settled']:>3}w b{s['budget']:>4.0f}")
-                lines.append(f"  vol {s['volume']:>5.0f}$ avg {avg:.2f}$ s/b {s['sell_buy']:.2f}")
-            if not real:
-                lines.append("NO real orders - executor OFF.")
-                lines.append("(these 2 arms are queued for live)")
-        except Exception as e:
-            lines.append(f"(report error: {e.__class__.__name__})")
-        S.notify.send("\n".join(lines), pre=True)
+async def kill_task() -> None:
+    while not os.path.exists(KILL):
+        await asyncio.sleep(1)
+    raise SystemExit("paper KILL present")
 
 
-async def main():
-    log.info("paper trader (45 arms + lock_arb + split_sell) starting | fill model v2 "
-             "(board=%.2fs, exec-shaped=%.2fs, stress=1.00s, min-post=5sh, "
-             "taker-only fees->maker 0) | assets=%s (PAPER - no real orders)",
-             REQUOTE, EXEC_REQUOTE, list(ASSETS))
-    S.notify.send("paper trader started: 11-strategy A/B, fill model v2 (PAPER - no real orders)")
-    await asyncio.gather(ws_live_task(), deribit_task(), window_task(), market_task(), heartbeat(), summary_task(), live_report_task())
+async def main() -> None:
+    if os.path.exists(KILL):
+        raise SystemExit("paper KILL present")
+    names = [config.name for config in STRATEGIES]
+    log.info("focused pair paper starting | strategies=%s | queue-ahead fills | "
+             "action-latency=%dms | decision cadence=20/600ms | "
+             "official Gamma outcomes | assets=%s",
+             names, round(ACTION_LATENCY_S * 1000), list(ASSETS))
+    S.notify.send("focused pair paper started (4 strategies, queue-aware, no orders)")
+    await asyncio.gather(window_task(), settlement_task(), market_task(),
+                         quote_task(), heartbeat_task(), report_task(), kill_task())
 
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        log.info("stopped.")
+        log.info("stopped")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import queue
 import threading
+from collections.abc import Mapping
 from typing import Any
 
 from paper.ledger import Ledger
@@ -75,6 +76,9 @@ class LedgerWriter:
     def record_invalid_window(self, ts: float, strategy: str, asset: str, slug: str,
                               invalid: dict[str, Any]) -> None:
         self._put("record_invalid_window", ts, strategy, asset, slug, invalid)
+
+    def record_run_metadata(self, metadata: Mapping[str, object]) -> None:
+        self._put("record_run_metadata", dict(metadata))
 
     def close(self) -> None:
         if self._closed:

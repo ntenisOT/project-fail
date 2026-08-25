@@ -361,7 +361,7 @@ async def market_task() -> None:
                 now = time.time()
                 S.engine.disconnect(now)
                 if S.capture is not None:
-                    S.capture.connection(False, reason=reason)
+                    S.capture.connection(False, reason=reason, observed_at=now)
             elif S.capture is not None:
                 S.capture.connection_failure(reason=reason)
             if connected_at is not None and time.monotonic() - connected_at >= 5:
@@ -408,10 +408,11 @@ async def report_task() -> None:
     while True:
         await asyncio.sleep(delay)
         delay = interval
-        text = report.text()
+        text = await asyncio.to_thread(report.text)
         for line in text.splitlines():
             log.info(line)
-        await asyncio.to_thread(S.notify.send, report.tg_text(), pre=True)
+        telegram = await asyncio.to_thread(report.tg_text)
+        await asyncio.to_thread(S.notify.send, telegram, pre=True)
 
 
 async def kill_task() -> None:
@@ -433,6 +434,12 @@ async def main() -> None:
             "assets": list(ASSETS),
         },
     )
+    if S.capture is not None:
+        S.ledger.record_run_metadata({
+            "capture_label": S.capture.label,
+            "board_hash": S.capture.board_hash,
+            "model_hash": str(S.capture.model_identity["sha256"]),
+        })
     log.info("focused pair paper starting | strategies=%s | queue-ahead fills | "
              "action-latency=%dms | max-market-lag=%dms | decision cadence=%dms | "
              "official Gamma outcomes | assets=%s",
@@ -459,9 +466,20 @@ async def main() -> None:
             if not task.done():
                 task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
-        await asyncio.to_thread(S.ledger.close)
+        close_errors: list[Exception] = []
+        try:
+            await asyncio.to_thread(S.ledger.close)
+        except Exception as exc:
+            close_errors.append(exc)
         if S.capture is not None:
-            await asyncio.to_thread(S.capture.close)
+            try:
+                await asyncio.to_thread(S.capture.close)
+            except Exception as exc:
+                close_errors.append(exc)
+        if len(close_errors) == 1:
+            raise close_errors[0]
+        if close_errors:
+            raise ExceptionGroup("paper output finalization failed", close_errors)
 
 
 if __name__ == "__main__":

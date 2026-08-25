@@ -208,6 +208,8 @@ class RawFrameWriter:
         with self._state_lock:
             if self._closed:
                 raise RuntimeError("raw frame writer is closed")
+            if self.error is not None or not self._thread.is_alive():
+                return False
             if self.accepted_bytes + record_bytes > self.limit_bytes:
                 self.capped = True
                 return False
@@ -317,7 +319,8 @@ class RawFrameWriter:
                 self.written_bytes += len(record)
                 self.written_frames += 1
         except OSError as exc:
-            self.error = f"{exc.__class__.__name__}: {exc}"
+            with self._state_lock:
+                self.error = f"{exc.__class__.__name__}: {exc}"
         finally:
             if handle is not None:
                 handle.close()

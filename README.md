@@ -22,7 +22,7 @@ passed a prospective economic gate.
 | SSH | `ssh -i ~/.ssh/pm_deploy ubuntu@3.254.130.64` |
 | Code | `~/project-fail` (deployed by `scp` from the local repo — **not** a git checkout) |
 | Python | `~/project-fail/.venv/bin/python` (always use the venv binary) |
-| Measured latency | CLOB `/time` GET **27–32 ms** median / **31–70 ms** p90 across probes; ordinary WS event age **8–13 ms** p50 / **9–24 ms** p90 with separate observed 0.4–3.8 s tails; paper action proxy **65 ms** (authenticated POST/cancel unmeasured) |
+| Measured latency | CLOB `/time` GET **27–32 ms** median / **31–70 ms** p90 across probes; ordinary WS event age is usually tens of milliseconds, while observed upstream tails reached **4.68 s** and one provider `1013 slow consumer` disconnect; local queue residence stayed at or below **9 ms**; paper action proxy **65 ms** (authenticated POST/cancel unmeasured) |
 
 **Both machines are paper-and-tooling only.** On 2026-08-25 Polymarket's live
 `/api/geoblock` endpoint returned `blocked=true` for both the UK/local machine
@@ -40,7 +40,7 @@ servers, VPNs, or proxies must not be used to circumvent a restriction.
 
 | Session | Command it runs | What it is |
 |---|---|---|
-| `paper` | `python -m paper.run` | two paper controls: `basket99` mechanics and falsified `mintcycle5` (writes `paper/paper.db`) |
+| `paper` | `python -m paper.run` | one `basket99` maker-fill mechanics probe; no strategy is a promotion candidate (writes `paper/paper.db`) |
 | `crossvenue` | `python -m tools.crossvenue_capture` | passive RTDS/Binance/Deribit causal capture; never feeds a strategy during collection |
 | `mintbot` | stopped; on-demand `MINTBOT_MODE=shadow MINTBOT_ASSETS=btc python -m live.mintbot` | do not duplicate paper's BTC feed during primary experiments; place mode is forbidden |
 
@@ -64,7 +64,8 @@ deliberately restarted; a general `KILL` file is never removed by paper deploys.
 All read-only; run from anywhere with the SSH key.
 
 **Focused paper report** — realized PnL, paired edge, neutral 50-cent inventory
-mark, isolated outcome luck, worst-case PnL, pair sums, FIFO completion delay,
+diagnostic, isolated outcome luck, adverse inventory floor including invalid
+windows, pair sums, FIFO completion delay,
 queue depth, residence, official 60-second Chainlink TWAP shadow coverage, and
 structured invalid-window reasons/exposure:
 ```bash
@@ -86,7 +87,8 @@ Plus live narrative: `tail -30 ~/project-fail/live/mintbot.log` (`MINTED`, `ASK`
 `FILLED`, `CLOSE ... est_pnl`).
 
 **Telegram**: the paper runner pushes the phone-formatted report every
-`PAPER_SUMMARY_MINS` minutes (monospace, sorted by pnl) — configured via `.env`.
+`PAPER_SUMMARY_MINS` minutes (monospace, sorted by the adverse inventory floor,
+not the optimistic 50-cent residual mark) — configured via `.env`.
 
 **Legacy benchmark vs real winners** (local machine — currently not a launch
 gate because its outcome/fill comparison is not execution-normalised):
@@ -154,7 +156,7 @@ not justify a strategy gate, blind copying, or threshold mining. Artifacts:
 
 ---
 
-## 3. Focused pair-inventory experiment (two controls)
+## 3. Focused pair-inventory experiment (one mechanics probe)
 
 The legacy 49-arm board was retired after every execution-shaped pair/mint arm
 remained negative. V2-corrected forensics then identified the clean leader as a
@@ -162,13 +164,17 @@ paired-bid accumulator. Strict inside-$0.98 won the first price-priority screen.
 Basket99 later reached winner-like pair cost/completion timing but left
 outcome-risk residue. Independent Gen73 reviews rejected the taker-completion
 and mint-repair variants because their hold/POST/depth model is uncalibrated.
-The current board keeps only one paired-mechanics probe and one falsified mint
-control:
+The current board keeps only the paired-mechanics probe. `mintcycle5` remains in
+unit/replay fixtures and its 35-window archive remains the frozen negative
+baseline, but it is no longer run continuously: even with instant $1 inventory
+and optimistic maker queues it lost about $10.30 and completed only 82.9% of
+cycles versus roughly 94.2% break-even. Repeatedly publishing a subsidized
+five-cent-style paper win was more likely to create false confidence than new
+information.
 
 | Strategy | Mechanic |
 |---|---|
-| `basket99` | Five-share maker baseline; keep cumulative completed-pair average ≤$0.99 |
-| `mintcycle5` | One five-share complete-set pair per window; retained only as a falsification/control for repeated mint-churn residue risk |
+| `basket99` | Five-share maker fill probe; keep cumulative completed-pair average ≤$0.99; never promote from paper PnL without queue calibration |
 
 The observer records the official
 `crypto_prices_twap_sixty` RTDS stream as a **shadow-only** reference. It stores
@@ -186,7 +192,7 @@ when the open residual is within 0.1 share of it, deliberately flipping at most
 0.1 share of dust instead of retaining almost five shares. Five-share low-price
 orders are not incorrectly rejected on dollar notional.
 
-Both controls wait until T+30 seconds and until both token feeds have caught up
+The probe waits until T+30 seconds and until both token feeds have caught up
 before starting a pair. This deliberately gives up the subscription-backlog
 period; a stale causal update freezes decisions and labels exposed settlement
 economics `lagged` rather than removing the window.
@@ -249,6 +255,20 @@ score frames left in a queue at shutdown. Byte-cap or writer-queue loss aborts
 immediately; a capped dataset is never allowed to run silently. Deterministic
 parity is an engineering claim only: replay fills remain model fills until maker
 queue access and authenticated execution are calibrated.
+
+The ledger comparator rejects empty/vacuous runs and binds the replay to the
+capture dataset plus the ledger's capture label, board hash, and model hash:
+
+```bash
+python -m paper.replay out/capture/run.dataset.json --output out/run.replay.json
+python tools/replay_ledger_compare.py out/run.replay.json paper/paper.db \
+  --dataset out/capture/run.dataset.json
+```
+
+Its exactness claim is deliberately scoped to finalized cohort records: fills,
+settlements with metrics, and invalid windows. Open-at-stop inventory,
+`resolved_windows`, and shadow `reference_prices` are reported separately and
+must not be implied by that claim.
 
 `tools/crossvenue_capture.py` records prospective RTDS TWAP60, Binance spot and
 perpetual, and Deribit frames with wall and monotonic receive timestamps. RTDS

@@ -11,7 +11,34 @@ from collections.abc import Sequence
 from paper.pair_types import PairConfig
 
 
-MODEL_IDENTITY_SCHEMA = "project-fail-paper-model-v1"
+MODEL_IDENTITY_SCHEMA = "project-fail-paper-model-v2"
+MODEL_SOURCES = (
+    "paper/buy_completion.py",
+    "paper/capture.py",
+    "paper/cohort_engine.py",
+    "paper/exposure.py",
+    "paper/fill_probe.py",
+    "paper/ladder_engine.py",
+    "paper/ledger.py",
+    "paper/ledger_writer.py",
+    "paper/market_metadata.py",
+    "paper/order_book.py",
+    "paper/pair_engine.py",
+    "paper/pair_lots.py",
+    "paper/pair_types.py",
+    "paper/reference_feed.py",
+    "paper/run.py",
+    "paper/settlement.py",
+    "paper/strategy_board.py",
+    "paper/taker.py",
+    "live/feed_health.py",
+    "live/feed_pump.py",
+    "live/loop_health.py",
+    "live/mint_quotes.py",
+    "live/window_clock.py",
+    "tools/market_windows.py",
+    "tools/transport_telemetry.py",
+)
 
 
 def current_strategy_board(action_latency_s: float) -> tuple[PairConfig, ...]:
@@ -22,12 +49,6 @@ def current_strategy_board(action_latency_s: float) -> tuple[PairConfig, ...]:
             action_latency_s=action_latency_s, buy_sum_ceiling=0.99,
             improve_ticks=1, require_both_to_start=True,
             basket_average_cap=True, new_pair_start_s=30,
-        ),
-        PairConfig(
-            "mintcycle5", "mint", 0.5,
-            action_latency_s=action_latency_s, mint_sets=5,
-            sell_sum_floor=1.005, new_pair_start_s=30,
-            new_pair_cutoff_s=240, mint_anchor_spread=0.02,
         ),
     )
 
@@ -51,15 +72,10 @@ def strategy_board_hash(configs: Sequence[PairConfig]) -> str:
 def execution_model_identity() -> dict[str, object]:
     """Hash the exact checked-out source that defines paper economics and timing."""
     root = pathlib.Path(__file__).resolve().parents[1]
-    sources = sorted(
-        (*root.joinpath("paper").glob("*.py"),
-         root / "live" / "feed_health.py",
-         root / "live" / "feed_pump.py",
-         root / "live" / "mint_quotes.py",
-         root / "live" / "window_clock.py",
-         root / "tools" / "market_windows.py"),
-        key=lambda path: path.relative_to(root).as_posix(),
-    )
+    sources = [root / relative for relative in MODEL_SOURCES]
+    missing = [str(path) for path in sources if not path.is_file()]
+    if missing:
+        raise RuntimeError(f"paper model source is missing: {missing}")
     digest = hashlib.sha256()
     for path in sources:
         relative = path.relative_to(root).as_posix().encode("utf-8")

@@ -19,7 +19,7 @@ def test_paper_capture_binds_frames_market_outcome_and_board(tmp_path) -> None:
     market = ActiveMarket("btc", "btc-updown-5m-300", 300, "0x" + "1" * 64,
                           "11", "22", 5)
     capture.market_open(market, 301.0)
-    capture.connection(True)
+    capture.connection(True, observed_at=302.0)
     frame_id = capture.frame_sink(10, 20, b'{"event_type":"book"}')
     capture.processed_event(11, 21, frame_id, 0)
     capture.quote_tick(12, 22)
@@ -42,6 +42,9 @@ def test_paper_capture_binds_frames_market_outcome_and_board(tmp_path) -> None:
         "run_start", "market_open", "market_finish", "connection", "resolution",
         "run_end",
     }
+    assert next(row for row in events if row["kind"] == "connection")[
+        "observed_at"
+    ] == 302.0
     assert [row.payload for row in frames] == [b'{"event_type":"book"}']
     assert len(causal) == 2
     capture.close()

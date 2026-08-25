@@ -75,3 +75,14 @@ def test_payload_audit_counts_stale_events_and_parse_failures() -> None:
     assert _payload_events(future, 1000.5)[1:7] == (
         1, 0.0, -500.0, 1, 1, False,
     )
+
+
+def test_raw_writer_rejects_new_frames_after_worker_error(tmp_path) -> None:
+    writer = RawFrameWriter(
+        tmp_path, "failed", limit_bytes=100, chunk_bytes=100,
+    )
+    writer.error = "OSError: disk full"
+
+    assert writer.submit(11, b"frame", monotonic_ns=21) is False
+    writer.close()
+    assert writer.snapshot()["error"] == "OSError: disk full"

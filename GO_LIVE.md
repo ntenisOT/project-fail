@@ -6,7 +6,7 @@
 ## Current architecture
 
 ```text
-public CLOB market feed -> two-control queue-aware paper simulator -> SQLite + capture
+public CLOB market feed -> one maker-fill mechanics probe            -> SQLite + capture
 public external feeds   -> passive causal recorder                 -> replay covariates
 ```
 
@@ -29,9 +29,10 @@ old approval/setup commands, and CTF split/merge fail closed in code.
 
 ## Strategy evidence required
 
-The current board contains only `basket99`, as a paired-fill mechanics probe,
-and `mintcycle5`, as a deliberately retained falsified control. Neither is a
-promotion candidate. The required sample size is currently unknown: the
+The current board contains only `basket99`, as a paired-fill mechanics probe;
+it is not a promotion candidate. The falsified `mintcycle5` mechanic remains in
+tests and frozen archives, not the always-on board. The required sample size is
+currently unknown: the
 Gen60–72 archives do not provide a clean, immutable pre-period for the exact
 endpoint and board. A future candidate cannot advance unless a frozen design
 first derives its horizon from prior per-window variance, serial dependence,
@@ -49,7 +50,9 @@ A candidate must also demonstrate all of the following:
 - The result is not explained by one asset, one outcome direction, or a handful
   of windows.
 - Fee-inclusive paired buy sum remains below $1.
-- Neutral-mark PnL is positive; realized outcome luck is reported separately.
+- The adverse inventory floor, including known exposure in invalid windows, is
+  positive; the 50-cent neutral mark is diagnostic only and never a ranking or
+  promotion metric.
 - A first-leg fill constrains the later opposite-token quote; simultaneous quote
   sums are not accepted as evidence of realized pair economics.
 - Unmatched inventory and tail losses remain inside explicit caps.

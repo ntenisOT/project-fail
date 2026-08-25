@@ -24,6 +24,7 @@ class Snapshot:
     neutral_pnl: float
     outcome_pnl: float
     worst_pnl: float
+    invalid_floor: float
     win_rate: float
     bankroll: float
     roc: float
@@ -114,6 +115,23 @@ def _sum_or_none(numerator: float, denominator: float) -> float | None:
     return numerator / denominator if denominator else None
 
 
+def _invalid_floor(
+    db: sqlite3.Connection, strategy: str, asset: str | None = None,
+) -> float:
+    exists = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='invalid_windows'"
+    ).fetchone()
+    if exists is None:
+        return 0.0
+    where = "strategy=?" if asset is None else "strategy=? AND asset=?"
+    parameters = (strategy,) if asset is None else (strategy, asset)
+    return float(db.execute(
+        f"SELECT COALESCE(sum(cash + min(up_shares,down_shares)),0) "
+        f"FROM invalid_windows WHERE {where}",
+        parameters,
+    ).fetchone()[0])
+
+
 def snapshot_one(db: sqlite3.Connection, strategy: str) -> Snapshot:
     rows = db.execute(
         """SELECT ts,slug,pnl,capital,buys,sells,cash,residual,resid_shares
@@ -128,8 +146,12 @@ def snapshot_one(db: sqlite3.Connection, strategy: str) -> Snapshot:
         raise RuntimeError(f"negative paper inventory for {strategy}; generation is invalid")
     pnl = sum(float(row[2]) for row in rows)
     neutral_pnl = sum(float(row[6]) + float(row[8]) / 2 for row in rows)
-    worst_pnl = sum(float(row[6]) + min(float(row[7]), float(row[8]) - float(row[7]))
-                    for row in rows)
+    invalid_floor = _invalid_floor(db, strategy)
+    worst_pnl = (
+        sum(float(row[6]) + min(float(row[7]), float(row[8]) - float(row[7]))
+            for row in rows)
+        + invalid_floor
+    )
     trades = sum(int(row[4]) + int(row[5]) for row in rows)
     volume = float(db.execute(
         """SELECT COALESCE(sum(abs(signed_cash)),0) FROM fills
@@ -148,6 +170,7 @@ def snapshot_one(db: sqlite3.Connection, strategy: str) -> Snapshot:
         strategy=strategy, windows=windows, trades=trades, volume=volume, pnl=pnl,
         pair_edge=pair_edge, neutral_pnl=neutral_pnl,
         outcome_pnl=pnl - neutral_pnl, worst_pnl=worst_pnl,
+        invalid_floor=invalid_floor,
         win_rate=sum(float(row[2]) > 0 for row in rows) / windows if windows else 0.0,
         bankroll=bankroll, roc=pnl / bankroll if bankroll else 0.0,
         buy_sum=_sum_or_none(metrics.get("buy_pair_cost", 0.0),
@@ -188,7 +211,8 @@ def asset_snapshots(db: sqlite3.Connection) -> list[AssetSnapshot]:
            FROM settlements GROUP BY strategy,asset ORDER BY strategy,asset"""
     )
     return [AssetSnapshot(str(strategy), str(asset), int(windows), float(pnl),
-                          float(neutral), float(worst),
+                          float(neutral),
+                          float(worst) + _invalid_floor(db, str(strategy), str(asset)),
                           rebates.get((str(strategy), str(asset)), 0.0), float(unmatched))
             for strategy, asset, windows, pnl, neutral, worst, unmatched in rows]
 
@@ -272,14 +296,16 @@ def text(db_path: str = "paper/paper.db") -> str:
             f"FOCUSED PAIR PAPER warming up | provisional fills={fills} | awaiting official outcomes",
             *integrity,
         ])
-    snapshots = sorted((snapshot_one(db, strategy) for strategy in strategies),
-                       key=lambda row: row.neutral_pnl, reverse=True)
+    snapshots = sorted(
+        (snapshot_one(db, strategy) for strategy in strategies),
+        key=lambda row: (row.worst_pnl, row.pnl), reverse=True,
+    )
     strategy_width = max(14, *(len(strategy) + 1 for strategy in strategies))
     last = float(db.execute("SELECT COALESCE(max(ts),0) FROM settlements").fetchone()[0])
     out = [
         f"FOCUSED PAIR PAPER | official outcomes | last settle {time.strftime('%H:%M:%S', time.gmtime(last))} UTC",
         f"{'strategy':<{strategy_width}}{'wnd':>5}{'trd':>6}{'vol$':>8}{'win%':>6}{'pnl$':>9}"
-        f"{'edge$':>8}{'neutral$':>9}{'outcome$':>9}{'worst$':>8}{'bank$':>8}"
+        f"{'edge$':>8}{'neutral$':>9}{'outcome$':>9}{'floor$':>8}{'bank$':>8}"
         f"{'ROC':>7}{'buySum':>8}{'sellSum':>9}{'fee$':>7}{'rebate$':>9}"
         f"{'unmat':>7}{'post/w':>8}{'rest':>7}"
         f"{'qAhead':>8}{'act':>8}{'reject':>8}{'preAct':>8}"
@@ -378,10 +404,10 @@ def text(db_path: str = "paper/paper.db") -> str:
     out.extend((
         "buySum/sellSum are FIFO-matched opposite-token fills; unmat is end inventory.",
         "pair completion d50/d90 are share-weighted FIFO delays between opposite fills.",
-        "edge is FIFO-paired economics; neutral marks every end token at 50 cents.",
+        "edge is FIFO-paired economics and excludes unmatched legs; neutral marks every end token at 50 cents.",
         "outcome is realized PnL minus neutral, isolating settlement-direction luck.",
         "fee$ is taker fee; rebate$ is the documented 20% maker baseline, not payout truth.",
-        "worst is settlement PnL under the adverse outcome for every asset-window.",
+        "floor is adverse-outcome settlement PnL plus known inventory in invalid windows.",
         "Queue-ahead depth is consumed before a maker fill; rebates are excluded.",
         "act is measured simulated action activation; reject is stale post-only prevention.",
         "preAct counts delayed trade events rejected because they predate order activation.",
@@ -399,13 +425,15 @@ def tg_text(db_path: str = "paper/paper.db") -> str:
     if not strategies:
         db.close()
         return "PAIR PAPER warming up - official outcomes pending"
-    rows = sorted((snapshot_one(db, strategy) for strategy in strategies),
-                  key=lambda row: row.neutral_pnl, reverse=True)
+    rows = sorted(
+        (snapshot_one(db, strategy) for strategy in strategies),
+        key=lambda row: (row.worst_pnl, row.pnl), reverse=True,
+    )
     out = ["PAIR PAPER · queue-aware · no orders",
-           f"{'strategy':<13}{'pnl':>7}{'neutral':>8}{'out':>7}{'unm':>5}"]
+           f"{'strategy':<13}{'pnl':>7}{'floor':>8}{'neutral':>8}{'unm':>5}"]
     for row in rows:
         out.append(f"{row.strategy[:13]:<13}{row.pnl:>+7.1f}"
-                   f"{row.neutral_pnl:>+8.1f}{row.outcome_pnl:>+7.1f}"
+                   f"{row.worst_pnl:>+8.1f}{row.neutral_pnl:>+8.1f}"
                    f"{row.unmatched:>5.0f}")
     result = "\n".join(out)
     db.close()

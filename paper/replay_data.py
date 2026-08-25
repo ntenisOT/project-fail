@@ -28,6 +28,8 @@ class RawFrame:
 @dataclasses.dataclass(frozen=True)
 class PaperDataset:
     path: pathlib.Path
+    label: str
+    sha256: str
     raw_manifest: pathlib.Path
     causal_manifest: pathlib.Path
     events: tuple[dict[str, object], ...]
@@ -101,6 +103,9 @@ def load_paper_dataset(path: str | pathlib.Path) -> PaperDataset:
         raise CaptureIntegrityError(f"cannot read paper dataset {target}: {exc}") from exc
     if not isinstance(value, dict) or value.get("schema") != "project-fail-paper-capture-v2":
         raise CaptureIntegrityError("unsupported paper dataset schema")
+    label = str(value.get("label") or "")
+    if not label:
+        raise CaptureIntegrityError("paper dataset lacks a capture label")
     raw = value.get("raw")
     causal = value.get("causal")
     events_meta = value.get("events")
@@ -159,10 +164,15 @@ def load_paper_dataset(path: str | pathlib.Path) -> PaperDataset:
         raise CaptureIntegrityError("paper causal status does not match run_end")
     raw_manifest = _manifest(raw_path)
     causal_manifest = _manifest(causal_path)
+    if raw_manifest.get("label") != label:
+        raise CaptureIntegrityError("paper raw manifest label mismatch")
+    if causal_manifest.get("label") != f"processed-{label}":
+        raise CaptureIntegrityError("paper causal manifest label mismatch")
     _status_matches_manifest(raw_status, raw_manifest, raw_path, "raw")
     _status_matches_manifest(causal_status, causal_manifest, causal_path, "causal")
     return PaperDataset(
-        target, raw_path, causal_path, tuple(events), board_hash, runtime,
+        target, label, _sha256(target), raw_path, causal_path, tuple(events),
+        board_hash, runtime,
         model_identity,
     )
 

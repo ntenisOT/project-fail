@@ -148,10 +148,14 @@ class PaperCapture:
             "down_token": market.down_token, "min_order_size": market.min_order_size,
         })
 
-    def connection(self, connected: bool, *, reason: str | None = None) -> None:
+    def connection(
+        self, connected: bool, *, reason: str | None = None,
+        observed_at: float | None = None,
+    ) -> None:
         self._emit({
             "kind": "connection" if connected else "disconnect",
             "wall_ns": time.time_ns(), "monotonic_ns": time.monotonic_ns(),
+            "observed_at": time.time() if observed_at is None else observed_at,
             "reason": reason,
         })
 

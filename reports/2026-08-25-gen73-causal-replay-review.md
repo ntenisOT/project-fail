@@ -11,7 +11,9 @@ There is still **no executable edge**. The strongest historical result was
 misframed: cheap paired acquisition is a persistent wallet behavior, but it does
 not predict actual wallet profit. The corrected exact-cohort actual-PnL AUC is
 0.471, or 0.482 without the holdout-activity filter. Mint remains a falsified
-control. No strategy is approved for real orders.
+historical falsification. It has now been removed from the always-on board and
+retained only in tests and frozen artifacts. No strategy is approved for real
+orders.
 
 The real Gen73 progress is a better instrument: a loss-intolerant causal
 capture, one shared live/replay engine, exact replay provenance, clock-skew
@@ -19,7 +21,7 @@ failure handling, and passive official/Binance/Deribit capture on Ireland.
 
 ## What the iteration tests
 
-Gen73 intentionally has only two paper controls:
+Gen73 initially used only two paper controls:
 
 | Control | Question | What would count |
 |---|---|---|
@@ -34,6 +36,11 @@ a non-overlapping holdout.
 Three to five windows are an engineering calibration for capture loss, event
 ordering, lifecycle completeness, and live/replay equality. They are not an
 economic sample.
+
+The post-calibration review removed `mintcycle5` from the always-on board. Its
+historical falsification remains in fixtures and frozen artifacts; repeatedly
+running an instant-inventory, optimistic-queue simulator was not an independent
+experiment.
 
 ## Corrected winner result
 
@@ -136,7 +143,8 @@ still requires stress bounds and later calibration.
   validates duplicate/out-of-order markers.
 - Invalid-window reporting includes the known inventory floor rather than
   silently dropping filled exposure.
-- The board was reduced from five arms to `basket99` and `mintcycle5`.
+- The calibration board was reduced from five arms to `basket99` and
+  `mintcycle5`; the post-calibration board was reduced again to `basket99` alone.
 - `GO_LIVE.md` and the README no longer claim a four/five-arm board or an
   arbitrary 200/288-window promotion gate.
 - The lifecycle tool can freeze and reuse the exact original wallet cohort,
@@ -176,11 +184,15 @@ Two external research results constrain the next experiment:
   cancellations conditional on the current queue state. Our capture can support
   that calibration; a static displayed-depth assumption cannot.
 
-The practical candidate is therefore a pre-quote eligibility/inventory throttle
-whose signal strength is derived from conditional adverse markout versus the
-available pair surplus. It is not yet a strategy arm. A reactive cancel after a
-move may be too late under the current 50 ms changelog value, and authenticated
-cancel timing remains unmeasured.
+The first research target is conditional second-leg completion after a first
+fill, because unmatched inventory—not a missing directional forecast—is the
+observed loss mechanism. Only after that hazard and loss distribution are known
+may an external-feed toxicity signal gate the *opening* of a new pair. It must
+never suppress completion of an already open leg. Signal strength must be
+derived from conditional adverse markout, pair surplus, and non-completion loss,
+not an arbitrary basis-point cutoff. A reactive cancel after a move may be too
+late under the current 50 ms changelog value, and authenticated cancel timing
+remains unmeasured.
 
 Official references:
 
@@ -223,42 +235,107 @@ Calibration artifact hashes:
 - Cross-venue dataset:
   `4b559f09bb6a231f99610a204548105577fb8da206cba503c9a53e902d467821`.
 
-A fresh prospective paper/capture run started at 22:58 UTC and is now the only
-active runner:
+A 22:58–23:27 UTC prospective engineering run then exercised the reconnect
+path before being finalized for post-review remediation:
 
-- `paper`: label `gen73-prospective-20260825T2300Z`, same frozen BTC/timing board,
-  Telegram report every 15 minutes.
-- `crossvenue`: label `gen73-crossvenue-prospective-20260825T2300Z`, passive
-  RTDS/Binance spot/Binance futures/Deribit, bounded to 24 hours.
-- Board hash:
-  `85f335bf649bea7d7960507b164bfc5bb08b233b0067261efa46a84e603f2a77`.
-- Execution-model hash:
-  `a1a3a75397fa276ea4b084476f4079bd3b2229e40fe243db6ce9107605c98f78`.
-- NTP synchronized, 234 GB free, `.env` unchanged at SHA-256
-  `3137d00c3d37e63168d796aad29d8e4e1878897a283299865ecc9c1dc36ccb30`.
-- First prospective heartbeat: no drops, reconnects, future timestamps, or
-  capture errors; CLOB p50 13 ms, p90 112 ms, queue residence max 3 ms. This is
-  plumbing evidence only.
-- The prior paper database and log were moved into `out/deploy-archive`; no data
-  was irreversibly deleted.
+- 668,422 raw frames replayed into 41 cohort records; exact finalized-cohort
+  parity held for 29 fills, eight settlements, and four invalid rows.
+- One CLOB provider `1013 slow consumer` close invalidated the active window.
+  Local queue residence was at most 9 ms, while upstream event-age tails reached
+  4.682 seconds. This is not a one-second local loop.
+- `basket99`: four valid, all lagged windows; -$7.39 realized, -$1.19 at the
+  optimistic 50-cent residual mark, -$7.39 valid-window adverse floor, 12.4
+  unmatched shares, and -4.34/-4.60/-6.37 cents per-share markout at 1/5/15 s.
+  Its filled reconnect-invalid window adds a -$1.90 known-inventory floor, for
+  -$9.29 across observed valid plus invalid exposure.
+- `mintcycle5`: +$0.60 across four valid subsidized paper cycles, but its
+  reconnect-invalid inventory adds -$2.10, producing a -$1.50 observed floor.
+  This and the negative 35-window history reject continuous mint monitoring.
+- Dataset SHA-256:
+  `41bad4847e3abb31711dd6579c9095e6c46a0f665d7f8362e51d816f2ec5181e`.
+- Replay SHA-256:
+  `d6ceb877fe7d9d191cbfe344e9d27da1e7c49d31229c81b333fc8688a184bc97`.
+- SQLite SHA-256:
+  `ddd0d49a985a4c198e7279af86483bc572139488b61f55d453089ad3010c8ec3`.
 
-Real-order, executor, and mintbot place paths remain stopped. The old local
-shadow mintbot and paper runner were also stopped after Ireland verification to
-avoid duplicate subscriptions and Telegram reports.
+The passive `gen73-crossvenue-prospective-20260825T2300Z` RTDS/Binance
+spot/Binance futures/Deribit capture remained active during remediation. The
+paper runner was stopped cleanly so its manifests and database could be frozen.
+Real-order, executor, and mintbot place paths remained stopped throughout.
+
+## Post-calibration independent review and adjudication
+
+Both reviewers audited immutable commit
+`161868a5bc2a59cc1167848989360d109562686c`. Claude Opus 5 ran at max effort;
+Qwen ran as exact `qwen3.8-max`. The local review packet intentionally omitted
+the large gzip chunks, so they could verify the metadata chain but not recompute
+the raw replay themselves. The complete Ireland artifacts were separately
+replayed before and after the reconnect run.
+
+| Dimension | Opus 5 Max | Qwen 3.8 Max |
+|---|---:|---:|
+| Mechanism identification | 38 | 45 |
+| Replay integrity | 72 | 74 |
+| Executable economics | 9 | 12 |
+| Scale readiness | 5 | 6 |
+| Operational reliability | 40 | 40 |
+
+Accepted defects and corrections:
+
+- A ledger-writer close error could skip capture finalization. Ledger and
+  capture closure are now independent and all closure errors are surfaced.
+- Disconnect replay used the marker wall time rather than the exact live engine
+  invalidation time. Disconnect markers now carry that observed time.
+- A raw writer thread error could remain latent until shutdown. Further submits
+  now fail immediately, terminating evidence collection.
+- The comparator could vacuously pass empty records and did not bind the replay,
+  dataset, and database run identities. It now rejects empty runs, embeds the
+  dataset hash/label, and checks ledger label/board/model metadata.
+- Telegram and the full report ranked on neutral PnL, which marks every residual
+  token at $0.50 and can reward near-worthless inventory. Ranking now uses the
+  adverse inventory floor, including invalid-window known exposure. Neutral PnL
+  and FIFO pair edge remain diagnostics only.
+- The execution-model identity was an all-`paper/*.py` glob. It now has an
+  explicit 25-file execution/timing boundary; reporting and replay-tool edits no
+  longer masquerade as economic-model changes.
+
+Reviewer disagreements were resolved as follows:
+
+- Opus recommended removing mint; Qwen recommended retaining one negative
+  sentinel. Continuous mint was removed, while its many focused unit fixtures
+  and frozen 35-window negative artifact retain the regression value without a
+  misleading always-on PnL stream.
+- Opus prioritized completion hazard; Qwen supported a pre-quote toxicity gate.
+  Completion comes first. A later toxicity signal may gate only initiation of a
+  new pair and must be tested on a genuinely future holdout.
+- Comparator equality remains explicitly scoped to finalized cohort records.
+  Shadow `reference_prices`, `resolved_windows`, and open-at-stop engine state
+  are separate evidence and are never implied by the word parity.
+
+Post-remediation mechanical gate: **126 tests passed**. Ruff and mypy are run on
+the changed execution/research files, not misrepresented as a clean legacy-repo
+gate; old root-level exploratory scripts retain known lint debt.
+
+Corrected one-probe board hash:
+`5a887398744ef74a8c2f72278ee07b3664ce9c62262be7bcf9577a211ef10f66`.
+Execution-model-v2 hash:
+`c806b8389691239fa38332cfe6b84e8c4413a97a66eec33f58d8e7ddec096e29`.
 
 ## Decision process from here
 
-1. Keep the prospective two-control board and causal covariate capture running;
-   monitor integrity and exposure every 15 minutes.
-2. Freeze a prior block and measure a maker fill-degradation surface: queue
+1. Keep passive causal covariate capture running and run only the corrected
+   `basket99` fill probe, ranked on the adverse floor.
+2. Estimate the second-leg completion hazard and non-completion loss from the
+   immutable capture, conditional on the first fill and contemporaneous book.
+3. Freeze a prior block and measure a maker fill-degradation surface: queue
    survival/cancellation bounds, action-latency sensitivity, and displayed-depth
    haircuts. This produces the profitability buffer the simulator must clear.
-3. Collect enough immutable pre-period windows to estimate the endpoint variance
+4. Collect enough immutable pre-period windows to estimate the endpoint variance
    and block dependence. Predeclare one horizon/futility rule and one future
    replication cohort.
-4. Continue winner lifecycle and passive cross-venue event studies. Implement a
-   new arm only when a causal candidate clears fees, timing, multiple-testing,
-   and untouched-holdout requirements.
+5. Continue winner lifecycle and passive cross-venue event studies. A toxicity
+   arm may gate new-pair initiation only after discovery, then must clear fees,
+   timing, multiple-testing, and an untouched holdout.
 
 This process can reject ideas quickly. It cannot manufacture a winner quickly.
 Adding dozens of always-on strategies before these gates would be cheap in CPU

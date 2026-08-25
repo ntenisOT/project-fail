@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from collections.abc import Mapping
 
 
 class Ledger:
@@ -33,6 +34,8 @@ class Ledger:
               asset TEXT, observed_at REAL, received_at REAL,
               value_e18 TEXT, window_s INT,
               PRIMARY KEY(asset,observed_at,window_s));
+            CREATE TABLE IF NOT EXISTS run_metadata(
+              key TEXT PRIMARY KEY, value TEXT NOT NULL);
             """
         )
         columns = {row[1] for row in self.db.execute("PRAGMA table_info(fills)")}
@@ -66,6 +69,16 @@ class Ledger:
 
     def close(self) -> None:
         self.db.close()
+
+    def record_run_metadata(self, metadata: Mapping[str, object]) -> None:
+        if not metadata:
+            raise ValueError("paper run metadata cannot be empty")
+        self.db.executemany(
+            "INSERT INTO run_metadata(key,value) VALUES(?,?)",
+            [(str(key), json.dumps(value, sort_keys=True))
+             for key, value in sorted(metadata.items())],
+        )
+        self.db.commit()
 
     def record_fill(self, ts, strategy, asset, slug, rec) -> None:
         self.db.execute(

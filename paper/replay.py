@@ -41,6 +41,8 @@ from paper.strategy_board import (
 @dataclasses.dataclass(frozen=True)
 class ReplayResult:
     records: tuple[CohortRecord, ...]
+    capture_label: str
+    capture_dataset_sha256: str
     frames: int
     market_events: int
     decision_ticks: int
@@ -238,7 +240,7 @@ def replay_dataset(
                 raise CaptureIntegrityError(f"invalid market_finish for {slug}")
             finished.add(slug)
         elif kind == "disconnect":
-            engine.disconnect(point.wall_ns / 1e9)
+            engine.disconnect(float(str(marker.get("observed_at", point.wall_ns / 1e9))))
         elif kind == "resolution":
             slug = str(marker["slug"])
             if slug not in finished or slug in resolved:
@@ -251,7 +253,8 @@ def replay_dataset(
 
     raw.finish()
     return ReplayResult(
-        tuple(records), raw.frames, market_events, decision_ticks, raw.parse_errors,
+        tuple(records), dataset.label, dataset.sha256,
+        raw.frames, market_events, decision_ticks, raw.parse_errors,
         dataset.board_hash, replay_hash, captured_model_hash, replay_model_hash,
         len(opened), len(finished), len(resolved), len(opened - finished),
         len(finished - resolved),

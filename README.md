@@ -336,8 +336,11 @@ optional `POLYGON_RPC_URL`,
 
 ## 6. Generations & DB archives
 
-Every generation = one clean sample under one code state; archives live next to
-the DB as `paper/paper_genN_<date>{start,end}.db`.
+Generation numbers record code-state changes; they are **not** independent
+strategy experiments. Short 3-5-window runs are engineering smoke tests and
+are green only when the changed action actually fires. Economic decisions now
+require a frozen, predeclared cohort of at least 200 valid windows. Archives
+live next to the DB as `paper/paper_genN_<date>{start,end}.db`.
 
 | Gen | When (UTC) | What changed |
 |---|---|---|
@@ -405,6 +408,10 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 66 | 08-25 17:29 | accept only the configured dust allowance at settlement and isolate a broken paper arm instead of killing the cohort; retain the $0.95/$1.00 A/B because the second $0.95 repair capped a $2.30 unmatched loss at $0.19 |
 | 67 | 08-25 17:40 | preserve every strategy parameter; after another 1013 with shallow application queues, add frame/event counts, JSON parse peaks, and event-loop scheduling lag to localize transport backpressure without guessing at a latency constant |
 | 68 | 08-25 18:05 | retire the redundant plain T+270 arm because the dust twin is its bounded superset; add one 50-share-cap Basket99 arm with unchanged five-share clips to test winner-like repetition and minimum-size amortization separately from order size |
+| 69 | 08-25 18:40 | reject planned boundary reconnects after fresh sockets still closed with 1013; retain p100 and show p95 mint repair pays too much for immediacy |
+| 70 | 08-25 19:05 | instrument the WebSocket client's internal frame depth; reject the 4096-frame fix because observed HWM was only 145; timed completion improved neutral/adverse mechanics in three lagged windows |
+| 71 | 08-25 19:30 | restore the 1024-frame limit and reject dust-tolerant replenishment after it paid more for the same paired shares and added unmatched inventory |
+| 72 | 08-25 19:58 | remove the rejected dust arm and smoke 240-second versus 270-second completion; neither fired in a valid window and two 1013 closes reproduced, so the timing A/B is untested |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

@@ -23,7 +23,6 @@ class PairConfig:
     taker_hedge_after_s: float | None = None
     taker_pair_sum_floor: float | None = None
     taker_dust_round_shares: float = 0.0
-    balanced_dust_shares: float = 0.0
     improve_ticks: int = 0
     new_pair_start_s: float = 0.0
     mint_anchor_spread: float | None = None

@@ -56,14 +56,6 @@ class PairLots:
         side = self.open_side
         return sum(lot.shares for lot in self.lots[side]) if side is not None else 0.0
 
-    @property
-    def open_value(self) -> float:
-        side = self.open_side
-        return (
-            sum(lot.shares * lot.price for lot in self.lots[side])
-            if side is not None else 0.0
-        )
-
     def add(self, side: bool, shares: float, price: float, filled_at: float) -> None:
         remaining = shares
         opposite = self.lots[not side]

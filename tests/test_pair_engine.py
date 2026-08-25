@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import dataclasses
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -210,45 +209,6 @@ class FocusedPairTests(unittest.TestCase):
         open_leg.on_books(240, up, down)
         self.assertIn((False, "buy"), open_leg.orders)
         self.assertNotIn((True, "buy"), open_leg.orders)
-
-    def test_balanced_dust_restarts_both_sides_without_erasing_the_residual(self) -> None:
-        base = PairConfig(
-            "base", "accumulate", 0.01, 0, buy_sum_ceiling=0.99,
-            max_inventory=20, require_both_to_start=True,
-            basket_average_cap=True,
-        )
-        up = book(0.30, 0, 0.31, 10)
-        down = book(0.60, 0, 0.61, 10)
-
-        def partial_pair(config: PairConfig) -> PairWindow:
-            window = PairWindow(
-                config, "btc", "btc-updown-5m-0", 0, "up", "down", 0,
-            )
-            window.on_books(1, up, down)
-            self.assertIsNotNone(window.on_trade(2, True, 0.30, 5, "SELL"))
-            self.assertIsNotNone(window.on_trade(2.1, False, 0.60, 4.98, "SELL"))
-            window.on_books(3, up, down)
-            return window
-
-        stalled = partial_pair(base)
-        self.assertEqual(set(stalled.orders), {(False, "buy")})
-        self.assertAlmostEqual(stalled.orders[(False, "buy")].size, 0.02)
-
-        tolerant = partial_pair(dataclasses.replace(
-            base, name="dust", balanced_dust_shares=0.1,
-        ))
-        self.assertEqual(set(tolerant.orders), {(True, "buy"), (False, "buy")})
-        self.assertEqual(tolerant.orders[(True, "buy")].size, 5)
-        self.assertEqual(tolerant.orders[(False, "buy")].size, 5)
-        self.assertIsNotNone(tolerant.on_trade(4, True, 0.30, 5, "SELL"))
-        self.assertIsNotNone(tolerant.on_trade(4.1, False, 0.60, 5, "SELL"))
-
-        _, metrics = tolerant.settle(300, 1)
-        self.assertAlmostEqual(metrics["unmatched_end"], 0.02)
-        self.assertAlmostEqual(metrics["buy_pair_shares"], 9.98)
-        self.assertLessEqual(
-            metrics["buy_pair_cost"] / metrics["buy_pair_shares"], 0.99,
-        )
 
     def test_delayed_requote_cannot_oversell_after_an_inflight_fill(self) -> None:
         config = PairConfig("mint", "mint", 0.01, 0.06, mint_sets=5)

@@ -115,17 +115,18 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     print("inventory-floor is unexplained sell inventory, not proof of minting")
     print("direct CTF values match the trading address only; proxies/transfers remain separate")
-    print("buySum/sellSum are matched-share average price-sum proxies, not ordered cycle matches")
+    print("buySum/sellSum include taker fees and are matched-share proxies, not ordered cycles")
     print(f"{'wallet':<44}{'pnl$':>10}{'vol$':>11}{'mkts':>6}{'both':>7}"
           f"{'buy2':>7}{'sell2':>7}{'buySum':>8}{'sellSum':>9}"
-          f"{'invfloor':>10}{'maker':>7}{'split$':>10}{'merge$':>10}")
+          f"{'fee$':>9}{'invfloor':>10}{'maker':>7}{'split$':>10}{'merge$':>10}")
     for row in selected:
         buy_sum = f"{row.buy_pair_sum:.3f}" if row.buy_pair_sum is not None else "-"
         sell_sum = f"{row.sell_pair_sum:.3f}" if row.sell_pair_sum is not None else "-"
         print(f"{row.wallet:<44}{row.pnl:>+10,.0f}{row.volume:>11,.0f}{row.market_windows:>6}"
               f"{row.both_pct:>6.1f}%{row.bought_both_pct:>6.1f}%{row.sold_both_pct:>6.1f}%"
               f"{buy_sum:>8}{sell_sum:>9}"
-              f"{row.inventory_floor_pct:>9.1f}%{row.maker_share_pct:>6.1f}%"
+              f"{row.taker_fees:>9,.0f}{row.inventory_floor_pct:>9.1f}%"
+              f"{row.maker_share_pct:>6.1f}%"
               f"{row.direct_split_sets:>10,.0f}{row.direct_merge_sets:>10,.0f}")
     if not selected:
         print("(no wallets met the filters)")

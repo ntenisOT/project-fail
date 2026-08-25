@@ -31,6 +31,8 @@ class Fill:
     buying: bool
     shares: float
     price: float
+    is_maker: bool = False
+    taker_fee: float = 0.0
 
 
 @dataclasses.dataclass(frozen=True)
@@ -76,6 +78,42 @@ class _RoundTrip:
     sell_price: float
 
 
+@dataclasses.dataclass(frozen=True)
+class InventoryCycleSummary:
+    wallet: str
+    markets: int
+    cycle_markets: int
+    shares: float
+    edge: float
+    losing_shares: float
+    sell_first_shares: float
+    maker_shares: float
+    open_shares: float
+    median_hold_s: float
+
+
+@dataclasses.dataclass
+class _InventoryLot:
+    ts: int
+    shares: float
+    price: float
+    is_maker: bool
+
+
+@dataclasses.dataclass(frozen=True)
+class _InventoryTrip:
+    shares: float
+    edge_per_share: float
+    hold_s: int
+    sell_first: bool
+    both_maker: bool
+
+
+def _net_price(fill: Fill) -> float:
+    fee_per_share = fill.taker_fee / fill.shares if fill.shares else 0.0
+    return fill.price + fee_per_share if fill.buying else fill.price - fee_per_share
+
+
 def _round_trips(fills: list[Fill], side: int) -> tuple[list[_RoundTrip], float]:
     buys: deque[_BuyLot] = deque()
     trips: list[_RoundTrip] = []
@@ -84,7 +122,7 @@ def _round_trips(fills: list[Fill], side: int) -> tuple[list[_RoundTrip], float]
         if fill.side != side:
             continue
         if fill.buying:
-            buys.append(_BuyLot(fill.order, fill.ts, fill.shares, fill.price))
+            buys.append(_BuyLot(fill.order, fill.ts, fill.shares, _net_price(fill)))
             continue
         remaining = fill.shares
         while remaining > 1e-9 and buys:
@@ -92,7 +130,7 @@ def _round_trips(fills: list[Fill], side: int) -> tuple[list[_RoundTrip], float]
             matched = min(remaining, lot.shares)
             trips.append(_RoundTrip(
                 lot.order, lot.ts, fill.order, fill.ts,
-                matched, lot.price, fill.price,
+                matched, lot.price, _net_price(fill),
             ))
             remaining -= matched
             lot.shares -= matched
@@ -155,6 +193,64 @@ def summarize_cycles(fills: list[Fill], wallet: str) -> CycleSummary:
     )
 
 
+def _inventory_trips(fills: list[Fill], side: int) -> tuple[list[_InventoryTrip], float]:
+    buys: deque[_InventoryLot] = deque()
+    sells: deque[_InventoryLot] = deque()
+    trips: list[_InventoryTrip] = []
+    for fill in sorted(fills, key=lambda row: row.order):
+        if fill.side != side:
+            continue
+        remaining = fill.shares
+        fill_price = _net_price(fill)
+        opposite = sells if fill.buying else buys
+        while remaining > 1e-9 and opposite:
+            lot = opposite[0]
+            matched = min(remaining, lot.shares)
+            sell_price = lot.price if fill.buying else fill_price
+            buy_price = fill_price if fill.buying else lot.price
+            trips.append(_InventoryTrip(
+                matched, sell_price - buy_price, fill.ts - lot.ts,
+                fill.buying, lot.is_maker and fill.is_maker,
+            ))
+            remaining -= matched
+            lot.shares -= matched
+            if lot.shares <= 1e-9:
+                opposite.popleft()
+        if remaining > 1e-9:
+            target = buys if fill.buying else sells
+            target.append(_InventoryLot(fill.ts, remaining, fill_price, fill.is_maker))
+    return trips, sum(lot.shares for lot in buys) + sum(lot.shares for lot in sells)
+
+
+def summarize_inventory_cycles(fills: list[Fill], wallet: str) -> InventoryCycleSummary:
+    markets: dict[str, list[Fill]] = defaultdict(list)
+    for fill in fills:
+        if fill.wallet == wallet:
+            markets[fill.slug].append(fill)
+    all_trips: list[_InventoryTrip] = []
+    open_shares = 0.0
+    cycle_markets = 0
+    for rows in markets.values():
+        market_trips: list[_InventoryTrip] = []
+        for side in (0, 1):
+            trips, opened = _inventory_trips(rows, side)
+            market_trips.extend(trips)
+            open_shares += opened
+        all_trips.extend(market_trips)
+        cycle_markets += int(bool(market_trips))
+    shares = sum(trip.shares for trip in all_trips)
+    return InventoryCycleSummary(
+        wallet, len(markets), cycle_markets, shares,
+        sum(trip.shares * trip.edge_per_share for trip in all_trips),
+        sum(trip.shares for trip in all_trips if trip.edge_per_share < 0),
+        sum(trip.shares for trip in all_trips if trip.sell_first),
+        sum(trip.shares for trip in all_trips if trip.both_maker),
+        open_shares,
+        _weighted_median([(trip.hold_s, trip.shares) for trip in all_trips])
+        if all_trips else 0.0,
+    )
+
+
 def arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--start", type=parse_timestamp, required=True)
@@ -185,7 +281,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     selected = ",".join(f"'{wallet}'" for wallet in wallets)
     query = f"""
     SELECT lower(l.wallet), w.slug, w.side, l.block_number, l.log_index,
-           l.ts, l.bought>0, l.shares, l.usdc/l.shares
+           l.ts, l.bought>0, l.shares, l.usdc/l.shares, l.is_maker, l.taker_fee
     FROM ({_legs_sql(t0, t1)}) l
     INNER JOIN set_windows w ON l.token=w.token
     WHERE lower(l.wallet) IN ({selected})
@@ -199,18 +295,37 @@ def main(argv: Sequence[str] | None = None) -> int:
         query, settings=SETTINGS, external_data=window_external_data(windows)
     ).result_rows
     fills = [Fill(str(row[0]), str(row[1]), int(row[2]), (int(row[3]), int(row[4])),
-                  int(row[5]), bool(row[6]), float(row[7]), float(row[8])) for row in rows]
+                  int(row[5]), bool(row[6]), float(row[7]), float(row[8]), bool(row[9]),
+                  float(row[10]))
+             for row in rows]
     print(f"period: {iso(args.start)} .. {iso(args.end)} | resolved={len(windows)}")
     print("cycles require FIFO token round trips with overlapping holding intervals")
+    print("cycle prices and edge are net of explicit taker fees; rebates are excluded")
     print("uncovered sells exclude transfers and therefore are not proof of minting")
     print(f"{'wallet':<44}{'mkts':>6}{'cycM':>6}{'shares':>10}{'buySum':>8}"
           f"{'sellSum':>9}{'edge$':>10}{'uncovSell':>10}{'hold':>7}")
     for wallet in wallets:
-        row = summarize_cycles(fills, wallet)
-        print(f"{wallet:<44}{row.markets:>6}{row.cycle_markets:>6}{row.shares:>10,.0f}"
-              f"{_format_sum(row.buy_sum):>8}{_format_sum(row.sell_sum):>9}"
-              f"{row.edge:>10,.0f}{row.uncovered_sell_shares:>10,.0f}"
-              f"{row.median_hold_s:>6.0f}s")
+        cycle = summarize_cycles(fills, wallet)
+        print(f"{wallet:<44}{cycle.markets:>6}{cycle.cycle_markets:>6}"
+              f"{cycle.shares:>10,.0f}{_format_sum(cycle.buy_sum):>8}"
+              f"{_format_sum(cycle.sell_sum):>9}{cycle.edge:>10,.0f}"
+              f"{cycle.uncovered_sell_shares:>10,.0f}{cycle.median_hold_s:>6.0f}s")
+    print("\nsame-token cycles net alternating buys and sells without double-counting")
+    print(f"{'wallet':<44}{'mkts':>6}{'cycM':>6}{'shares':>10}{'edge$':>10}"
+          f"{'c/sh':>8}{'loss%':>8}{'sell1%':>8}{'mk2%':>8}{'open':>10}{'hold':>7}")
+    for wallet in wallets:
+        inventory = summarize_inventory_cycles(fills, wallet)
+        per_share = 100 * inventory.edge / inventory.shares if inventory.shares else 0.0
+        loss_pct = (100 * inventory.losing_shares / inventory.shares
+                    if inventory.shares else 0.0)
+        sell_pct = (100 * inventory.sell_first_shares / inventory.shares
+                    if inventory.shares else 0.0)
+        maker_pct = (100 * inventory.maker_shares / inventory.shares
+                     if inventory.shares else 0.0)
+        print(f"{wallet:<44}{inventory.markets:>6}{inventory.cycle_markets:>6}"
+              f"{inventory.shares:>10,.0f}{inventory.edge:>10,.0f}{per_share:>8.2f}"
+              f"{loss_pct:>7.1f}%{sell_pct:>7.1f}%{maker_pct:>7.1f}%"
+              f"{inventory.open_shares:>10,.0f}{inventory.median_hold_s:>6.0f}s")
     return 0
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 
+from tools.clickhouse_forensics import _legs_sql
 from tools.market_windows import parse_gamma_event
 from tools.wallet_metrics import TokenActivity, summarize_wallets
 
@@ -18,6 +19,8 @@ def activity(
     pnl: float = 0.0,
     volume: float = 0.0,
     maker_volume: float = 0.0,
+    buy_fee: float = 0.0,
+    sell_fee: float = 0.0,
 ) -> TokenActivity:
     return TokenActivity(
         wallet=wallet,
@@ -35,10 +38,21 @@ def activity(
         maker_volume=maker_volume,
         fills=1,
         maker_fills=1 if maker_volume else 0,
+        buy_fee=buy_fee,
+        sell_fee=sell_fee,
     )
 
 
 class WalletAggregationTests(unittest.TestCase):
+    def test_v2_fill_rows_emit_only_the_order_owner_leg(self) -> None:
+        v2_branch, legacy_buy, legacy_sell = _legs_sql(1, 2).split("UNION ALL")
+        self.assertIn("SELECT maker AS wallet", v2_branch)
+        self.assertIn("AND tx_hash IN v2_transactions", v2_branch)
+        self.assertIn("lower(taker) NOT IN", v2_branch)
+        self.assertNotIn("maker, taker) AS wallet", v2_branch)
+        self.assertIn("AND tx_hash NOT IN v2_transactions", legacy_buy)
+        self.assertIn("AND tx_hash NOT IN v2_transactions", legacy_sell)
+
     def test_same_timestamp_different_assets_is_not_both_sides(self) -> None:
         rows = [
             activity("0xABC", "btc-updown-5m-300", "btc", 300, 1, bought=5),
@@ -82,6 +96,16 @@ class WalletAggregationTests(unittest.TestCase):
         row = activity("w", "btc-updown-5m-300", "btc", 300, 1, bought=5)
         with self.assertRaisesRegex(ValueError, "duplicate per-token"):
             summarize_wallets([row, row])
+
+    def test_pair_prices_and_pnl_account_for_taker_fees(self) -> None:
+        rows = [
+            activity("w", "btc-updown-5m-300", "btc", 300, side,
+                     bought=10, buy_fee=0.1)
+            for side in (0, 1)
+        ]
+        result = summarize_wallets(rows)[0]
+        self.assertAlmostEqual(result.buy_pair_sum or 0, 1.02)
+        self.assertAlmostEqual(result.taker_fees, 0.2)
 
 
 class GammaParsingTests(unittest.TestCase):

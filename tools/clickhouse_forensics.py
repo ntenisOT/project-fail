@@ -37,13 +37,52 @@ def window_external_data(windows: Sequence[ResolvedWindow]) -> ExternalData:
 
 
 def _legs_sql(t0: int, t1: int) -> str:
-    common = f"""
+    """Normalize user order fills across legacy and V2 exchange events.
+
+    V2 emits one ``OrderFilled`` per participating order.  The taker order's
+    summary row uses the exchange contract as ``taker``; treating every row as
+    a bilateral trade duplicates that order and can turn complementary buys
+    into a fabricated buy/sell cycle.  V2 rows therefore contribute only the
+    order owner's (``maker`` field) leg.  Legacy transactions retain the old
+    bilateral mapping.
+    """
+    period = f"""
       FROM trade_history
       WHERE block_timestamp>=toDateTime({t0}) AND block_timestamp<toDateTime({t1})
         AND (maker_asset_id IN (SELECT token FROM set_windows)
              OR taker_asset_id IN (SELECT token FROM set_windows))
     """
+    exchanges = (
+        "'0xe111180000d2663c0091e4f400237545b87b996b',"
+        "'0xe2222d279d744050d28e00520010520000310f59'"
+    )
     return f"""
+      WITH v2_transactions AS (
+        SELECT tx_hash
+        FROM trade_history
+        WHERE block_timestamp>=toDateTime({t0}) AND block_timestamp<toDateTime({t1})
+          AND lower(taker) IN ({exchanges})
+          AND (maker_asset_id IN (SELECT token FROM set_windows)
+               OR taker_asset_id IN (SELECT token FROM set_windows))
+        GROUP BY tx_hash
+      )
+      SELECT maker AS wallet,
+             multiIf(maker_asset_id!='0', maker_asset_id, taker_asset_id) AS token,
+             toUInt32(block_timestamp) AS ts,
+             block_number, log_index,
+             toFloat64(if(maker_asset_id='0', maker_amount_filled,
+                          taker_amount_filled))/1e6 AS usdc,
+             if(maker_asset_id='0', -usdc, usdc) AS cash,
+             toFloat64(if(maker_asset_id='0', taker_amount_filled,
+                          maker_amount_filled))/1e6 AS shares,
+             if(maker_asset_id='0', shares, -shares) AS net_shares,
+             if(maker_asset_id='0', shares, 0.0) AS bought,
+             if(maker_asset_id='0', 0.0, shares) AS sold,
+             lower(taker) NOT IN ({exchanges}) AS is_maker,
+             toFloat64(fee)/1e6 AS taker_fee
+      {period}
+        AND tx_hash IN v2_transactions
+      UNION ALL
       SELECT if(maker_asset_id='0', maker, taker) AS wallet,
              multiIf(maker_asset_id!='0', maker_asset_id, taker_asset_id) AS token,
              toUInt32(block_timestamp) AS ts,
@@ -52,8 +91,10 @@ def _legs_sql(t0: int, t1: int) -> str:
              -usdc AS cash,
              toFloat64(if(maker_asset_id='0', taker_amount_filled, maker_amount_filled))/1e6 AS shares,
              shares AS net_shares, shares AS bought, 0.0 AS sold,
-             maker_asset_id='0' AS is_maker
-      {common}
+             maker_asset_id='0' AS is_maker,
+             if(is_maker, 0.0, toFloat64(fee)/1e6) AS taker_fee
+      {period}
+        AND tx_hash NOT IN v2_transactions
       UNION ALL
       SELECT if(maker_asset_id='0', taker, maker) AS wallet,
              multiIf(maker_asset_id!='0', maker_asset_id, taker_asset_id) AS token,
@@ -63,8 +104,10 @@ def _legs_sql(t0: int, t1: int) -> str:
              usdc AS cash,
              toFloat64(if(maker_asset_id='0', taker_amount_filled, maker_amount_filled))/1e6 AS shares,
              -shares AS net_shares, 0.0 AS bought, shares AS sold,
-             maker_asset_id!='0' AS is_maker
-      {common}
+             maker_asset_id!='0' AS is_maker,
+             if(is_maker, 0.0, toFloat64(fee)/1e6) AS taker_fee
+      {period}
+        AND tx_hash NOT IN v2_transactions
     """
 
 
@@ -81,10 +124,11 @@ def fetch_token_activity(client, windows: Sequence[ResolvedWindow]) -> list[Toke
     t1 = max(w.start for w in windows) + LIFECYCLE_TAIL_S
     query = f"""
     SELECT lower(l.wallet), w.slug, any(w.asset), any(w.start_ts), w.side,
-           sum(l.cash) + sum(l.net_shares*w.payoff), sum(l.usdc),
+           sum(l.cash-l.taker_fee) + sum(l.net_shares*w.payoff), sum(l.usdc),
            sum(l.bought), sumIf(l.usdc, l.bought>0),
            sum(l.sold), sumIf(l.usdc, l.sold>0), sum(l.net_shares),
-           sumIf(l.usdc, l.is_maker), count(), countIf(l.is_maker)
+           sumIf(l.usdc, l.is_maker), count(), countIf(l.is_maker),
+           sumIf(l.taker_fee, l.bought>0), sumIf(l.taker_fee, l.sold>0)
     FROM ({_legs_sql(t0, t1)}) l
     INNER JOIN set_windows w ON l.token=w.token
     WHERE l.wallet!=''

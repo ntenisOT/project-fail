@@ -24,6 +24,8 @@ class TokenActivity:
     maker_volume: float
     fills: int
     maker_fills: int
+    buy_fee: float = 0.0
+    sell_fee: float = 0.0
 
 
 @dataclasses.dataclass
@@ -39,6 +41,7 @@ class WalletSummary:
     sold: float = 0.0
     inventory_floor_shares: float = 0.0
     maker_volume: float = 0.0
+    taker_fees: float = 0.0
     fills: int = 0
     net_imbalance_sum: float = 0.0
     direct_split_sets: float = 0.0
@@ -97,6 +100,7 @@ class WalletSummary:
             "sold_both_pct": self.sold_both_pct,
             "inventory_floor_pct": self.inventory_floor_pct,
             "maker_share_pct": self.maker_share_pct,
+            "taker_fees_usd": self.taker_fees,
             "avg_net_imbalance_shares": self.avg_net_imbalance,
             "direct_split_sets": self.direct_split_sets,
             "direct_merge_sets": self.direct_merge_sets,
@@ -132,6 +136,7 @@ def summarize_wallets(
         summary.sold += sum(row.sold for row in rows)
         summary.inventory_floor_shares += sum(max(0.0, row.sold - row.bought) for row in rows)
         summary.maker_volume += sum(row.maker_volume for row in rows)
+        summary.taker_fees += sum(row.buy_fee + row.sell_fee for row in rows)
         summary.fills += sum(row.fills for row in rows)
 
         has_pair = set(sides) == {0, 1}
@@ -148,13 +153,15 @@ def summarize_wallets(
                 paired = min(up_row.bought, down_row.bought)
                 summary.paired_buy_shares += paired
                 summary.paired_buy_cost += paired * (
-                    up_row.buy_usdc / up_row.bought + down_row.buy_usdc / down_row.bought
+                    (up_row.buy_usdc + up_row.buy_fee) / up_row.bought
+                    + (down_row.buy_usdc + down_row.buy_fee) / down_row.bought
                 )
             if up_row.sold > 0 and down_row.sold > 0:
                 paired = min(up_row.sold, down_row.sold)
                 summary.paired_sell_shares += paired
                 summary.paired_sell_proceeds += paired * (
-                    up_row.sell_usdc / up_row.sold + down_row.sell_usdc / down_row.sold
+                    (up_row.sell_usdc - up_row.sell_fee) / up_row.sold
+                    + (down_row.sell_usdc - down_row.sell_fee) / down_row.sold
                 )
         net_up = up_row.net_shares if up_row is not None else 0.0
         net_down = down_row.net_shares if down_row is not None else 0.0

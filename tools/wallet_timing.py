@@ -56,7 +56,9 @@ def main(argv: Sequence[str] | None = None) -> int:
            sum(early_volume), sum(middle_volume), sum(late_volume),
            sum(post_volume), sum(maker_volume), sum(fills),
            countIf(event_fills>0),
-           countIf(event_fills>0 AND first_event<=60 AND last_event>=240)
+           countIf(event_fills>0 AND first_event<=60 AND last_event>=240),
+           sum(edge), sum(pre_edge), sum(early_edge), sum(middle_edge),
+           sum(late_edge), sum(post_edge)
     FROM (
       SELECT lower(l.wallet) wallet, w.slug,
              sum(l.usdc) volume,
@@ -67,6 +69,16 @@ def main(argv: Sequence[str] | None = None) -> int:
              sumIf(l.usdc, l.ts>=w.start_ts+240 AND l.ts<w.start_ts+300) late_volume,
              sumIf(l.usdc, l.ts>=w.start_ts+300) post_volume,
              sumIf(l.usdc, l.is_maker) maker_volume,
+             sum(l.cash-l.taker_fee+l.net_shares*w.payoff) edge,
+             sumIf(l.cash-l.taker_fee+l.net_shares*w.payoff, l.ts<w.start_ts) pre_edge,
+             sumIf(l.cash-l.taker_fee+l.net_shares*w.payoff,
+                   l.ts>=w.start_ts AND l.ts<w.start_ts+60) early_edge,
+             sumIf(l.cash-l.taker_fee+l.net_shares*w.payoff,
+                   l.ts>=w.start_ts+60 AND l.ts<w.start_ts+240) middle_edge,
+             sumIf(l.cash-l.taker_fee+l.net_shares*w.payoff,
+                   l.ts>=w.start_ts+240 AND l.ts<w.start_ts+300) late_edge,
+             sumIf(l.cash-l.taker_fee+l.net_shares*w.payoff,
+                   l.ts>=w.start_ts+300) post_edge,
              count() fills,
              countIf(l.ts>=w.start_ts AND l.ts<w.start_ts+300) event_fills,
              minIf(toInt64(l.ts)-toInt64(w.start_ts),
@@ -93,12 +105,21 @@ def main(argv: Sequence[str] | None = None) -> int:
           f"{'mid%':>7}{'late%':>7}{'post%':>7}{'maker%':>8}"
           f"{'eventM%':>9}{'span%':>7}{'fills':>8}")
     for (wallet, markets, volume, pre, _event, early, middle, late, post, maker,
-         fills, event_markets, spans) in rows:
+         fills, event_markets, spans, _edge, _pre_edge, _early_edge,
+         _middle_edge, _late_edge, _post_edge) in rows:
         print(f"{wallet:<44}{markets:>6}{volume:>11,.0f}{percent(pre, volume):>6.1f}%"
               f"{percent(early, volume):>7.1f}%{percent(middle, volume):>6.1f}%"
               f"{percent(late, volume):>6.1f}%{percent(post, volume):>6.1f}%"
               f"{percent(maker, volume):>7.1f}%{percent(event_markets, markets):>8.1f}%"
               f"{percent(spans, markets):>6.1f}%{fills:>8}")
+    print("\nterminal markout by fill time (cash plus shares times official payoff)")
+    print(f"{'wallet':<44}{'edge$':>10}{'pre$':>10}{'0-60$':>10}"
+          f"{'60-240$':>11}{'240-300$':>12}{'post$':>10}")
+    for row in rows:
+        wallet = row[0]
+        edge, pre, early, middle, late, post = (float(value) for value in row[-6:])
+        print(f"{wallet:<44}{edge:>10,.0f}{pre:>10,.0f}{early:>10,.0f}"
+              f"{middle:>11,.0f}{late:>12,.0f}{post:>10,.0f}")
     return 0
 
 

@@ -4,11 +4,11 @@ Research → paper A/B → guarded live execution for Polymarket's 5-minute
 BTC/ETH/SOL/XRP "up or down" markets. One question end-to-end: *is there a
 replicable, low-capital edge, and what execution captures it?*
 
-**Status: NO-GO for real money.** Corrected winner forensics shows several
-different behaviours: maker accumulators, two-sided churn, mint/transfer-
-supplemented sellers, and pre-finality/cashout activity. Trading both tokens is
-common but does not prove simultaneous quoting, hedged carry, or minting. The
-mint strategy is therefore a hypothesis to test, not "the winners' mechanic."
+**Status: NO-GO for real money.** V2-corrected winner forensics invalidated the
+old mint-and-sell taxonomy. The clean leader rests bids on both outcome tokens,
+acquires fee-inclusive pairs below $1, never sells, and holds to settlement.
+Other winners add directional exposure, but trading both tokens does not prove
+simultaneous asks or direct CTF minting. Mint-and-ask is not the winner replica.
 
 ---
 
@@ -30,7 +30,7 @@ hard-blocks every place-mode component anywhere else.
 
 | Session | Command it runs | What it is |
 |---|---|---|
-| `paper` | `python -m paper.run` | four queue-aware pair/inventory hypotheses (writes `paper/paper.db`) |
+| `paper` | `python -m paper.run` | four queue-aware paired-bid hypotheses (writes `paper/paper.db`) |
 | `mintbot` | `MINTBOT_MODE=shadow python -m live.mintbot` | feed/quote soak only; place mode is currently forbidden |
 
 View: `tmux attach -t paper` (detach `Ctrl-b d`) or `tmux capture-pane -t paper -p | tail -20`.
@@ -82,9 +82,12 @@ python winner_bench.py --hours 1
 Prints the real-wallet pool/best/median for the same windows next to our arms.
 
 **Corrected wallet forensics**: `python tools/top_setters.py --hours 24` uses
-official resolved slugs, full token lifecycles, per-token inventory, and
-read-only ClickHouse external tables. It separates direct CTF events from
-unexplained inventory and reports matched-share buy/sell price-sum proxies.
+official resolved slugs, full token lifecycles, per-token inventory, explicit
+taker fees, and read-only ClickHouse external tables. The normalizer handles
+CLOB V2's per-order fill events: the taker summary has the exchange contract as
+counterparty and must not be expanded as a second bilateral trade. The old V1
+expansion fabricated sells, cycles, and maker roles from complementary buys.
+The tool separates direct CTF events and reports fee-inclusive pair proxies.
 `tools/latency_probe.py` measures GET and feed surfaces without calling an order
 endpoint, then compares the configured paper delay with twice the GET p90 proxy.
 `tools/wallet_timing.py` tests the stronger all-window-maker claim by separating
@@ -92,22 +95,25 @@ pre-event, early, middle, late, and post-event volume, maker share, and full-spa
 market participation for explicitly supplied wallets. `tools/wallet_cycles.py`
 requires opposite-token FIFO round trips with overlapping holding intervals in
 exact block/log order, then reports cycle sums, edge, coverage, and holding
-time; it does not treat uncovered sells as proof of minting.
+time; it also nets same-token alternating inventory without double-counting and
+does not treat uncovered sells as proof of minting. `tools/wallet_signal.py`,
+`tools/wallet_tape.py`, and `tools/wallet_markout.py` separate neutral pair edge
+from outcome alignment and screen public-tape signals after slippage and fees.
 
 ---
 
 ## 3. Focused pair-inventory experiment (four strategies)
 
 The legacy 49-arm board was retired after every execution-shaped pair/mint arm
-remained negative and corrected wallet forensics showed that “both tokens” is a
-signature, not one universal mechanism. The current board tests only:
+remained negative. V2-corrected forensics then identified the clean leader as a
+paired-bid accumulator, so the current board is a bounded 2×2 test:
 
 | Strategy | Mechanic |
 |---|---|
-| `inv_pairinside20` | Strict complete-set inventory cycles with one-tick price improvement for queue priority |
-| `inv_pairmm20` | Start with 20 complete sets and continuously make markets, but start a cycle only when both guarded legs are inventory-eligible |
-| `pair_inside20` | Improve both maker prices by one tick when pair sums remain ≤0.99/≥1.01, trading margin for queue priority |
-| `mint_cycle20` | Minted inventory with opposite-ask +2¢ anchors; after one side fills, quote only the other side above the realized pair floor before starting another clip |
+| `bid98` | Join both best bids; acquire/hold only when the completed pair costs ≤$0.98 |
+| `inside98` | Improve both bids one tick under the same $0.98 pair cap |
+| `bid99` | Join both best bids under a $0.99 pair cap |
+| `inside99` | Improve both bids one tick under a $0.99 pair cap |
 
 The simulator reconstructs public price levels from authoritative snapshots and
 `price_change` deltas. Joining the best price puts the displayed level size in
@@ -262,6 +268,7 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 35 | 08-25 05:xx | A/B phased inventory against continuous two-sided complete-set market making; retire rejected taker flattening |
 | 36 | 08-25 06:xx | forbid inventory filtering from turning a guarded pair start into a loss-making single-leg quote |
 | 37 | 08-25 06:xx | A/B strict complete-set inventory at join-best versus one-tick-inside prices |
+| 38 | 08-25 06:xx | replace V1-corrupted mint/churn thesis with V2-correct paired-bid accumulation; 2×2 price-priority test |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

@@ -20,7 +20,7 @@ old approval/setup commands, and CTF split/merge fail closed in code.
   results because our future share of the daily pool is unknown.
 - Crypto takers pay `shares * 0.07 * p * (1-p)`, rounded per match to five decimals.
 - Limit orders require at least five shares.
-- Repeated Ireland CLOB GET RTT is 27-28 ms median / 31-33 ms p90. The legacy one-second
+- Repeated Ireland CLOB GET RTT is 27-28 ms median / 31-36 ms p90. The legacy one-second
   file poll added 546 ms median / 928 ms p90 and is no longer in the paper path.
   Paper activates actions after 65 ms: approximately twice GET p90 as a conservative
   cancel/replace proxy. Authenticated POST/cancel timing remains unmeasured.
@@ -29,9 +29,10 @@ old approval/setup commands, and CTF split/merge fail closed in code.
 
 ## Strategy evidence required
 
-The four current hypotheses are `inv_pairinside20`, `inv_pairmm20`,
-`pair_inside20`, and `mint_cycle20`. A candidate cannot advance unless a clean
-generation demonstrates all of the following:
+The four current hypotheses are `bid98`, `inside98`, `bid99`, and `inside99`:
+join-best versus one-tick-inside paired bids, each under a $0.98 or $0.99
+completed-pair cap. A candidate cannot advance unless a clean generation
+demonstrates all of the following:
 
 - At least 288 full asset-windows (six hours across four assets); a window with
   first usable paired books more than ten seconds late is excluded.
@@ -39,7 +40,7 @@ generation demonstrates all of the following:
   win rate or volume.
 - The result is not explained by one asset, one outcome direction, or a handful
   of windows.
-- Paired buy sum is below $1 and, for churn, paired sell sum is above $1.
+- Fee-inclusive paired buy sum remains below $1.
 - Neutral-mark PnL is positive; realized outcome luck is reported separately.
 - A first-leg fill constrains the later opposite-token quote; simultaneous quote
   sums are not accepted as evidence of realized pair economics.
@@ -52,12 +53,17 @@ generation demonstrates all of the following:
   lag must remain bounded rather than hiding a slow consumer behind buffering.
 - Queue-ahead consumption, quote residence, post/cancel rate, and fill rate are
   credible rather than print-skimming assumptions.
-- One-tick price improvement increases completed cycles and neutral PnL versus
-  join-best churn without violating the same pair-sum or 65 ms action-delay gates.
-- Mint cycle completion remains positive on neutral PnL with bounded unmatched
-  inventory; a quoted pair floor alone is insufficient.
+- One-tick price improvement increases completed pairs and neutral PnL versus
+  join-best without violating the same pair-sum or 65 ms action-delay gates.
 - The shadow mintbot cannot advance until authenticated receipts replace its
-  delayed position-based fill inference and exact cycle economics can be proven.
+  delayed position-based fill inference and exact cycle economics can be proven;
+  V2-corrected winner fills do not currently support mint-and-ask as the replica.
+
+A directional overlay is also closed. It must show, on non-overlapping
+out-of-sample periods, that the lower confidence bound on fair probability clears
+the executable price plus taker fee, slippage, causal feed-age markout, and a
+safety margin. The public last-trade trend proxy fails this net executable-edge
+test before the near-resolution interval.
 
 Early negative evidence is enough to reject or alter a hypothesis; the minimum
 sample is a promotion gate, not a reason to preserve a losing configuration.

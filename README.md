@@ -57,7 +57,8 @@ Remove the file before restarting anything.
 All read-only; run from anywhere with the SSH key.
 
 **Focused paper report** — realized PnL, paired edge, neutral 50-cent inventory
-mark, isolated outcome luck, worst-case PnL, pair sums, queue depth, and residence:
+mark, isolated outcome luck, worst-case PnL, pair sums, FIFO completion delay,
+queue depth, residence, and structured invalid-window reasons/exposure:
 ```bash
 ssh -i ~/.ssh/pm_deploy ubuntu@3.254.130.64 'cd ~/project-fail && ./.venv/bin/python -m paper.report'
 ```
@@ -150,7 +151,11 @@ invalidates the active window because missed trades cannot be reconstructed. A
 `book` or `price_change` event arriving more than `PAPER_MAX_EVENT_LAG_MS`
 (400 ms by default) late also invalidates only its affected asset-window;
 heartbeats report rolling server-event p50/p90/max lag, stale-event count, and
-reconnect count.
+reconnect count. The ledger separately persists every invalid strategy-window,
+its triggering event lag, fills, peak committed capital, cash, and residual
+inventory. Reports include the cohort validity rate so rejected windows cannot
+silently disappear from the denominator. Completed opposite-token fills retain
+share-weighted FIFO d50/d90 timing for direct comparison with winner wallets.
 
 This is substantially less optimistic than the retired print-skimming model,
 but still cannot model private cancellations ahead of us, exchange order
@@ -234,7 +239,9 @@ hard-refuses before constructing a client or touching its database.
    strings — pattern kills murder every session (it happened three times).
    `tmux kill-session` + PID-targeted `kill` only.
 5. Deploys: local edit → focused checks → `scp` → hash-verified restart →
-   commit+push to `main`. Reports are sorted by PnL and retain queue/inventory evidence.
+   commit+push to `main`. Bind `PAPER_ASSETS`, action latency, and stale-event
+   threshold explicitly in the tmux command, then verify the startup log.
+   Reports are sorted by PnL and retain queue/inventory evidence.
 
 ### Launch commands
 
@@ -296,6 +303,7 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 40 | 08-25 07:4x | reject four-asset and initial BTC-only samples after causal feed lag exceeded 400 ms without a disconnect |
 | 41 | 08-25 07:5x | pause through the repeatable subscription backlog; start BTC pairs at T+30 only after both token feeds catch up |
 | 42 | 08-25 08:15 | score feed validity per strategy and include resting-bid collateral in capital; continue the BTC basket control |
+| 43 | 08-25 08:34 | persist invalid-window exposure and trigger lag; report FIFO pair d50/d90; a wrong all-asset bootstrap was caught before T+30 and replaced by the verified BTC-only runner |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

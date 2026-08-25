@@ -14,7 +14,7 @@ from live.feed_health import (
     market_event_tokens,
     stale_market_event,
 )
-from live.market_book import BestAskCache
+from live.market_book import BestAskCache, fresh_ask_pair
 from live.mint_quotes import (
     guarded_pair_prices,
     plan_pair_quotes,
@@ -85,6 +85,8 @@ class MintSafetyTests(unittest.TestCase):
         books = BestAskCache()
         books.apply({"event_type": "book", "asset_id": "up",
                      "asks": [{"price": "0.70"}]}, 1.0)
+        books.apply({"event_type": "book", "asset_id": "down",
+                     "asks": [{"price": "0.40"}]}, 1.0)
         books.apply({"event_type": "price_change", "price_changes": [
             {"asset_id": "up", "best_ask": "0.63"},
         ]}, 2.0)
@@ -93,6 +95,12 @@ class MintSafetyTests(unittest.TestCase):
         assert book is not None
         self.assertEqual(book.price, 0.63)
         self.assertEqual(book.received_at, 2.0)
+        self.assertIsNone(fresh_ask_pair(books, "up", "down", 2.1, 0.5))
+        books.apply({"event_type": "price_change", "price_changes": [
+            {"asset_id": "down", "best_ask": "0.39"},
+        ]}, 2.0)
+        self.assertEqual(fresh_ask_pair(books, "up", "down", 2.1, 0.5),
+                         (0.63, 0.39))
         books.clear()
         self.assertIsNone(books.get("up"))
 

@@ -1,4 +1,4 @@
-"""Drain WebSocket frames independently from ordered market-event processing."""
+"""Drain WebSocket frames independently from ordered event processing."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ class FeedBacklogError(RuntimeError):
 
 
 class FeedPump:
-    """Keep socket reads responsive while preserving ordered handler causality."""
+    """Keep socket reads responsive while preserving handler causality."""
 
     def __init__(
         self, handler: Callable[[dict[str, object]], None],

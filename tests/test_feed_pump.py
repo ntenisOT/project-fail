@@ -1,7 +1,7 @@
 import asyncio
 import json
 
-from paper.feed_pump import FeedPump
+from live.feed_pump import FeedPump
 
 
 def test_feed_pump_drains_socket_before_ordered_processing_finishes() -> None:

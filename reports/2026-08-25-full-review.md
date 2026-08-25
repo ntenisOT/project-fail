@@ -163,7 +163,12 @@ bug is also fixed and covered by one focused test.
   second `1013 slow consumer` disconnect invalidated the window at T+171. Gen49
   preserves the board but drains socket frames independently into a bounded,
   ordered queue; queue delay remains part of measured event age and overflow
-  still fails closed.
+  still fails closed. The same pump now protects mintbot. Its existing cache did
+  consume `price_change` best asks (11.7 million delta events versus about
+  404,000 snapshots in the live soak), contrary to the stale-snapshot concern;
+  the real hole was a global freshness timestamp. Gen49 requires recent
+  timestamped updates for both outcome-token caches so unrelated traffic cannot
+  bless a stale quote pair.
 
 A 15-minute generation is realistic for rejecting a mechanism or catching a
 runtime defect. It is not realistic for estimating edge. Promotion requires at
@@ -226,9 +231,12 @@ operation.
 
 Mintbot is useful only as a shadow control-plane soak: feed baseline near 10
 ms, about 12-second quote residence, 11 accumulated reconnects, and no real
-orders or chain transactions. Its “minted/merged” rows are synthetic shadow
-bookkeeping. It has no authenticated fill-price or ownership evidence and its
-place path is hard-disabled.
+orders or chain transactions. Its active deployed cache already consumes
+`price_change` best asks; the next generation additionally uses per-token
+timestamp freshness, delta-to-cache counters, and a bounded socket-drain queue.
+Its “minted/merged” rows are synthetic shadow bookkeeping. It has no
+authenticated fill-price or ownership evidence and its place path is
+hard-disabled.
 
 ### 14. Maintainability is mixed
 

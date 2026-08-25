@@ -38,8 +38,9 @@ import sqlite3
 import time
 import urllib.request
 
-from live.market_book import BestAskCache
-from live.feed_health import FeedHealth, MARKET_WS_MAX_QUEUE
+from live.feed_pump import FeedPump
+from live.feed_health import FeedHealth, MARKET_WS_MAX_QUEUE, event_time_s
+from live.market_book import BestAskCache, fresh_ask_pair
 from live.mint_quotes import Quote, guarded_pair_prices, plan_pair_quotes, should_reprice
 from live.window_clock import boundary_aligned_delay
 from paper import envload
@@ -58,7 +59,9 @@ MINT_USD = float(os.environ.get("MINT_USD", "20"))
 MINT_DAY_CAP = float(os.environ.get("MINT_DAY_CAP", "250"))
 SPREAD = float(os.environ.get("MINT_SPREAD", "0.02"))
 SUM_FLOOR = 1.005            # M8: two asks must sum above set cost + margin
-FRESH_S = 12.0
+BOOK_FRESH_S = float(os.environ.get("MINT_BOOK_FRESH_MS", "2000")) / 1000
+if not 0.05 <= BOOK_FRESH_S <= 5:
+    raise RuntimeError("MINT_BOOK_FRESH_MS must be between 50 and 5000")
 REQUOTE_S = 0.5
 MIN_SHARES = 5.0
 
@@ -136,8 +139,8 @@ class Mintbot:
         self.feed_counts = collections.Counter()
         self.quote_counts = collections.Counter()
         self.last_feed_log = 0.0
-        self.market_feed_at = 0.0
         self.feed_health = FeedHealth()
+        self.feed_pump: FeedPump | None = None
 
     def spawn(self, coro):
         t = asyncio.create_task(coro)
@@ -314,16 +317,18 @@ class Mintbot:
                 if (st.get("closing") or st["minted"] <= 0
                         or now < st["base"] + 3 or now > st["close"] - 25):
                     continue
-                bu, bd = self.books.get(st["up"]), self.books.get(st["dn"])
-                if (not bu or not bd or bu.price is None or bd.price is None
-                        or now - self.market_feed_at > FRESH_S):        # M8
+                asks = fresh_ask_pair(
+                    self.books, st["up"], st["dn"], now, BOOK_FRESH_S,
+                )
+                if asks is None:                                      # M8
                     if any(st["asks"].values()):
                         await self.cancel_pair(st)
                         self.quote_counts["stale_pause"] += 1
                         log.warning("quote paused %s: market feed stale", st["asset"])
                     continue
+                ask_up, ask_down = asks
                 prices = guarded_pair_prices(
-                    bu.price, bd.price, spread=SPREAD, sum_floor=SUM_FLOOR,
+                    ask_up, ask_down, spread=SPREAD, sum_floor=SUM_FLOOR,
                 )
                 if prices is None:
                     if any(st["asks"].values()):
@@ -398,6 +403,37 @@ class Mintbot:
             self.quote_counts["pair_post"] += 1
 
     # ---- feed -------------------------------------------------------------
+    def on_market_event(self, event: dict[str, object]) -> None:
+        received_at = time.time()
+        event_type = str(event.get("event_type", "?"))
+        self.feed_health.observe(event, received_at)
+        self.feed_counts[event_type] += 1
+        source_at = event_time_s(event)
+        if event_type in ("book", "price_change") and source_at is None:
+            self.feed_counts["market_update_missing_timestamp"] += 1
+            changed: set[str] = set()
+        else:
+            changed = self.books.apply(event, source_at or received_at)
+        if changed:
+            self.feed_counts[f"{event_type}_book_updates"] += len(changed)
+        if time.monotonic() - self.last_feed_log < 60:
+            return
+        rest_count = self.quote_counts["rest_count"]
+        rest_s = (self.quote_counts["rest_ms"] / rest_count / 1000
+                  if rest_count else 0)
+        under_pct = (100 * self.quote_counts["rest_under15"] / rest_count
+                     if rest_count else 0)
+        quote_events = {
+            key: value for key, value in self.quote_counts.items()
+            if not key.startswith("rest_")
+        }
+        queue_hwm = self.feed_pump.high_water if self.feed_pump else 0
+        log.info("feed events=%s lag=%s queue_hwm=%d quotes=%s residence=%.1fs "
+                 "under15=%.0f%%", dict(self.feed_counts),
+                 self.feed_health.snapshot(), queue_hwm, quote_events, rest_s,
+                 under_pct)
+        self.last_feed_log = time.monotonic()
+
     async def ws_task(self):
         import websockets
         retry_delay = 0.1
@@ -416,46 +452,10 @@ class Mintbot:
                                               max_queue=MARKET_WS_MAX_QUEUE) as ws:
                     connected_at = time.monotonic()
                     await ws.send(json.dumps({"assets_ids": toks, "type": "market"}))
-                    last_ping = time.monotonic()
                     log.info("ws subscribed %d tokens (mode=%s mint=$%.0f spread=%.2f)",
                              len(toks), MODE, MINT_USD, SPREAD)
-                    while not self.resub.is_set():
-                        elapsed = time.monotonic() - last_ping
-                        if elapsed >= 10:
-                            await ws.send("PING")
-                            last_ping = time.monotonic()
-                        try:
-                            raw = await asyncio.wait_for(
-                                ws.recv(), timeout=min(0.5, max(0.1, 10 - elapsed)),
-                            )
-                        except asyncio.TimeoutError:
-                            continue                       # re-check resub fast
-                        if raw == "PONG":
-                            self.market_feed_at = time.time()
-                            continue
-                        items = json.loads(raw)
-                        received_at = time.time()
-                        self.market_feed_at = received_at
-                        for it in items if isinstance(items, list) else [items]:
-                            if isinstance(it, dict):
-                                self.feed_health.observe(it, received_at)
-                                self.feed_counts[str(it.get("event_type", "?"))] += 1
-                                self.books.apply(it, received_at)
-                        if time.monotonic() - self.last_feed_log >= 60:
-                            rest_count = self.quote_counts["rest_count"]
-                            rest_s = (self.quote_counts["rest_ms"] / rest_count / 1000
-                                      if rest_count else 0)
-                            under_pct = (100 * self.quote_counts["rest_under15"] / rest_count
-                                         if rest_count else 0)
-                            quote_events = {
-                                key: value for key, value in self.quote_counts.items()
-                                if not key.startswith("rest_")
-                            }
-                            log.info("feed events=%s lag=%s quotes=%s residence=%.1fs "
-                                     "under15=%.0f%%", dict(self.feed_counts),
-                                     self.feed_health.snapshot(), quote_events, rest_s,
-                                     under_pct)
-                            self.last_feed_log = time.monotonic()
+                    self.feed_pump = FeedPump(self.on_market_event)
+                    await self.feed_pump.run(ws, self.resub)
             except SystemExit:
                 raise
             except Exception as e:
@@ -481,8 +481,8 @@ class Mintbot:
 
     async def main(self):
         log.info("experimental mintbot starting: mode=%s mint=$%.0f/window day-cap=$%.0f "
-                 "spread=%.2f sum-floor=%.3f", MODE, MINT_USD, MINT_DAY_CAP,
-                 SPREAD, SUM_FLOOR)
+                 "spread=%.2f sum-floor=%.3f book-fresh=%dms", MODE, MINT_USD,
+                 MINT_DAY_CAP, SPREAD, SUM_FLOOR, round(BOOK_FRESH_S * 1000))
         if MODE == "shadow":
             log.warning("shadow validates feeds/quote decisions only; it does not simulate fills or PnL")
         try:

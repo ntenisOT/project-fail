@@ -73,3 +73,16 @@ class BestAskCache:
             self._books[update.token] = BestAsk(update.ask, received_at)
             changed.add(update.token)
         return changed
+
+
+def fresh_ask_pair(
+    books: BestAskCache, up_token: str, down_token: str,
+    now: float, max_age_s: float,
+) -> tuple[float, float] | None:
+    """Return both asks only when each token has a recent causal update."""
+    up, down = books.get(up_token), books.get(down_token)
+    if (up is None or down is None or up.price is None or down.price is None
+            or now - up.received_at > max_age_s
+            or now - down.received_at > max_age_s):
+        return None
+    return up.price, down.price

@@ -213,7 +213,12 @@ maker asks on both sides, anchored `1 − opposite_ask + 2¢`. It consumes
 `price_change` deltas, sends the required heartbeat, verifies the old pair is
 gone before one batch replacement, posts five-share clips, preserves queue
 priority with a five-tick/15-second band (10-tick adverse override), and
-stops quoting after asymmetric fills. A joint-sum
+stops quoting after asymmetric fills. Both token caches must have their own
+timestamped snapshot/delta update within `MINT_BOOK_FRESH_MS` (2,000 ms by
+default); unrelated token traffic can no longer make a stale pair look healthy.
+The mintbot now shares paper's bounded ordered feed pump, reports queue high
+water and separately counts deltas that actually updated its best-ask cache.
+A joint-sum
 floor constrains a quoted pair but cannot guarantee paired fills. Position
 polling still cannot reconstruct exact fill prices, so reported PnL is not yet
 authoritative. `mint_cycle20` shares the same anchor and residence policy but,
@@ -292,7 +297,8 @@ No place-mode or approval command is published while the launch gate is closed.
 `PAPER_SUMMARY_MINS`, `PAPER_ASSETS`,
 `PAPER_ACTION_LATENCY_MS`, `PAPER_MAX_EVENT_LAG_MS` ·
 optional `POLYGON_RPC_URL`,
-`MINT_USD`, `MINT_DAY_CAP`, `MINT_SPREAD`, `LIVE_EXECUTOR_MODE`, `MINTBOT_MODE`.
+`MINT_USD`, `MINT_DAY_CAP`, `MINT_SPREAD`, `MINT_BOOK_FRESH_MS`,
+`LIVE_EXECUTOR_MODE`, `MINTBOT_MODE`.
 
 ---
 
@@ -347,7 +353,7 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 46 | 08-25 09:11 | replace the nearly redundant Basket985 arm with 5-share versus 10-share Basket99 twins and a fee-aware T+120 taker-completion twin; retain strict and Basket98 controls |
 | 47 | 08-25 09:49 | reject the 10-share arms after five windows; keep 5-share Basket99 control and isolate a T+180 new-pair cutoff from fee-aware completion at T+120/T+180 |
 | 48 | 08-25 10:05 | retain Basket98/Basket99/cutoff controls; replace redundant taker twins with a stable two-level replenishing ladder and an honest queue-aware mint-cycle control |
-| 49 | 08-25 10:20 | preserve the Gen48 board; decouple WebSocket draining from ordered processing after another real 1013 slow-consumer disconnect invalidated the first ladder/mint window |
+| 49 | 08-25 10:3x | preserve the Gen48 board; decouple WebSocket draining from ordered processing after another real 1013 slow-consumer disconnect; share the pump with mintbot and require fresh timestamped updates for each outcome token |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

@@ -22,7 +22,7 @@ from live.feed_health import (
 )
 from live.window_clock import boundary_aligned_delay
 from paper import envload, report
-from paper.feed_pump import FeedPump
+from live.feed_pump import FeedPump
 from paper.ladder_engine import LadderWindow
 from paper.ledger_writer import LedgerWriter
 from paper.market_metadata import ActiveMarket, fetch_active_market

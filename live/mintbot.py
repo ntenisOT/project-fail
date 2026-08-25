@@ -39,7 +39,7 @@ import time
 import urllib.request
 
 from live.market_book import BestAskCache
-from live.mint_quotes import Quote, plan_pair_quotes, should_reprice
+from live.mint_quotes import Quote, plan_pair_quotes, should_reprice, target_pair_prices
 from paper import envload
 
 envload.load()
@@ -319,13 +319,9 @@ class Mintbot:
                         self.quote_counts["stale_pause"] += 1
                         log.warning("quote paused %s: market feed stale", st["asset"])
                     continue
-                fair_u, fair_d = 1.0 - bd.price, 1.0 - bu.price
-                px_u = max(0.05, min(0.95, round(fair_u + SPREAD, 2)))
-                px_d = max(0.05, min(0.95, round(fair_d + SPREAD, 2)))
-                if px_u + px_d < SUM_FLOOR:                # M8 joint floor
-                    bump = (SUM_FLOOR - px_u - px_d) / 2
-                    px_u = min(0.95, round(px_u + bump + 0.005, 2))
-                    px_d = min(0.95, round(px_d + bump + 0.005, 2))
+                px_u, px_d = target_pair_prices(
+                    bu.price, bd.price, spread=SPREAD, sum_floor=SUM_FLOOR,
+                )
                 plan = plan_pair_quotes(
                     minted=st["minted"], sold_up=st["sold"][True],
                     sold_down=st["sold"][False], price_up=px_u, price_down=px_d,
@@ -335,6 +331,11 @@ class Mintbot:
 
     async def _cancel_pair_unlocked(self, st):
         had_pair = any(st["asks"].values())
+        if had_pair:
+            rest_ms = max(0, round(1000 * (time.time() - st["pair_placed_at"])))
+            self.quote_counts["rest_count"] += 1
+            self.quote_counts["rest_ms"] += rest_ms
+            self.quote_counts["rest_under15"] += int(rest_ms < 15_000)
         order_ids = [ask[1] for ask in st["asks"].values() if ask and ask[1] != "shadow"]
         if MODE == "place" and self.clob and order_ids:
             await asyncio.to_thread(self.clob.cancel_many_verified, order_ids)
@@ -423,8 +424,17 @@ class Mintbot:
                                 self.feed_counts[str(it.get("event_type", "?"))] += 1
                                 self.books.apply(it, received_at)
                         if time.monotonic() - self.last_feed_log >= 60:
-                            log.info("feed events=%s quotes=%s", dict(self.feed_counts),
-                                     dict(self.quote_counts))
+                            rest_count = self.quote_counts["rest_count"]
+                            rest_s = (self.quote_counts["rest_ms"] / rest_count / 1000
+                                      if rest_count else 0)
+                            under_pct = (100 * self.quote_counts["rest_under15"] / rest_count
+                                         if rest_count else 0)
+                            quote_events = {
+                                key: value for key, value in self.quote_counts.items()
+                                if not key.startswith("rest_")
+                            }
+                            log.info("feed events=%s quotes=%s residence=%.1fs under15=%.0f%%",
+                                     dict(self.feed_counts), quote_events, rest_s, under_pct)
                             self.last_feed_log = time.monotonic()
             except SystemExit:
                 raise

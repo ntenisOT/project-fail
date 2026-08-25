@@ -9,7 +9,7 @@ from pathlib import Path
 from live import lockbot
 from live.chain import PreflightError, merge, split
 from live.market_book import BestAskCache
-from live.mint_quotes import plan_pair_quotes, should_reprice
+from live.mint_quotes import plan_pair_quotes, should_reprice, target_pair_prices
 
 
 class MintSafetyTests(unittest.TestCase):
@@ -57,6 +57,10 @@ class MintSafetyTests(unittest.TestCase):
         self.assertEqual(plan, ())
 
     def test_balanced_inventory_produces_one_small_pair(self) -> None:
+        self.assertEqual(
+            target_pair_prices(0.40, 0.60, spread=0.02, sum_floor=1.005),
+            (0.42, 0.62),
+        )
         plan = plan_pair_quotes(minted=20, sold_up=5, sold_down=5,
                                 price_up=0.55, price_down=0.46, sum_floor=1.005)
         self.assertEqual([(q.side_up, q.size) for q in plan], [(True, 5.0), (False, 5.0)])

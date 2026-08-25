@@ -107,7 +107,7 @@ signature, not one universal mechanism. The current board tests only:
 | `pair_carry20` | Join both best bids only when their sum is ≤0.99; hold completed sets through settlement |
 | `pair_churn20` | Same 20 ms decision cadence plus balanced best-ask resale when the ask sum is ≥1.01 |
 | `pair_inside20` | Improve both maker prices by one tick when pair sums remain ≤0.99/≥1.01, trading margin for queue priority |
-| `mint_sell20` | Start with twenty $1 paper sets; maker-sell balanced five-share clips, never bid |
+| `mint_parity20` | Paper twin of mintbot: opposite-ask +2¢ anchors, five-tick/15 s residence, ten-tick escape, and asymmetric-fill stop |
 
 The simulator reconstructs public price levels from authoritative snapshots and
 `price_change` deltas. Joining the best price puts the displayed level size in
@@ -155,8 +155,10 @@ priority with a five-tick/15-second band (10-tick adverse override), and
 stops quoting after asymmetric fills. A joint-sum
 floor constrains a quoted pair but cannot guarantee paired fills. Position
 polling still cannot reconstruct exact fill prices, so reported PnL is not yet
-authoritative. Keep this component in shadow until the remaining gates and the
-strategy edge are proven.
+authoritative. `mint_parity20` now shares this exact price planner, cadence,
+residence policy, and stop rule; mintbot logs measured average residence and
+the share below 15 seconds. Keep both in shadow/paper until the remaining gates
+and strategy edge are proven.
 
 ### `live/chain.py` — Polygon layer (no web3 dependency)
 Raw JSON-RPC + eth_account. RPC pool w/ fallback (reads) but **single-attempt
@@ -236,6 +238,7 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 16 | 08-25 02:4x | replace failed cutoff with five-second, displayed-depth FOK cleanup including crypto taker fees |
 | 17 | 08-25 02:5x | replace intermittent one-second empty-token polling at market rolls with an event-driven wake-up |
 | 18 | 08-25 03:xx | retire zero-edge taker hedge; add one-tick maker-priority churn and neutral/outcome PnL decomposition |
+| 19 | 08-25 03:xx | replace fast best-ask mint proxy with the shared mintbot quote planner and residence policy |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

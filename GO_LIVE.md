@@ -11,9 +11,8 @@ public CLOB market feed -> mintbot shadow quote planner               -> logs on
 ```
 
 The focused paper runner has no keys and emits no executor intents. The legacy
-file-driven executor is disconnected. Mintbot place mode, CTF split/merge, and
-the retired lockbot, old approval/setup commands, and CTF split/merge fail
-closed in code.
+file-driven executor is disconnected. Mintbot place mode, the retired lockbot,
+old approval/setup commands, and CTF split/merge fail closed in code.
 
 ## Market and execution facts
 
@@ -31,7 +30,7 @@ closed in code.
 ## Strategy evidence required
 
 The four current hypotheses are `pair_carry20`, `pair_churn20`,
-`pair_inside20`, and `mint_sell20`. A candidate cannot advance unless a clean
+`pair_inside20`, and `mint_parity20`. A candidate cannot advance unless a clean
 generation demonstrates all of the following:
 
 - At least 288 full asset-windows (six hours across four assets); a window with
@@ -51,6 +50,8 @@ generation demonstrates all of the following:
   credible rather than print-skimming assumptions.
 - One-tick price improvement increases completed cycles and neutral PnL versus
   join-best churn without violating the same pair-sum or 65 ms action-delay gates.
+- Mint parity reproduces mintbot quote counts and residence while remaining
+  positive on neutral PnL; a quoted pair floor alone is insufficient.
 
 Early negative evidence is enough to reject or alter a hypothesis; the minimum
 sample is a promotion gate, not a reason to preserve a losing configuration.

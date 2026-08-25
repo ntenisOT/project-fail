@@ -6,6 +6,7 @@ import dataclasses
 import math
 from typing import Literal
 
+from live.mint_quotes import plan_pair_quotes, should_reprice, target_pair_prices
 from paper.order_book import OrderBook
 from paper.taker import sweep
 
@@ -24,6 +25,8 @@ class PairConfig:
     new_pair_cutoff_s: float = 300.0
     taker_hedge_after_s: float | None = None
     improve_ticks: int = 0
+    new_pair_start_s: float = 0.0
+    mint_anchor_spread: float | None = None
 
 
 @dataclasses.dataclass
@@ -127,6 +130,10 @@ class PairWindow:
 
     def _desired(self, now: float, up: OrderBook,
                  down: OrderBook) -> dict[tuple[bool, str], float]:
+        if now < self.start + self.config.new_pair_start_s:
+            return {}
+        if self.config.mode == "mint" and self.config.mint_anchor_spread is not None:
+            return self._mint_desired(now, up, down)
         books = {True: up, False: down}
         desired: dict[tuple[bool, str], float] = {}
         can_start_pair = now < self.start + self.config.new_pair_cutoff_s
@@ -180,6 +187,37 @@ class PairWindow:
                     if 0 < price < 1:
                         desired[(side, "sell")] = price
         return desired
+
+    def _mint_desired(self, now: float, up: OrderBook,
+                      down: OrderBook) -> dict[tuple[bool, str], float]:
+        if now >= self.start + self.config.new_pair_cutoff_s:
+            return {}
+        assert up.best_ask is not None and down.best_ask is not None
+        prices = target_pair_prices(
+            up.best_ask, down.best_ask,
+            spread=self.config.mint_anchor_spread or 0,
+            sum_floor=self.config.sell_sum_floor,
+        )
+        plan = plan_pair_quotes(
+            minted=self.config.mint_sets,
+            sold_up=self.config.mint_sets - self.inventory[True],
+            sold_down=self.config.mint_sets - self.inventory[False],
+            price_up=prices[0], price_down=prices[1],
+            sum_floor=self.config.sell_sum_floor,
+            clip_shares=self.config.clip_shares,
+        )
+        target = {(quote.side_up, "sell"): quote.price for quote in plan}
+        current = {
+            side: self.orders[(side, "sell")].price
+            for side in (True, False) if (side, "sell") in self.orders
+        }
+        if len(current) == 2 and len(target) == 2:
+            age = now - min(self.orders[(side, "sell")].placed_at for side in current)
+            old = (current[True], current[False])
+            new = (target[(True, "sell")], target[(False, "sell")])
+            if not should_reprice(old, new, age):
+                return {(side, "sell"): price for side, price in current.items()}
+        return target
 
     def _close_order(self, key: tuple[bool, str], now: float, cancelled: bool) -> None:
         order = self.orders.pop(key, None)

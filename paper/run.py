@@ -42,9 +42,10 @@ STRATEGIES = (
                action_latency_s=ACTION_LATENCY_S),
     PairConfig("pair_inside20", "churn", 0.02,
                action_latency_s=ACTION_LATENCY_S, improve_ticks=1),
-    PairConfig("mint_sell20", "mint", 0.02,
+    PairConfig("mint_parity20", "mint", 0.5,
                action_latency_s=ACTION_LATENCY_S,
-               sell_sum_floor=1.005),
+               sell_sum_floor=1.005, new_pair_start_s=3,
+               new_pair_cutoff_s=275, mint_anchor_spread=0.02),
 )
 MKT_WS = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 KILL = "paper/KILL"

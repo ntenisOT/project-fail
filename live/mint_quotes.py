@@ -13,6 +13,27 @@ class Quote:
     size: float
 
 
+def target_pair_prices(
+    ask_up: float,
+    ask_down: float,
+    *,
+    spread: float,
+    sum_floor: float,
+) -> tuple[float, float]:
+    """Return the guarded opposite-ask anchor shared by paper and mintbot."""
+    if not (0 < ask_up < 1 and 0 < ask_down < 1):
+        raise ValueError("opposite asks must be inside (0, 1)")
+    price_up = max(0.05, min(0.95, round(1 - ask_down + spread, 2)))
+    price_down = max(0.05, min(0.95, round(1 - ask_up + spread, 2)))
+    if price_up + price_down < sum_floor:
+        bump = (sum_floor - price_up - price_down) / 2
+        price_up = min(0.95, round(price_up + bump + 0.005, 2))
+        price_down = min(0.95, round(price_down + bump + 0.005, 2))
+    if price_up + price_down + 1e-9 < sum_floor:
+        raise ValueError("guarded prices cannot satisfy the pair floor")
+    return price_up, price_down
+
+
 def should_reprice(
     current: tuple[float, float],
     target: tuple[float, float],

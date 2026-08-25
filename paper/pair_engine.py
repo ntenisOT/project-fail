@@ -87,6 +87,7 @@ class PairWindow:
         self.config, self.asset, self.slug = config, asset, slug
         self.start, self.end = start, start + 300
         self.full_window = (start if observed_at is None else observed_at) <= start + 10
+        self.first_books_at: float | None = None
         self.tokens = {True: up_token, False: down_token}
         minted = config.mint_sets if config.mode == "mint" and self.full_window else 0.0
         self.inventory = {True: minted, False: minted}
@@ -188,6 +189,10 @@ class PairWindow:
             self.quote_posts += 1
 
     def on_books(self, now: float, up: OrderBook, down: OrderBook) -> None:
+        if self.first_books_at is None:
+            self.first_books_at = now
+            if now > self.start + 10:
+                self.full_window = False
         if not self.full_window or now < self.start or now >= self.end:
             return
         self._activate_pending(now, up, down)

@@ -221,7 +221,7 @@ async def market_task() -> None:
                         last_ping = time.monotonic()
                     try:
                         raw = await asyncio.wait_for(
-                            ws.recv(), timeout=min(5, max(0.1, 10 - elapsed))
+                            ws.recv(), timeout=min(0.5, max(0.1, 10 - elapsed))
                         )
                     except asyncio.TimeoutError:
                         continue

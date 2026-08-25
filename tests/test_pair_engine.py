@@ -49,6 +49,13 @@ class FocusedPairTests(unittest.TestCase):
         window.on_books(1.06, up, down)
         self.assertIn((True, "buy"), window.orders)
 
+    def test_late_first_books_make_the_window_unscored(self) -> None:
+        window = PairWindow(PairConfig("carry", "accumulate", 0.01, 0),
+                            "btc", "btc-updown-5m-0", 0, "up", "down", 0)
+        window.on_books(10.01, book(0.48, 0, 0.52, 5), book(0.49, 0, 0.51, 5))
+        self.assertFalse(window.full_window)
+        self.assertFalse(window.orders)
+
     def test_delayed_requote_cannot_oversell_after_an_inflight_fill(self) -> None:
         config = PairConfig("mint", "mint", 0.01, 0.06, mint_sets=5)
         window = PairWindow(config, "btc", "btc-updown-5m-0", 0, "up", "down", 0)

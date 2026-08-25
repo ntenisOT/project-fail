@@ -33,8 +33,8 @@ The four current hypotheses are `pair_carry20`, `pair_churn20`,
 `pair_churn600`, and `mint_sell20`. A candidate cannot advance unless a clean
 generation demonstrates all of the following:
 
-- At least 288 full asset-windows (six hours across four assets); partial
-  startup windows are excluded.
+- At least 288 full asset-windows (six hours across four assets); a window with
+  first usable paired books more than ten seconds late is excluded.
 - Positive PnL and return on conservative overlapping bankroll, not merely high
   win rate or volume.
 - The result is not explained by one asset, one outcome direction, or a handful

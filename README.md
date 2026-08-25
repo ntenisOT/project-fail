@@ -111,8 +111,9 @@ The simulator reconstructs public price levels from authoritative snapshots and
 front of our hypothetical order; trades consume that queue before we receive a
 fill. Same-price quotes retain queue position, repricing loses it. All strategies
 use five-share clips, maker fees/rebates are excluded, and official resolved
-Gamma outcomes settle each window. A partial startup window is observed but not
-scored. Actions activate after a configurable 65 ms delay: approximately twice
+Gamma outcomes settle each window. A window whose first usable paired books
+arrive more than ten seconds late is observed but not scored. Actions activate
+after a configurable 65 ms delay: approximately twice
 fresh Ireland GET p90 as a conservative cancel/replace proxy. Existing orders can
 still fill while a delayed cancellation is in flight, and stale post-only
 replacements are rejected. Once one token fills, its exact open-leg price caps
@@ -227,6 +228,7 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 12 | 08-25 02:xx | four queue-aware pair/inventory hypotheses; official outcomes; measured 65 ms action delay |
 | 13 | 08-25 02:4x | open-leg price constrains later pair completion; outcome side persisted per fill |
 | 14 | 08-25 02:5x | delayed actions revalidate fills/holdings; negative inventory hard-fails; worst-outcome PnL |
+| 15 | 08-25 03:1x | roll resubscribe bounded to 500 ms; late first books invalidate a window |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

@@ -30,6 +30,7 @@ log = logging.getLogger("paper.run")
 ACTION_LATENCY_S = float(os.environ.get("PAPER_ACTION_LATENCY_MS", "65")) / 1000
 if not 0.01 <= ACTION_LATENCY_S <= 0.5:
     raise RuntimeError("PAPER_ACTION_LATENCY_MS must be between 10 and 500")
+DECISION_CADENCE_S = 0.01
 
 ASSETS = dict(ASSET_PREFIX)
 requested = os.environ.get("PAPER_ASSETS")
@@ -46,11 +47,10 @@ STRATEGIES = (
                action_latency_s=ACTION_LATENCY_S,
                sell_sum_floor=1.005, new_pair_start_s=3,
                new_pair_cutoff_s=275, mint_anchor_spread=0.02),
-    PairConfig("mint_guard40", "mint", 0.5,
+    PairConfig("mint_cut60", "mint", 0.5,
                action_latency_s=ACTION_LATENCY_S,
                sell_sum_floor=1.005, new_pair_start_s=3,
-               new_pair_cutoff_s=275, mint_anchor_spread=0.02,
-               taker_hedge_after_s=40),
+               new_pair_cutoff_s=240, mint_anchor_spread=0.02),
 )
 MKT_WS = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 KILL = "paper/KILL"
@@ -275,7 +275,7 @@ async def quote_task() -> None:
         now = time.time()
         for asset in S.active:
             _quote_windows(asset, now)
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(DECISION_CADENCE_S)
 
 
 async def heartbeat_task() -> None:
@@ -316,9 +316,10 @@ async def main() -> None:
         raise SystemExit("paper KILL present")
     names = [config.name for config in STRATEGIES]
     log.info("focused pair paper starting | strategies=%s | queue-ahead fills | "
-             "action-latency=%dms | decision cadence=20ms | "
+             "action-latency=%dms | decision cadence=%dms | "
              "official Gamma outcomes | assets=%s",
-             names, round(ACTION_LATENCY_S * 1000), list(ASSETS))
+             names, round(ACTION_LATENCY_S * 1000),
+             round(DECISION_CADENCE_S * 1000), list(ASSETS))
     await asyncio.gather(window_task(), settlement_task(), market_task(),
                          quote_task(), heartbeat_task(), report_task(), kill_task(),
                          asyncio.to_thread(

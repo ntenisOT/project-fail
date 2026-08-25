@@ -20,7 +20,7 @@ mint strategy is therefore a hypothesis to test, not "the winners' mechanic."
 | SSH | `ssh -i ~/.ssh/pm_deploy ubuntu@3.254.130.64` |
 | Code | `~/project-fail` (deployed by `scp` from the local repo — **not** a git checkout) |
 | Python | `~/project-fail/.venv/bin/python` (always use the venv binary) |
-| Measured latency | Repeated CLOB `/time` GET **27–28 ms** median / **31–36 ms** p90; legacy fixed polling added avoidable window-rotation jitter and is boundary-aligned; paper action proxy **65 ms** (authenticated POST/cancel unmeasured) |
+| Measured latency | Repeated CLOB `/time` GET **27–28 ms** median / **31–36 ms** p90; boundary-aligned discovery was **21–42 ms** and eight-token subscription **176–218 ms**; paper action proxy **65 ms** (authenticated POST/cancel unmeasured) |
 
 **The UK/local machine is paper-and-tooling only** (trading from the UK is
 blocked). The geo interlock (`DEPLOY_REGION=eu-west-1` in the box `.env`)
@@ -251,6 +251,7 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 25 | 08-25 04:xx | align paper and mintbot discovery wakeups to exact five-minute boundaries instead of fixed-loop phase |
 | 26 | 08-25 04:xx | replace unconditional 40-second taker cleanup with a fee-net pair-floor guard |
 | 27 | 08-25 04:xx | move blocking Telegram startup/report calls off the market-feed event loop |
+| 28 | 08-25 04:xx | reject dominated timed taker completion; stop new mint pairs at T-60 while completing open legs |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

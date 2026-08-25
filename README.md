@@ -51,8 +51,8 @@ Remove the file before restarting anything.
 
 All read-only; run from anywhere with the SSH key.
 
-**Focused paper report** — PnL split into paired edge versus single-token churn
-and outcome inventory, plus worst-case PnL, pair sums, queue depth, and residence:
+**Focused paper report** — realized PnL, paired edge, neutral 50-cent inventory
+mark, isolated outcome luck, worst-case PnL, pair sums, queue depth, and residence:
 ```bash
 ssh -i ~/.ssh/pm_deploy ubuntu@3.254.130.64 'cd ~/project-fail && ./.venv/bin/python -m paper.report'
 ```
@@ -89,7 +89,10 @@ unexplained inventory and reports matched-share buy/sell price-sum proxies.
 endpoint, then compares the configured paper delay with twice the GET p90 proxy.
 `tools/wallet_timing.py` tests the stronger all-window-maker claim by separating
 pre-event, early, middle, late, and post-event volume, maker share, and full-span
-market participation for explicitly supplied wallets.
+market participation for explicitly supplied wallets. `tools/wallet_cycles.py`
+requires opposite-token FIFO round trips with overlapping holding intervals in
+exact block/log order, then reports cycle sums, edge, coverage, and holding
+time; it does not treat uncovered sells as proof of minting.
 
 ---
 
@@ -101,10 +104,10 @@ signature, not one universal mechanism. The current board tests only:
 
 | Strategy | Mechanic |
 |---|---|
-| `pair_carry20` | Join both best bids only when their sum is ≤0.99; keep balanced complete sets through close |
+| `pair_carry20` | Join both best bids only when their sum is ≤0.99; hold completed sets through settlement |
 | `pair_churn20` | Same 20 ms decision cadence plus balanced best-ask resale when the ask sum is ≥1.01 |
+| `pair_inside20` | Improve both maker prices by one tick when pair sums remain ≤0.99/≥1.01, trading margin for queue priority |
 | `mint_sell20` | Start with twenty $1 paper sets; maker-sell balanced five-share clips, never bid |
-| `mint_hedge5` | Same minted inventory; after an unmatched maker sale rests five seconds, FOK-sell the opposite token into displayed bids |
 
 The simulator reconstructs public price levels from authoritative snapshots and
 `price_change` deltas. Joining the best price puts the displayed level size in
@@ -119,14 +122,6 @@ still fill while a delayed cancellation is in flight, and stale post-only
 replacements are rejected. Once one token fills, its exact open-leg price caps
 or floors the opposite-token quote; the reported pair sums are FIFO-matched
 fills rather than same-time quote sums.
-
-`mint_hedge5` tests whether bounded taker cleanup removes the directional tail
-that erased the maker spread in generation 15. Its five-second wait is strategy
-patience, not network latency; the modeled action still adds 65 ms. A hedge
-occurs only when the full unmatched clip is visible and worth at least $1,
-walks displayed bid depth, and charges the official crypto fee per match,
-rounded to five decimals. Partial hedges, maker rebates, and taker rebates are
-excluded.
 
 This is substantially less optimistic than the retired print-skimming model,
 but still cannot model private cancellations ahead of us, exchange order
@@ -240,6 +235,7 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 15 | 08-25 02:18 | roll resubscribe bounded to 500 ms; 240 s cutoff rejected after 11 windows: $0.60 worse and more unmatched inventory |
 | 16 | 08-25 02:4x | replace failed cutoff with five-second, displayed-depth FOK cleanup including crypto taker fees |
 | 17 | 08-25 02:5x | replace intermittent one-second empty-token polling at market rolls with an event-driven wake-up |
+| 18 | 08-25 03:xx | retire zero-edge taker hedge; add one-tick maker-priority churn and neutral/outcome PnL decomposition |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

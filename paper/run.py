@@ -40,12 +40,11 @@ STRATEGIES = (
                action_latency_s=ACTION_LATENCY_S),
     PairConfig("pair_churn20", "churn", 0.02,
                action_latency_s=ACTION_LATENCY_S),
+    PairConfig("pair_inside20", "churn", 0.02,
+               action_latency_s=ACTION_LATENCY_S, improve_ticks=1),
     PairConfig("mint_sell20", "mint", 0.02,
                action_latency_s=ACTION_LATENCY_S,
                sell_sum_floor=1.005),
-    PairConfig("mint_hedge5", "mint", 0.02,
-               action_latency_s=ACTION_LATENCY_S,
-               sell_sum_floor=1.005, taker_hedge_after_s=5),
 )
 MKT_WS = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 KILL = "paper/KILL"

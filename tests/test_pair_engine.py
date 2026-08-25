@@ -164,6 +164,20 @@ class FocusedPairTests(unittest.TestCase):
         self.assertAlmostEqual(metrics["buy_pair_cost"] / metrics["buy_pair_shares"], 0.97)
         self.assertAlmostEqual(metrics["sell_pair_proceeds"] / metrics["sell_pair_shares"], 1.03)
 
+    def test_inside_quotes_trade_pair_margin_for_queue_priority(self) -> None:
+        config = PairConfig("inside", "churn", 0.01, action_latency_s=0,
+                            improve_ticks=1)
+        window = PairWindow(config, "btc", "btc-updown-5m-0", 0, "up", "down", 0)
+        up, down = book(0.47, 10, 0.52, 10), book(0.48, 10, 0.53, 10)
+        window.on_books(1.0, up, down)
+        self.assertEqual(window.orders[(True, "buy")].price, 0.48)
+        self.assertEqual(window.orders[(False, "buy")].price, 0.49)
+        window.on_trade(1.01, True, 0.48, 5, "SELL")
+        window.on_trade(1.01, False, 0.49, 5, "SELL")
+        window.on_books(1.02, up, down)
+        self.assertEqual(window.orders[(True, "sell")].price, 0.51)
+        self.assertEqual(window.orders[(False, "sell")].price, 0.52)
+
     def test_active_market_parser_refuses_a_different_returned_slug(self) -> None:
         payload = [{"markets": [{
             "slug": "eth-updown-5m-0", "conditionId": "0x" + "1" * 64,
@@ -195,6 +209,8 @@ class FocusedPairTests(unittest.TestCase):
             })
             snapshot = report.snapshot_one(ledger.db, "carry")
             self.assertAlmostEqual(snapshot.volume, 4.85)
+            self.assertAlmostEqual(snapshot.neutral_pnl, 0.15)
+            self.assertAlmostEqual(snapshot.outcome_pnl, 0)
             output = report.text(path)
             self.assertIn("carry", output)
             self.assertIn("0.970", output)

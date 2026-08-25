@@ -23,6 +23,7 @@ class PairConfig:
     mint_sets: float = 20.0
     new_pair_cutoff_s: float = 300.0
     taker_hedge_after_s: float | None = None
+    improve_ticks: int = 0
 
 
 @dataclasses.dataclass
@@ -87,6 +88,16 @@ def _tick_price(value: float, tick: float, round_up: bool) -> float:
     return round(units * tick, 10)
 
 
+def _maker_price(book: OrderBook, order_side: str, improve_ticks: int) -> float:
+    if order_side == "buy":
+        assert book.best_bid is not None and book.best_ask is not None
+        return min(book.best_bid + improve_ticks * book.tick,
+                   book.best_ask - book.tick)
+    assert book.best_bid is not None and book.best_ask is not None
+    return max(book.best_ask - improve_ticks * book.tick,
+               book.best_bid + book.tick)
+
+
 class PairWindow:
     """Quotes both tokens while preserving pair balance and public queue depth."""
 
@@ -122,20 +133,22 @@ class PairWindow:
         up_bid, down_bid = up.best_bid, down.best_bid
         if self.config.mode != "mint" and up_bid is not None and down_bid is not None:
             open_side = self.buy_pairs.open_side
+            improved_bids = {
+                side: _maker_price(books[side], "buy", self.config.improve_ticks)
+                for side in (True, False)
+            }
             buy_sides = (
                 ((True, False) if can_start_pair else ())
                 if open_side is None else (not open_side,)
             )
+            if open_side is None and sum(improved_bids.values()) > self.config.buy_sum_ceiling:
+                buy_sides = ()
             for side in buy_sides:
                 inv, other = self.inventory[side], self.inventory[not side]
                 if inv > other + 0.1 or inv + self.config.clip_shares > self.config.max_inventory:
                     continue
-                price = books[side].best_bid
-                assert price is not None
-                if open_side is None:
-                    if up_bid + down_bid > self.config.buy_sum_ceiling:
-                        continue
-                else:
+                price = improved_bids[side]
+                if open_side is not None:
                     cap = (self.config.buy_sum_ceiling
                            - self.buy_pairs.worst_open_price(buying=True))
                     price = min(price, _tick_price(cap, books[side].tick, round_up=False))
@@ -146,19 +159,21 @@ class PairWindow:
         if (self.config.mode in ("churn", "mint")
                 and up_ask is not None and down_ask is not None):
             open_side = self.sell_pairs.open_side
+            improved_asks = {
+                side: _maker_price(books[side], "sell", self.config.improve_ticks)
+                for side in (True, False)
+            }
             sell_sides = (
                 ((True, False) if can_start_pair else ())
                 if open_side is None else (not open_side,)
             )
+            if open_side is None and sum(improved_asks.values()) < self.config.sell_sum_floor:
+                sell_sides = ()
             for side in sell_sides:
                 inv, other = self.inventory[side], self.inventory[not side]
                 if inv + 0.1 >= other and inv >= self.config.clip_shares:
-                    price = books[side].best_ask
-                    assert price is not None
-                    if open_side is None:
-                        if up_ask + down_ask < self.config.sell_sum_floor:
-                            continue
-                    else:
+                    price = improved_asks[side]
+                    if open_side is not None:
                         floor = (self.config.sell_sum_floor
                                  - self.sell_pairs.worst_open_price(buying=False))
                         price = max(price, _tick_price(floor, books[side].tick, round_up=True))

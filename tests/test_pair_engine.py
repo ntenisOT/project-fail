@@ -9,6 +9,7 @@ from paper.ledger import Ledger
 from paper.market_metadata import parse_active_market
 from paper.order_book import OrderBook, OrderBookCache
 from paper.pair_engine import PairConfig, PairWindow
+from paper.settlement import settle_valid
 from paper.taker import crypto_fee, crypto_maker_rebate, sweep
 
 
@@ -87,6 +88,20 @@ class FocusedPairTests(unittest.TestCase):
         self.assertEqual(window.invalid_reason, "ws_reconnect")
         self.assertFalse(window.orders)
         self.assertIsNone(window.on_trade(2.1, True, 0.48, 5, "SELL"))
+
+    def test_settlement_scores_valid_strategies_independently(self) -> None:
+        valid = PairWindow(PairConfig("valid", "accumulate", 0.01, 0),
+                           "btc", "btc-updown-5m-0", 0, "up", "down", 0)
+        invalid = PairWindow(PairConfig("invalid", "accumulate", 0.01, 0),
+                             "btc", "btc-updown-5m-0", 0, "up", "down", 0)
+        invalid.invalidate(2.0, "stale_market_event")
+
+        scored, skipped = settle_valid({"valid": valid, "invalid": invalid}, 300, 1)
+
+        self.assertEqual([row.strategy for row in scored], ["valid"])
+        self.assertEqual([(row.strategy, row.reason) for row in skipped], [
+            ("invalid", "stale_market_event"),
+        ])
 
     def test_entry_cutoff_cancels_balanced_quotes_but_completes_an_open_leg(self) -> None:
         config = PairConfig("cutoff", "accumulate", 0.01, 0, new_pair_cutoff_s=240)

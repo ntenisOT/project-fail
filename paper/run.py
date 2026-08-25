@@ -27,6 +27,7 @@ from paper.market_metadata import ActiveMarket, fetch_active_market
 from paper.notify import notifier
 from paper.order_book import OrderBookCache
 from paper.pair_engine import PairConfig, PairWindow
+from paper.settlement import settle_valid
 from tools.market_windows import ASSET_PREFIX, fetch_gamma_window
 
 envload.load()
@@ -177,19 +178,24 @@ async def settlement_task() -> None:
             if resolved is None:
                 continue
             now = time.time()
-            sample = next(iter(pending.windows.values()))
-            if not sample.full_window:
-                S.pending.remove(pending)
-                log.info("skipped invalid window %s reason=%s", sample.slug,
-                         sample.invalid_reason or "unknown")
-                continue
-            for name, window in pending.windows.items():
-                settlement, metrics = window.settle(now, resolved.winner_up)
-                S.ledger.record_settlement(now, name, pending.asset, window.slug, settlement)
-                S.ledger.record_metrics(now, name, pending.asset, window.slug, metrics)
+            scored, skipped = settle_valid(pending.windows, now, resolved.winner_up)
+            for skipped_row in skipped:
+                log.info("skipped invalid strategy-window %s %s reason=%s",
+                         skipped_row.strategy, skipped_row.slug, skipped_row.reason)
+            for scored_row in scored:
+                window = pending.windows[scored_row.strategy]
+                S.ledger.record_settlement(
+                    now, scored_row.strategy, pending.asset, window.slug,
+                    scored_row.settlement,
+                )
+                S.ledger.record_metrics(
+                    now, scored_row.strategy, pending.asset, window.slug,
+                    scored_row.metrics,
+                )
             S.pending.remove(pending)
-            log.info("officially settled %s outcome=%s", resolved.slug,
-                     "Up" if resolved.winner_up else "Down")
+            log.info("officially resolved %s outcome=%s scored=%d/%d", resolved.slug,
+                     "Up" if resolved.winner_up else "Down", len(scored),
+                     len(pending.windows))
 
 
 def _quote_windows(asset: str, now: float) -> None:

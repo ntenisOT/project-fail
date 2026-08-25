@@ -205,11 +205,11 @@ def handle_event(event: dict[str, object]) -> None:
 
 async def market_task() -> None:
     while True:
-        if not S.tokens:
-            await asyncio.sleep(1)
-            continue
         S.tokens_changed.clear()
         tokens = list(S.tokens)
+        if not tokens:
+            await S.tokens_changed.wait()
+            continue
         try:
             S.books.clear()
             async with websockets.connect(MKT_WS, ping_interval=None, open_timeout=12) as ws:

@@ -2,7 +2,12 @@
 """Guard test-suite for live/executor.py (log-only mode, synthetic intents).
 Exercises: place, reprice-on-tick, sub-tick hold, quote-off cancel, window-end
 cancel (G4), strict $ cap (G5), KILL exit (G10), truncation recovery (G11)."""
-import json, os, shutil, subprocess, sys, time
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SANDBOX = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_exec_sandbox")
@@ -78,7 +83,7 @@ def main():
     L = out.splitlines()
 
     def n(sub):
-        return sum(1 for l in L if sub in l)
+        return sum(1 for line in L if sub in line)
 
     results = [
         ("T1 place @0.57",            n("place teststrat buy 8.8 sh 1111000011 @ 0.57") == 1),

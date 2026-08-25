@@ -25,6 +25,7 @@ class PairConfig:
     mint_sets: float = 20.0
     initial_sets: float = 0.0
     new_pair_cutoff_s: float = 300.0
+    buy_taker_after_s: float | None = None
     taker_hedge_after_s: float | None = None
     taker_pair_sum_floor: float | None = None
     improve_ticks: int = 0
@@ -94,6 +95,7 @@ class PairWindow:
         self.max_stale_event_lag_ms = self.max_exposed_stale_event_lag_ms = 0.0
         self.delayed_trade_events = self.exposed_delayed_trade_events = 0
         self.max_delayed_trade_lag_ms = self.max_exposed_delayed_trade_lag_ms = 0.0
+        self.buy_opened_at: float | None = None
         self.sell_opened_at: float | None = None
         self.buy_pairs = PairLots()
         self.sell_pairs = PairLots()
@@ -300,6 +302,61 @@ class PairWindow:
         elif before is None or after != before:
             self.sell_opened_at = now
 
+    def _record_buy_pair(self, event_at: float, known_at: float, side: bool,
+                         shares: float, net_price: float) -> None:
+        before = self.buy_pairs.open_side
+        self.buy_pairs.add(side, shares, net_price, event_at)
+        after = self.buy_pairs.open_side
+        if after is None:
+            self.buy_opened_at = None
+        elif before is None or after != before:
+            self.buy_opened_at = known_at
+
+    def _hedge_buy_pair(self, now: float, up: OrderBook,
+                        down: OrderBook) -> list[dict[str, float | str]]:
+        after = self.config.buy_taker_after_s
+        open_side = self.buy_pairs.open_side
+        if (after is None or open_side is None or self.buy_opened_at is None
+                or now < max(self.start + after, self.buy_opened_at)
+                + self.config.action_latency_s):
+            return []
+        hedge_side = not open_side
+        shares = min(
+            self.buy_pairs.open_shares,
+            self.config.max_inventory - self.inventory[hedge_side],
+        )
+        legs = sweep(up if hedge_side else down, "buy", shares)
+        if not legs:
+            return []
+        total_cost = sum(leg.price * leg.shares + leg.fee for leg in legs)
+        cap = (
+            self.buy_pairs.completion_price_cap(
+                self.config.buy_sum_ceiling, shares,
+            )
+            if self.config.basket_average_cap else
+            self.config.buy_sum_ceiling - self.buy_pairs.worst_open_price(True)
+        )
+        if total_cost / shares > cap + 1e-9:
+            return []
+        self._close_order((hedge_side, "buy"), now, cancelled=True)
+        records: list[dict[str, float | str]] = []
+        for leg in legs:
+            cost = leg.price * leg.shares + leg.fee
+            self.inventory[hedge_side] += leg.shares
+            self.cash -= cost
+            self.filled_shares += leg.shares
+            self.taker_fees += leg.fee
+            self.buys += 1
+            self._record_buy_pair(
+                now, now, hedge_side, leg.shares, cost / leg.shares,
+            )
+            records.append({
+                "action": "taker_buy", "price": leg.price, "size": leg.shares,
+                "signed_cash": -cost, "outcome_up": int(hedge_side),
+            })
+        self._update_peak()
+        return records
+
     def _hedge_sell_pair(self, now: float, up: OrderBook,
                          down: OrderBook) -> list[dict[str, float | str]]:
         delay = self.config.taker_hedge_after_s
@@ -347,7 +404,8 @@ class PairWindow:
         if not self.full_window or now < self.start or now >= self.end:
             return []
         self._activate_pending(now, up, down)
-        records = self._hedge_sell_pair(now, up, down)
+        records = self._hedge_buy_pair(now, up, down)
+        records.extend(self._hedge_sell_pair(now, up, down))
         if self.pending is not None or now - self.last_requote < self.config.requote_s:
             return records
         complete = (up.best_bid is not None and down.best_bid is not None
@@ -404,7 +462,7 @@ class PairWindow:
             self.cash -= notional
             self.peak = max(self.peak, -self.cash)
             self.buys += 1
-            self.buy_pairs.add(side_up, fill, order.price, now)
+            self._record_buy_pair(now, known_at, side_up, fill, order.price)
             signed_cash = -notional
         else:
             self.inventory[side_up] -= fill

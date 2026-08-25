@@ -252,6 +252,12 @@ bug is also fixed and covered by one focused test.
   $1 notional instead. The taker primitive now carries `orderMinSize` from Gamma,
   rejects sub-minimum residuals, and permits five-share low-price orders. Gen55
   remains a pre-fix diagnostic generation rather than promotion evidence.
+- Gen55's official 12:05 window nevertheless hit the same decision under both
+  rules: a partial maker pair left 1.154 unmatched shares, the hedge became due
+  once, and execution was blocked before the price floor. Baseline and hedge
+  both ended at -$0.14 adverse versus +$0.44 neutral PnL. A 2.232-second feed
+  tail also labels the window lagged. This confirms the dust mechanism, not the
+  profitability of the hedge.
 
 A 15-minute generation is realistic for rejecting a mechanism or catching a
 runtime defect. It is not realistic for estimating edge. Promotion requires at

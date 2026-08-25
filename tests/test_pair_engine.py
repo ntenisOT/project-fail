@@ -476,6 +476,10 @@ class FocusedPairTests(unittest.TestCase):
                     "mint hedge | minthedge60p95 due=0 completed=0",
                     report.text(str(Path(temp) / "paper.db")),
                 )
+                self.assertIn(
+                    "minthedge60p95 clean",
+                    report.text(str(Path(temp) / "paper.db")),
+                )
             finally:
                 ledger.close()
 

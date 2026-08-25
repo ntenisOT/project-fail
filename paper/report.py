@@ -257,10 +257,11 @@ def text(db_path: str = "paper/paper.db") -> str:
         ])
     snapshots = sorted((snapshot_one(db, strategy) for strategy in strategies),
                        key=lambda row: row.neutral_pnl, reverse=True)
+    strategy_width = max(14, *(len(strategy) + 1 for strategy in strategies))
     last = float(db.execute("SELECT COALESCE(max(ts),0) FROM settlements").fetchone()[0])
     out = [
         f"FOCUSED PAIR PAPER | official outcomes | last settle {time.strftime('%H:%M:%S', time.gmtime(last))} UTC",
-        f"{'strategy':<14}{'wnd':>5}{'trd':>6}{'vol$':>8}{'win%':>6}{'pnl$':>9}"
+        f"{'strategy':<{strategy_width}}{'wnd':>5}{'trd':>6}{'vol$':>8}{'win%':>6}{'pnl$':>9}"
         f"{'edge$':>8}{'neutral$':>9}{'outcome$':>9}{'worst$':>8}{'bank$':>8}"
         f"{'ROC':>7}{'buySum':>8}{'sellSum':>9}{'fee$':>7}{'rebate$':>9}"
         f"{'unmat':>7}{'post/w':>8}{'rest':>7}"
@@ -269,7 +270,7 @@ def text(db_path: str = "paper/paper.db") -> str:
     ]
     for row in snapshots:
         out.append(
-            f"{row.strategy:<14}{row.windows:>5}{row.trades:>6}"
+            f"{row.strategy:<{strategy_width}}{row.windows:>5}{row.trades:>6}"
             f"{row.volume:>8.0f}{row.win_rate*100:>5.0f}%"
             f"{row.pnl:>+9.2f}{row.pair_edge:>+8.2f}{row.neutral_pnl:>+9.2f}"
             f"{row.outcome_pnl:>+9.2f}"
@@ -286,23 +287,25 @@ def text(db_path: str = "paper/paper.db") -> str:
     out.extend(_hedge_lines(db, strategies))
     out.extend((
         "feed-quality breakdown; lagged windows retain measured feed-tail exposure",
-        f"{'strategy':<14}{'quality':<14}{'wnd':>5}{'pnl$':>10}"
+        f"{'strategy':<{strategy_width}}{'quality':<14}{'wnd':>5}{'pnl$':>10}"
         f"{'neutral$':>10}{'worst$':>10}{'unmat':>8}{'maxLag':>9}",
     ))
     for quality_row in feed_quality_snapshots(db):
         out.append(
-            f"{quality_row.strategy:<14}{quality_row.quality:<14}{quality_row.windows:>5}"
+            f"{quality_row.strategy:<{strategy_width}}{quality_row.quality:<14}"
+            f"{quality_row.windows:>5}"
             f"{quality_row.pnl:>+10.2f}{quality_row.neutral_pnl:>+10.2f}"
             f"{quality_row.worst_pnl:>+10.2f}{quality_row.unmatched:>8.1f}"
             f"{quality_row.max_lag_ms:>8.0f}ms"
         )
     out.extend((
         "asset breakdown; pnl/neutral/worst keep directional luck and concentration visible",
-        f"{'strategy':<14}{'asset':<6}{'wnd':>5}{'pnl$':>10}"
+        f"{'strategy':<{strategy_width}}{'asset':<6}{'wnd':>5}{'pnl$':>10}"
         f"{'neutral$':>10}{'worst$':>10}{'rebate$':>10}{'unmat':>8}",
     ))
     for asset_row in asset_snapshots(db):
-        out.append(f"{asset_row.strategy:<14}{asset_row.asset:<6}{asset_row.windows:>5}"
+        out.append(f"{asset_row.strategy:<{strategy_width}}{asset_row.asset:<6}"
+                   f"{asset_row.windows:>5}"
                    f"{asset_row.pnl:>+10.2f}{asset_row.neutral_pnl:>+10.2f}"
                    f"{asset_row.worst_pnl:>+10.2f}{asset_row.maker_rebates:>10.2f}"
                    f"{asset_row.unmatched:>8.1f}")

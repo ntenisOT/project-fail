@@ -87,6 +87,9 @@ read-only ClickHouse external tables. It separates direct CTF events from
 unexplained inventory and reports matched-share buy/sell price-sum proxies.
 `tools/latency_probe.py` measures GET and feed surfaces without calling an order
 endpoint, then compares the configured paper delay with twice the GET p90 proxy.
+`tools/wallet_timing.py` tests the stronger all-window-maker claim by separating
+pre-event, early, middle, late, and post-event volume, maker share, and full-span
+market participation for explicitly supplied wallets.
 
 ---
 

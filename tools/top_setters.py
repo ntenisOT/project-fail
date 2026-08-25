@@ -23,7 +23,7 @@ import sys
 import time
 from typing import Sequence
 
-import clickhouse_connect
+import clickhouse_connect  # type: ignore[import-untyped]
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))

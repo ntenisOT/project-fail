@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Sequence
 
-from clickhouse_connect.driver.external import ExternalData
+from clickhouse_connect.driver.external import ExternalData  # type: ignore[import-untyped]
 
 from tools.market_windows import ResolvedWindow
 from tools.wallet_metrics import TokenActivity

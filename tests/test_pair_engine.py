@@ -9,6 +9,7 @@ from paper.ledger import Ledger
 from paper.market_metadata import parse_active_market
 from paper.order_book import OrderBook, OrderBookCache
 from paper.pair_engine import PairConfig, PairWindow
+from paper.taker import crypto_fee, sweep
 
 
 def book(bid: float, bid_size: float, ask: float, ask_size: float, ts: float = 1.0) -> OrderBook:
@@ -16,6 +17,14 @@ def book(bid: float, bid_size: float, ask: float, ask_size: float, ts: float = 1
 
 
 class FocusedPairTests(unittest.TestCase):
+    def test_taker_sweep_requires_full_depth_and_minimum_notional(self) -> None:
+        depth = OrderBook({0.42: 2, 0.41: 4}, {0.58: 2, 0.59: 4}, 1)
+        legs = sweep(depth, "sell", 5)
+        self.assertEqual([(leg.price, leg.shares) for leg in legs], [(0.42, 2), (0.41, 3)])
+        self.assertEqual([leg.fee for leg in legs], [crypto_fee(0.42, 2), crypto_fee(0.41, 3)])
+        self.assertFalse(sweep(OrderBook({0.42: 4}, {}, 1), "sell", 5))
+        self.assertFalse(sweep(OrderBook({0.10: 5}, {}, 1), "sell", 5))
+
     def test_order_book_delta_updates_and_removes_levels(self) -> None:
         cache = OrderBookCache()
         cache.apply({"event_type": "book", "asset_id": "up",
@@ -119,6 +128,26 @@ class FocusedPairTests(unittest.TestCase):
         self.assertAlmostEqual(
             metrics["sell_pair_proceeds"] / metrics["sell_pair_shares"], 1.01
         )
+
+    def test_mint_hedge_closes_open_pair_after_wait_with_fee(self) -> None:
+        config = PairConfig(
+            "hedge", "mint", 0.01, action_latency_s=0,
+            mint_sets=5, sell_sum_floor=1.005, taker_hedge_after_s=5,
+        )
+        window = PairWindow(config, "btc", "btc-updown-5m-0", 0, "up", "down", 0)
+        up, down = book(0.58, 5, 0.60, 0), book(0.43, 5, 0.44, 0)
+        window.on_books(1.0, up, down)
+        window.on_trade(1.1, True, 0.60, 5, "BUY")
+        self.assertFalse(window.on_books(6.09, up, down))
+        fills = window.on_books(6.1, up, down)
+        self.assertEqual([(fill["action"], fill["outcome_up"]) for fill in fills],
+                         [("taker_sell", 0)])
+        self.assertEqual(window.inventory, {True: 0, False: 0})
+        settled, metrics = window.settle(300, 0)
+        fee = crypto_fee(0.43, 5)
+        self.assertAlmostEqual(float(settled["pnl"]), 5 * (0.60 + 0.43 - 1) - fee)
+        self.assertAlmostEqual(metrics["taker_fees"], fee)
+        self.assertAlmostEqual(metrics["unmatched_end"], 0)
 
     def test_churn_buys_below_one_and_sells_above_one(self) -> None:
         window = PairWindow(PairConfig("churn", "churn", 0.6, action_latency_s=0),

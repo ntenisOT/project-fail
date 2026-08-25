@@ -7,6 +7,7 @@ import math
 from typing import Literal
 
 from paper.order_book import OrderBook
+from paper.taker import sweep
 
 
 @dataclasses.dataclass(frozen=True)
@@ -21,6 +22,7 @@ class PairConfig:
     max_inventory: float = 20.0
     mint_sets: float = 20.0
     new_pair_cutoff_s: float = 300.0
+    taker_hedge_after_s: float | None = None
 
 
 @dataclasses.dataclass
@@ -58,6 +60,11 @@ class PairLots:
             raise RuntimeError("no open pair lot")
         prices = [lot[1] for lot in self.lots[side]]
         return max(prices) if buying else min(prices)
+
+    @property
+    def open_shares(self) -> float:
+        side = self.open_side
+        return sum(lot[0] for lot in self.lots[side]) if side is not None else 0.0
 
     def add(self, side: bool, shares: float, price: float) -> None:
         remaining = shares
@@ -102,6 +109,8 @@ class PairWindow:
         self.rest_seconds = self.queue_consumed = self.filled_shares = 0.0
         self.action_seconds = 0.0
         self.action_batches = self.post_only_rejects = 0
+        self.taker_fees = 0.0
+        self.sell_opened_at: float | None = None
         self.buy_pairs = PairLots()
         self.sell_pairs = PairLots()
 
@@ -197,27 +206,70 @@ class PairWindow:
             )
             self.quote_posts += 1
 
-    def on_books(self, now: float, up: OrderBook, down: OrderBook) -> None:
+    def _record_sell_pair(self, now: float, side: bool,
+                          shares: float, net_price: float) -> None:
+        before = self.sell_pairs.open_side
+        self.sell_pairs.add(side, shares, net_price)
+        after = self.sell_pairs.open_side
+        if after is None:
+            self.sell_opened_at = None
+        elif before is None or after != before:
+            self.sell_opened_at = now
+
+    def _hedge_sell_pair(self, now: float, up: OrderBook,
+                         down: OrderBook) -> list[dict[str, float | str]]:
+        delay = self.config.taker_hedge_after_s
+        open_side = self.sell_pairs.open_side
+        if (delay is None or open_side is None or self.sell_opened_at is None
+                or now < self.sell_opened_at + delay + self.config.action_latency_s):
+            return []
+        hedge_side = not open_side
+        shares = min(self.sell_pairs.open_shares, self.inventory[hedge_side])
+        legs = sweep(up if hedge_side else down, "sell", shares)
+        if not legs:
+            return []
+        self._close_order((hedge_side, "sell"), now, cancelled=True)
+        records: list[dict[str, float | str]] = []
+        for leg in legs:
+            net_cash = leg.price * leg.shares - leg.fee
+            self.inventory[hedge_side] -= leg.shares
+            self.cash += net_cash
+            self.filled_shares += leg.shares
+            self.taker_fees += leg.fee
+            self.sells += 1
+            self._record_sell_pair(
+                now, hedge_side, leg.shares, net_cash / leg.shares,
+            )
+            records.append({
+                "action": "taker_sell", "price": leg.price, "size": leg.shares,
+                "signed_cash": net_cash, "outcome_up": int(hedge_side),
+            })
+        return records
+
+    def on_books(self, now: float, up: OrderBook,
+                 down: OrderBook) -> list[dict[str, float | str]]:
         if self.first_books_at is None:
             self.first_books_at = now
             if now > self.start + 10:
                 self.full_window = False
         if not self.full_window or now < self.start or now >= self.end:
-            return
+            return []
         self._activate_pending(now, up, down)
+        records = self._hedge_sell_pair(now, up, down)
         if self.pending is not None or now - self.last_requote < self.config.requote_s:
-            return
+            return records
         complete = (up.best_bid is not None and down.best_bid is not None
                     and up.best_ask is not None and down.best_ask is not None)
         desired = self._desired(now, up, down) if complete else {}
         self.last_requote = now
         current = {key: order.price for key, order in self.orders.items()}
         if current == desired:
-            return
+            return records
         self.pending = PendingRequote(
             now + self.config.action_latency_s, now,
         )
         self._activate_pending(now, up, down)
+        return records
 
     def on_trade(self, now: float, side_up: bool, price: float, size: float,
                  taker_side: str) -> dict[str, float | str] | None:
@@ -260,7 +312,7 @@ class PairWindow:
             self.inventory[side_up] -= fill
             self.cash += notional
             self.sells += 1
-            self.sell_pairs.add(side_up, fill, order.price)
+            self._record_sell_pair(now, side_up, fill, order.price)
             signed_cash = notional
         if order.size <= 1e-9:
             self._close_order(key, now, cancelled=False)
@@ -290,6 +342,7 @@ class PairWindow:
             "queue_consumed": self.queue_consumed, "filled_shares": self.filled_shares,
             "action_seconds": self.action_seconds, "action_batches": self.action_batches,
             "post_only_rejects": self.post_only_rejects,
+            "taker_fees": self.taker_fees,
             "paired_end": paired, "unmatched_end": abs(self.inventory[True] - self.inventory[False]),
             "buy_pair_shares": self.buy_pairs.paired_shares,
             "buy_pair_cost": self.buy_pairs.paired_value,

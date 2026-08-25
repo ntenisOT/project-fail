@@ -18,7 +18,7 @@ the old approval/setup commands fail closed in code.
 
 - Crypto makers pay no trading fee; maker rebates are excluded from paper
   results because our future share of the daily pool is unknown.
-- Crypto takers pay `shares * 0.07 * p * (1-p)`.
+- Crypto takers pay `shares * 0.07 * p * (1-p)`, rounded per match to five decimals.
 - Limit orders require at least five shares.
 - Repeated Ireland CLOB GET RTT is 27-28 ms median / 31-33 ms p90. The legacy one-second
   file poll added 546 ms median / 928 ms p90 and is no longer in the paper path.
@@ -30,7 +30,7 @@ the old approval/setup commands fail closed in code.
 ## Strategy evidence required
 
 The four current hypotheses are `pair_carry20`, `pair_churn20`,
-`pair_churn240`, and `mint_sell20`. A candidate cannot advance unless a clean
+`mint_sell20`, and `mint_hedge5`. A candidate cannot advance unless a clean
 generation demonstrates all of the following:
 
 - At least 288 full asset-windows (six hours across four assets); a window with
@@ -47,8 +47,9 @@ generation demonstrates all of the following:
   invalidates the generation instead of manufacturing short sales.
 - Queue-ahead consumption, quote residence, post/cancel rate, and fill rate are
   credible rather than print-skimming assumptions.
-- The 240 s new-pair cutoff improves worst-case inventory PnL versus otherwise
-  identical all-window churn; both use the same 65 ms action-delay model.
+- The five-second mint hedge improves worst-case inventory PnL versus unhedged
+  minting after fees, without destroying total PnL. It must complete from full
+  displayed depth, obey the $1 minimum, and use the same 65 ms action-delay model.
 
 Early negative evidence is enough to reject or alter a hypothesis; the minimum
 sample is a promotion gate, not a reason to preserve a losing configuration.

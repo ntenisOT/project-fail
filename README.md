@@ -103,8 +103,8 @@ signature, not one universal mechanism. The current board tests only:
 |---|---|
 | `pair_carry20` | Join both best bids only when their sum is ≤0.99; keep balanced complete sets through close |
 | `pair_churn20` | Same 20 ms decision cadence plus balanced best-ask resale when the ask sum is ≥1.01 |
-| `pair_churn240` | Fast churn that starts no new pair after 240 s, matching the corrected leader's minimal last-minute volume |
 | `mint_sell20` | Start with twenty $1 paper sets; maker-sell balanced five-share clips, never bid |
+| `mint_hedge5` | Same minted inventory; after an unmatched maker sale rests five seconds, FOK-sell the opposite token into displayed bids |
 
 The simulator reconstructs public price levels from authoritative snapshots and
 `price_change` deltas. Joining the best price puts the displayed level size in
@@ -119,6 +119,14 @@ still fill while a delayed cancellation is in flight, and stale post-only
 replacements are rejected. Once one token fills, its exact open-leg price caps
 or floors the opposite-token quote; the reported pair sums are FIFO-matched
 fills rather than same-time quote sums.
+
+`mint_hedge5` tests whether bounded taker cleanup removes the directional tail
+that erased the maker spread in generation 15. Its five-second wait is strategy
+patience, not network latency; the modeled action still adds 65 ms. A hedge
+occurs only when the full unmatched clip is visible and worth at least $1,
+walks displayed bid depth, and charges the official crypto fee per match,
+rounded to five decimals. Partial hedges, maker rebates, and taker rebates are
+excluded.
 
 This is substantially less optimistic than the retired print-skimming model,
 but still cannot model private cancellations ahead of us, exchange order
@@ -228,7 +236,8 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 12 | 08-25 02:xx | four queue-aware pair/inventory hypotheses; official outcomes; measured 65 ms action delay |
 | 13 | 08-25 02:4x | open-leg price constrains later pair completion; outcome side persisted per fill |
 | 14 | 08-25 02:5x | delayed actions revalidate fills/holdings; negative inventory hard-fails; worst-outcome PnL |
-| 15 | 08-25 03:1x | roll resubscribe bounded to 500 ms; late books invalidate; 240 s entry-cutoff arm |
+| 15 | 08-25 02:18 | roll resubscribe bounded to 500 ms; 240 s cutoff rejected after 11 windows: $0.60 worse and more unmatched inventory |
+| 16 | 08-25 02:4x | replace failed cutoff with five-second, displayed-depth FOK cleanup including crypto taker fees |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

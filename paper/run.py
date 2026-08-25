@@ -40,11 +40,12 @@ STRATEGIES = (
                action_latency_s=ACTION_LATENCY_S),
     PairConfig("pair_churn20", "churn", 0.02,
                action_latency_s=ACTION_LATENCY_S),
-    PairConfig("pair_churn240", "churn", 0.02,
-               action_latency_s=ACTION_LATENCY_S, new_pair_cutoff_s=240),
     PairConfig("mint_sell20", "mint", 0.02,
                action_latency_s=ACTION_LATENCY_S,
                sell_sum_floor=1.005),
+    PairConfig("mint_hedge5", "mint", 0.02,
+               action_latency_s=ACTION_LATENCY_S,
+               sell_sum_floor=1.005, taker_hedge_after_s=5),
 )
 MKT_WS = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 KILL = "paper/KILL"
@@ -171,8 +172,9 @@ def _quote_windows(asset: str, now: float) -> None:
     up, down = S.books.get(sample.tokens[True]), S.books.get(sample.tokens[False])
     if up is None or down is None:
         return
-    for window in windows.values():
-        window.on_books(now, up, down)
+    for name, window in windows.items():
+        for fill in window.on_books(now, up, down):
+            S.ledger.record_fill(now, name, asset, window.slug, fill)
 
 
 def handle_event(event: dict[str, object]) -> None:

@@ -39,18 +39,18 @@ if requested:
     ASSETS = {asset: prefix for asset, prefix in ASSETS.items() if asset in wanted}
 
 STRATEGIES = (
-    PairConfig("bid98", "accumulate", 0.02,
-               action_latency_s=ACTION_LATENCY_S, buy_sum_ceiling=0.98,
-               require_both_to_start=True),
-    PairConfig("inside98", "accumulate", 0.02,
+    PairConfig("strict98", "accumulate", 0.02,
                action_latency_s=ACTION_LATENCY_S, buy_sum_ceiling=0.98,
                improve_ticks=1, require_both_to_start=True),
-    PairConfig("bid99", "accumulate", 0.02,
+    PairConfig("basket98", "accumulate", 0.02,
+               action_latency_s=ACTION_LATENCY_S, buy_sum_ceiling=0.98,
+               improve_ticks=1, require_both_to_start=True, basket_average_cap=True),
+    PairConfig("basket985", "accumulate", 0.02,
+               action_latency_s=ACTION_LATENCY_S, buy_sum_ceiling=0.985,
+               improve_ticks=1, require_both_to_start=True, basket_average_cap=True),
+    PairConfig("basket99", "accumulate", 0.02,
                action_latency_s=ACTION_LATENCY_S, buy_sum_ceiling=0.99,
-               require_both_to_start=True),
-    PairConfig("inside99", "accumulate", 0.02,
-               action_latency_s=ACTION_LATENCY_S, buy_sum_ceiling=0.99,
-               improve_ticks=1, require_both_to_start=True),
+               improve_ticks=1, require_both_to_start=True, basket_average_cap=True),
 )
 MKT_WS = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 KILL = "paper/KILL"

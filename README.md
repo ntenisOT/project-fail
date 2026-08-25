@@ -108,14 +108,16 @@ from outcome alignment and screen public-tape signals after slippage and fees.
 
 The legacy 49-arm board was retired after every execution-shaped pair/mint arm
 remained negative. V2-corrected forensics then identified the clean leader as a
-paired-bid accumulator, so the current board is a bounded 2×2 test:
+paired-bid accumulator. Strict inside-$0.98 won the first price-priority screen;
+the current board tests whether completed-pair surplus can safely fund later
+inventory balancing, matching the leader's observed basket-average economics:
 
 | Strategy | Mechanic |
 |---|---|
-| `bid98` | Join both best bids; acquire/hold only when the completed pair costs ≤$0.98 |
-| `inside98` | Improve both bids one tick under the same $0.98 pair cap |
-| `bid99` | Join both best bids under a $0.99 pair cap |
-| `inside99` | Improve both bids one tick under a $0.99 pair cap |
+| `strict98` | Strict control: improve both bids one tick; every completed pair costs ≤$0.98 |
+| `basket98` | Keep the cumulative completed-pair average ≤$0.98 |
+| `basket985` | Keep the cumulative completed-pair average ≤$0.985 |
+| `basket99` | Keep the cumulative completed-pair average ≤$0.99 |
 
 The simulator reconstructs public price levels from authoritative snapshots and
 `price_change` deltas. Joining the best price puts the displayed level size in
@@ -271,6 +273,7 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 36 | 08-25 06:xx | forbid inventory filtering from turning a guarded pair start into a loss-making single-leg quote |
 | 37 | 08-25 06:xx | A/B strict complete-set inventory at join-best versus one-tick-inside prices |
 | 38 | 08-25 06:xx | replace V1-corrupted mint/churn thesis with V2-correct paired-bid accumulation; 2×2 price-priority test |
+| 39 | 08-25 07:xx | retain strict inside-$0.98 control; compare rolling basket-average caps after winner pairing-delay and sizing reconstruction |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

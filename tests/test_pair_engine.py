@@ -127,6 +127,23 @@ class FocusedPairTests(unittest.TestCase):
         _, metrics = window.settle(300, 1)
         self.assertAlmostEqual(metrics["buy_pair_cost"] / metrics["buy_pair_shares"], 0.99)
 
+    def test_basket_cap_reinvests_prior_pair_surplus(self) -> None:
+        config = PairConfig("basket", "accumulate", 0.01, action_latency_s=0,
+                            buy_sum_ceiling=0.98, require_both_to_start=True,
+                            basket_average_cap=True)
+        window = PairWindow(config, "btc", "btc-updown-5m-0", 0, "up", "down", 0)
+        first = book(0.40, 0, 0.42, 5), book(0.50, 0, 0.52, 5)
+        window.on_books(1.0, *first)
+        window.on_trade(1.1, True, 0.40, 5, "SELL")
+        window.on_trade(1.2, False, 0.50, 5, "SELL")
+        second = book(0.60, 0, 0.62, 5), book(0.44, 0, 0.46, 5)
+        window.on_books(1.3, *second)
+        self.assertEqual({order.price for order in window.orders.values()}, {0.60, 0.44})
+        window.on_trade(1.4, True, 0.60, 5, "SELL")
+        window.on_trade(1.5, False, 0.44, 5, "SELL")
+        _, metrics = window.settle(300, 1)
+        self.assertAlmostEqual(metrics["buy_pair_cost"] / metrics["buy_pair_shares"], 0.97)
+
     def test_open_sell_leg_floors_the_actual_completion_price(self) -> None:
         config = PairConfig("mint", "mint", 0.6, action_latency_s=0,
                             sell_sum_floor=1.005)

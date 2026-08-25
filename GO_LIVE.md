@@ -29,10 +29,10 @@ old approval/setup commands, and CTF split/merge fail closed in code.
 
 ## Strategy evidence required
 
-The four current hypotheses are `bid98`, `inside98`, `bid99`, and `inside99`:
-join-best versus one-tick-inside paired bids, each under a $0.98 or $0.99
-completed-pair cap. A candidate cannot advance unless a clean generation
-demonstrates all of the following:
+The four current hypotheses are `strict98` plus `basket98`, `basket985`,
+and `basket99`. All improve both bids one tick; the basket arms can spend prior
+completed-pair surplus while preserving their cumulative average cap. A
+candidate cannot advance unless a clean generation demonstrates all of the following:
 
 - At least 288 full asset-windows (six hours across four assets); a window with
   first usable paired books more than ten seconds late is excluded.

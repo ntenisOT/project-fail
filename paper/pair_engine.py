@@ -30,6 +30,7 @@ class PairConfig:
     new_pair_start_s: float = 0.0
     mint_anchor_spread: float | None = None
     require_both_to_start: bool = False
+    basket_average_cap: bool = False
 
 
 @dataclasses.dataclass
@@ -87,6 +88,27 @@ class PairLots:
                 opposite.pop(0)
         if remaining > 1e-9:
             self.lots[side].append([remaining, price])
+
+    def next_pair_sum_cap(self, cap: float, shares: float) -> float:
+        """Maximum next pair sum that preserves the cumulative average cap."""
+        return (cap * (self.paired_shares + shares) - self.paired_value) / shares
+
+    def completion_price_cap(self, cap: float, quote_shares: float) -> float:
+        """Maximum opposite price after crediting completed-pair surplus."""
+        side = self.open_side
+        if side is None:
+            raise RuntimeError("no open pair lot")
+        remaining = min(quote_shares, self.open_shares)
+        matched = remaining
+        open_value = 0.0
+        for shares, price in self.lots[side]:
+            take = min(remaining, shares)
+            open_value += take * price
+            remaining -= take
+            if remaining <= 1e-9:
+                break
+        return (cap * (self.paired_shares + matched)
+                - self.paired_value - open_value) / matched
 
 
 def _tick_price(value: float, tick: float, round_up: bool) -> float:
@@ -167,7 +189,12 @@ class PairWindow:
                 ((True, False) if can_start_pair else ())
                 if open_side is None else (not open_side,)
             )
-            if open_side is None and sum(improved_bids.values()) > self.config.buy_sum_ceiling:
+            start_cap = self.config.buy_sum_ceiling
+            if self.config.basket_average_cap:
+                start_cap = self.buy_pairs.next_pair_sum_cap(
+                    self.config.buy_sum_ceiling, self.config.clip_shares,
+                )
+            if open_side is None and sum(improved_bids.values()) > start_cap:
                 buy_sides = ()
             candidates: dict[tuple[bool, str], float] = {}
             for side in buy_sides:
@@ -176,7 +203,10 @@ class PairWindow:
                     continue
                 price = improved_bids[side]
                 if open_side is not None:
-                    cap = (self.config.buy_sum_ceiling
+                    cap = (self.buy_pairs.completion_price_cap(
+                               self.config.buy_sum_ceiling, self.config.clip_shares,
+                           ) if self.config.basket_average_cap else
+                           self.config.buy_sum_ceiling
                            - self.buy_pairs.worst_open_price(buying=True))
                     price = min(price, _tick_price(cap, books[side].tick, round_up=False))
                 if 0 < price < 1:

@@ -70,6 +70,7 @@ class PairWindow:
         self.sell_hedge_floor_blocks = 0
         self.sell_hedge_completions = 0
         self.sell_hedge_shares = 0.0
+        self.sell_hedge_best_pair_sum = 0.0
 
     def _desired(self, now: float, up: OrderBook,
                  down: OrderBook) -> dict[tuple[bool, str], float]:
@@ -333,11 +334,16 @@ class PairWindow:
                 self.sell_hedge_execution_seen = True
             return []
         net_cash = sum(leg.price * leg.shares - leg.fee for leg in legs)
+        candidate_sum = (
+            self.sell_pairs.worst_open_price(buying=False) + net_cash / shares
+        )
+        self.sell_hedge_best_pair_sum = max(
+            self.sell_hedge_best_pair_sum, candidate_sum,
+        )
         pair_floor = (self.config.sell_sum_floor
                       if self.config.taker_pair_sum_floor is None
                       else self.config.taker_pair_sum_floor)
-        if (self.sell_pairs.worst_open_price(buying=False) + net_cash / shares
-                < pair_floor - 1e-9):
+        if candidate_sum < pair_floor - 1e-9:
             if not self.sell_hedge_floor_seen:
                 self.sell_hedge_floor_blocks += 1
                 self.sell_hedge_floor_seen = True
@@ -527,5 +533,6 @@ class PairWindow:
                 "sell_hedge_floor_blocks": self.sell_hedge_floor_blocks,
                 "sell_hedge_completions": self.sell_hedge_completions,
                 "sell_hedge_shares": self.sell_hedge_shares,
+                "sell_hedge_best_pair_sum": self.sell_hedge_best_pair_sum,
             })
         return settlement, metrics

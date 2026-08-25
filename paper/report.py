@@ -232,12 +232,24 @@ def _hedge_lines(db: sqlite3.Connection, strategies: list[str]) -> list[str]:
         metrics = _metrics(db, strategy)
         if "sell_hedge_due_episodes" not in metrics:
             continue
+        best = 0.0
+        for (raw,) in db.execute(
+            "SELECT data FROM window_metrics WHERE strategy=?", (strategy,),
+        ):
+            try:
+                best = max(
+                    best,
+                    float(json.loads(raw).get("sell_hedge_best_pair_sum", 0)),
+                )
+            except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+                continue
         lines.append(
             f"mint hedge | {strategy} due={metrics['sell_hedge_due_episodes']:.0f} "
             f"completed={metrics.get('sell_hedge_completions', 0):.0f} "
             f"execution-blocked={metrics.get('sell_hedge_execution_blocks', 0):.0f} "
             f"floor-blocked={metrics.get('sell_hedge_floor_blocks', 0):.0f} "
-            f"shares={metrics.get('sell_hedge_shares', 0):.1f}"
+            f"shares={metrics.get('sell_hedge_shares', 0):.1f} "
+            f"best={'-' if best == 0 else f'{best:.3f}'}"
         )
     return lines
 

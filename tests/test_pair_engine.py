@@ -275,6 +275,8 @@ class FocusedPairTests(unittest.TestCase):
         self.assertEqual(metrics["sell_hedge_execution_blocks"], 0)
         self.assertEqual(metrics["sell_hedge_completions"], 1)
         self.assertEqual(metrics["sell_hedge_shares"], 5)
+        expected_sum = 0.70 + (5 * 0.27 - fee) / 5
+        self.assertAlmostEqual(metrics["sell_hedge_best_pair_sum"], expected_sum)
 
     def test_mint_flatten_crosses_below_floor_after_action_delay(self) -> None:
         config = PairConfig(

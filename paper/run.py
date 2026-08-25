@@ -52,9 +52,6 @@ if requested:
     ASSETS = {asset: prefix for asset, prefix in ASSETS.items() if asset in wanted}
 
 STRATEGIES = (
-    PairConfig("strict98", "accumulate", 0.02,
-               action_latency_s=ACTION_LATENCY_S, buy_sum_ceiling=0.98,
-               improve_ticks=1, require_both_to_start=True, new_pair_start_s=30),
     PairConfig("basket98", "accumulate", 0.02,
                action_latency_s=ACTION_LATENCY_S, buy_sum_ceiling=0.98,
                improve_ticks=1, require_both_to_start=True, basket_average_cap=True,
@@ -63,16 +60,20 @@ STRATEGIES = (
                action_latency_s=ACTION_LATENCY_S, buy_sum_ceiling=0.99,
                improve_ticks=1, require_both_to_start=True, basket_average_cap=True,
                new_pair_start_s=30),
-    PairConfig("basket99x10", "accumulate", 0.02,
+    PairConfig("basket99c180", "accumulate", 0.02,
                action_latency_s=ACTION_LATENCY_S, buy_sum_ceiling=0.99,
-               clip_shares=10, max_inventory=40, improve_ticks=1,
-               require_both_to_start=True, basket_average_cap=True,
-               new_pair_start_s=30),
-    PairConfig("basket99tk10", "accumulate", 0.02,
+               improve_ticks=1, require_both_to_start=True, basket_average_cap=True,
+               new_pair_start_s=30, new_pair_cutoff_s=180),
+    PairConfig("basket99tk120", "accumulate", 0.02,
                action_latency_s=ACTION_LATENCY_S, buy_sum_ceiling=0.99,
-               clip_shares=10, max_inventory=40, improve_ticks=1,
-               require_both_to_start=True, basket_average_cap=True,
-               new_pair_start_s=30, buy_taker_after_s=120),
+               improve_ticks=1, require_both_to_start=True, basket_average_cap=True,
+               new_pair_start_s=30, new_pair_cutoff_s=180,
+               buy_taker_after_s=120),
+    PairConfig("basket99tk180", "accumulate", 0.02,
+               action_latency_s=ACTION_LATENCY_S, buy_sum_ceiling=0.99,
+               improve_ticks=1, require_both_to_start=True, basket_average_cap=True,
+               new_pair_start_s=30, new_pair_cutoff_s=180,
+               buy_taker_after_s=180),
 )
 MKT_WS = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 KILL = "paper/KILL"

@@ -145,8 +145,8 @@ economics `lagged` rather than removing the window.
 The simulator reconstructs public price levels from authoritative snapshots and
 `price_change` deltas. Joining the best price puts the displayed level size in
 front of our hypothetical order; trades consume that queue before we receive a
-fill. Same-price quotes retain queue position, repricing loses it. The five- and
-ten-share arms are reported independently, maker fees/rebates are excluded, and
+fill. Same-price quotes retain queue position, repricing loses it. The five-share
+arms are reported independently, maker fees/rebates are excluded, and
 official resolved Gamma outcomes settle each window. A window whose first usable
 paired books
 arrive more than ten seconds late is observed but not scored. Actions activate
@@ -195,7 +195,7 @@ probe measured 546 ms median / 928 ms p90 before REST. That delay came from the
 one-second file poll; the focused paper runner neither emits intents nor starts
 this executor.
 
-### `live/mintbot.py` — experimental mintbot (in-process; shadow only)
+### `live/mintbot.py` — legacy mint hypothesis (shadow only)
 Per window per asset: `splitPosition` mints $20 of sets in the first 60 s →
 maker asks on both sides, anchored `1 − opposite_ask + 2¢`. It consumes
 `price_change` deltas, sends the required heartbeat, verifies the old pair is
@@ -207,23 +207,22 @@ polling still cannot reconstruct exact fill prices, so reported PnL is not yet
 authoritative. `mint_cycle20` shares the same anchor and residence policy but,
 unlike the shadow bot, uses immediate simulated fills to complete an asymmetric
 clip. The shadow bot still stops after an inferred imbalance because its delayed
-position poll cannot prove fill price or order ownership. Keep both out of place
-mode until authenticated receipts and strategy edge are proven.
+position poll cannot prove fill price or order ownership. Corrected V2 wallet
+forensics no longer identifies mint-and-ask as the clean leader, so this is not
+the winner-replication path. Keep it out of place mode unless direct CTF events
+and execution-normalised economics independently restore the thesis.
 
-### `live/chain.py` — Polygon layer (no web3 dependency)
-Raw JSON-RPC + eth_account. RPC pool w/ fallback (reads) but **single-attempt
-broadcasts** with honest semantics: `PreflightError` = $0 moved (estimateGas
-stage), `BroadcastUncertain` = may be in mempool, reconcile via balances.
-Nonce-locked sends (4 assets share close boundaries). Minimal ABI encoder
-(static types + one `uint256[]`, guarded). CLOB V2 contracts: CTF
-`0x4D97...6045`, pUSD collateral `0xC011...82DFB`, and CTF Exchange
-`0xE111...996B`. USDC.e is only an onramp input after the April 2026 migration.
+### `live/chain.py` — legacy direct-EOA Polygon layer
+Raw JSON-RPC + eth_account, retained for read-only balances and migration
+forensics. It predates this repo's adoption of Polymarket's official Builder
+Relayer and is no longer the intended mint execution design.
 
 ### Minter wallet (EOA — separate from the site account) — DEPRECATED PATH
 `0xbb791E91F284E077a0a848C821690BB6A2dcfda7` — separate EOA, keys only in the
-box `.env`, still holding ~$891.93 legacy USDC.e + POL (consolidating it is a
-user money-moving decision, not a software task). Any legacy USDC.e must be
-wrapped into pUSD before it can serve as CLOB V2 collateral.
+box `.env`, holding **891.930536 legacy USDC.e**, zero pUSD, and POL
+(consolidating it is a user money-moving decision, not a software task). The
+site/CLOB Safe currently holds **9.855666 pUSD**. Legacy USDC.e must be migrated
+before it can serve as CLOB V2 collateral.
 
 **Architecture correction (2026-08-25):** the separate EOA was never a protocol
 requirement. Polymarket's official Relayer executes gasless split / merge /

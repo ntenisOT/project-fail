@@ -42,12 +42,12 @@ def main():
     try:
         from py_clob_client_v2 import BalanceAllowanceParams, AssetType
         bal = c.get_balance_allowance(BalanceAllowanceParams(asset_type=AssetType.COLLATERAL))
-        usdc = float(bal.get("balance", 0)) / 1e6
+        pusd = float(bal.get("balance", 0)) / 1e6
         allow = bal.get("allowance")
         allow_s = f"{float(allow)/1e6:,.2f}" if allow not in (None, "") else "n/a"
-        print(f"3) collateral (USDC) balance ${usdc:,.2f} | exchange allowance {allow_s}  OK")
+        print(f"3) collateral (pUSD) balance ${pusd:,.2f} | exchange allowance {allow_s}  OK")
         need = 120.0
-        print(f"   -> {'ENOUGH' if usdc >= need else f'SHORT by ${need-usdc:,.2f}'} for the 2-strategy test (~$120)")
+        print(f"   -> {'ENOUGH' if pusd >= need else f'SHORT by ${need-pusd:,.2f}'} for the 2-strategy test (~$120)")
     except Exception as e:
         print(f"3) WARN balance/allowance read: {e.__class__.__name__}: {e}")
     try:

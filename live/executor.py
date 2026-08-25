@@ -229,7 +229,8 @@ class Clob:
     def cancel_all(self):
         self.c.cancel_all()
 
-    def usdc_balance(self) -> float:
+    def collateral_balance(self) -> float:
+        """Return spendable CLOB V2 pUSD collateral for this funder."""
         from py_clob_client_v2 import BalanceAllowanceParams, AssetType
         b = self.c.get_balance_allowance(BalanceAllowanceParams(asset_type=AssetType.COLLATERAL))
         return float(b.get("balance", 0)) / 1e6
@@ -330,10 +331,10 @@ def main():
 
     led = Ledger()
     session_t0 = time.time()              # ingest ONLY this session's trades
-    usdc_start = None
+    collateral_start = None
     if clob:
         try:
-            bal_now = clob.usdc_balance()
+            bal_now = clob.collateral_balance()
             day_key = time.strftime("%Y-%m-%d", time.gmtime())
             base_file = "live/day_baseline.json"
             stored = {}
@@ -342,12 +343,13 @@ def main():
             except (OSError, ValueError):
                 pass
             if stored.get("day") == day_key:
-                usdc_start = float(stored["usdc_start"])      # F11: restart keeps the day's baseline
-                log.info("day baseline restored: $%.2f (today's stop survives restarts)", usdc_start)
+                collateral_start = float(stored["usdc_start"])  # legacy key; restart-safe
+                log.info("day baseline restored: $%.2f (today's stop survives restarts)", collateral_start)
             else:
-                usdc_start = bal_now
-                json.dump({"day": day_key, "usdc_start": usdc_start}, open(base_file, "w", encoding="utf-8"))
-                log.info("day baseline set: $%.2f", usdc_start)
+                collateral_start = bal_now
+                json.dump({"day": day_key, "usdc_start": collateral_start},
+                          open(base_file, "w", encoding="utf-8"))
+                log.info("day baseline set: $%.2f", collateral_start)
         except Exception as e:
             log.error("cannot read starting balance (%s) - refusing to run blind", e)
             return
@@ -637,10 +639,12 @@ def main():
                     pos = clob.positions()
                     session_seen.update(tok for (_s, tok) in desired)
                     exposure_cost = sum(p["cost"] for t, p in pos.items() if t in session_seen)
-                    usdc_now = clob.usdc_balance()
-                    spent = (usdc_start - usdc_now) if usdc_start is not None else 0.0
-                    log.info("STATE positions=%d (session-scope %d) exposure(cost)=$%.2f usdc=$%.2f spent=$%.2f",
-                             len(pos), len(session_seen & set(pos)), exposure_cost, usdc_now, spent)
+                    collateral_now = clob.collateral_balance()
+                    spent = ((collateral_start - collateral_now)
+                             if collateral_start is not None else 0.0)
+                    log.info("STATE positions=%d (session-scope %d) exposure(cost)=$%.2f pusd=$%.2f spent=$%.2f",
+                             len(pos), len(session_seen & set(pos)), exposure_cost,
+                             collateral_now, spent)
                     if spent >= cap_inv_total + stop:                  # G8: cash out beyond caps = halt
                         log.error("DAY STOP: $%.2f left the wallet (cap %.0f + stop %.0f) "
                                   "-> cancel all + HALT", spent, cap_inv_total, stop)

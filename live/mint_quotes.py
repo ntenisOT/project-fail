@@ -34,6 +34,22 @@ def target_pair_prices(
     return price_up, price_down
 
 
+def guarded_pair_prices(
+    ask_up: float,
+    ask_down: float,
+    *,
+    spread: float,
+    sum_floor: float,
+) -> tuple[float, float] | None:
+    """Return no quote for endpoint or malformed public-book prices."""
+    try:
+        return target_pair_prices(
+            ask_up, ask_down, spread=spread, sum_floor=sum_floor,
+        )
+    except ValueError:
+        return None
+
+
 def should_reprice(
     current: tuple[float, float],
     target: tuple[float, float],

@@ -9,7 +9,12 @@ from pathlib import Path
 from live import lockbot
 from live.chain import PreflightError, merge, split
 from live.market_book import BestAskCache
-from live.mint_quotes import plan_pair_quotes, should_reprice, target_pair_prices
+from live.mint_quotes import (
+    guarded_pair_prices,
+    plan_pair_quotes,
+    should_reprice,
+    target_pair_prices,
+)
 
 
 class MintSafetyTests(unittest.TestCase):
@@ -67,6 +72,15 @@ class MintSafetyTests(unittest.TestCase):
         low_leg = plan_pair_quotes(minted=20, sold_up=0, sold_down=0,
                                    price_up=0.19, price_down=0.82, sum_floor=1.005)
         self.assertEqual([q.size for q in low_leg], [5.0, 5.0])
+
+    def test_endpoint_books_pause_instead_of_crashing_the_quote_loop(self) -> None:
+        self.assertIsNone(
+            guarded_pair_prices(1.0, 0.40, spread=0.02, sum_floor=1.005)
+        )
+        self.assertEqual(
+            guarded_pair_prices(0.40, 0.60, spread=0.02, sum_floor=1.005),
+            (0.42, 0.62),
+        )
 
     def test_repricing_preserves_queue_but_urgent_underpricing_bypasses_rest(self) -> None:
         self.assertFalse(should_reprice((0.50, 0.51), (0.51, 0.50), 10.0))

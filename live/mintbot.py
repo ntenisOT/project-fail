@@ -39,7 +39,7 @@ import time
 import urllib.request
 
 from live.market_book import BestAskCache
-from live.mint_quotes import Quote, plan_pair_quotes, should_reprice, target_pair_prices
+from live.mint_quotes import Quote, guarded_pair_prices, plan_pair_quotes, should_reprice
 from paper import envload
 
 envload.load()
@@ -319,9 +319,15 @@ class Mintbot:
                         self.quote_counts["stale_pause"] += 1
                         log.warning("quote paused %s: market feed stale", st["asset"])
                     continue
-                px_u, px_d = target_pair_prices(
+                prices = guarded_pair_prices(
                     bu.price, bd.price, spread=SPREAD, sum_floor=SUM_FLOOR,
                 )
+                if prices is None:
+                    if any(st["asks"].values()):
+                        await self.cancel_pair(st)
+                    self.quote_counts["invalid_book_pause"] += 1
+                    continue
+                px_u, px_d = prices
                 plan = plan_pair_quotes(
                     minted=st["minted"], sold_up=st["sold"][True],
                     sold_down=st["sold"][False], price_up=px_u, price_down=px_d,

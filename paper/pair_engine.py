@@ -6,7 +6,7 @@ import dataclasses
 import math
 from typing import Literal
 
-from live.mint_quotes import plan_pair_quotes, should_reprice, target_pair_prices
+from live.mint_quotes import guarded_pair_prices, plan_pair_quotes, should_reprice
 from paper.order_book import OrderBook
 from paper.taker import sweep
 
@@ -193,11 +193,13 @@ class PairWindow:
         if now >= self.start + self.config.new_pair_cutoff_s:
             return {}
         assert up.best_ask is not None and down.best_ask is not None
-        prices = target_pair_prices(
+        prices = guarded_pair_prices(
             up.best_ask, down.best_ask,
             spread=self.config.mint_anchor_spread or 0,
             sum_floor=self.config.sell_sum_floor,
         )
+        if prices is None:
+            return {}
         plan = plan_pair_quotes(
             minted=self.config.mint_sets,
             sold_up=self.config.mint_sets - self.inventory[True],

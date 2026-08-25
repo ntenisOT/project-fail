@@ -253,8 +253,9 @@ class FocusedPairTests(unittest.TestCase):
         window.on_books(1.0, up, book(0.26, 5, 0.31, 0))
         window.on_trade(1.1, True, 0.70, 5, "BUY")
 
-        self.assertFalse(window.on_books(61.1, up, book(0.26, 5, 0.27, 0)))
+        self.assertFalse(window.on_books(61.1, up, book(0.19, 5, 0.20, 0)))
         self.assertEqual(window.inventory, {True: 0, False: 5})
+        self.assertFalse(window.on_books(61.15, up, book(0.26, 5, 0.27, 0)))
         fills = window.on_books(61.2, up, book(0.27, 5, 0.28, 0))
 
         self.assertEqual([fill["action"] for fill in fills], ["taker_sell"])
@@ -264,6 +265,11 @@ class FocusedPairTests(unittest.TestCase):
         self.assertAlmostEqual(float(settled["pnl"]), 5 * (0.70 + 0.27 - 1) - fee)
         self.assertAlmostEqual(metrics["taker_fees"], fee)
         self.assertAlmostEqual(metrics["unmatched_end"], 0)
+        self.assertEqual(metrics["sell_hedge_due_episodes"], 1)
+        self.assertEqual(metrics["sell_hedge_floor_blocks"], 1)
+        self.assertEqual(metrics["sell_hedge_execution_blocks"], 1)
+        self.assertEqual(metrics["sell_hedge_completions"], 1)
+        self.assertEqual(metrics["sell_hedge_shares"], 5)
 
     def test_mint_flatten_crosses_below_floor_after_action_delay(self) -> None:
         config = PairConfig(
@@ -431,8 +437,12 @@ class FocusedPairTests(unittest.TestCase):
         with TemporaryDirectory() as temp:
             ledger = Ledger(str(Path(temp) / "paper.db"))
             try:
+                strategy = "minthedge60p95"
                 mint = PairWindow(
-                    PairConfig("mint", "mint", 0.6, action_latency_s=0),
+                    PairConfig(
+                        strategy, "mint", 0.6, action_latency_s=0,
+                        taker_hedge_after_s=60, taker_pair_sum_floor=0.95,
+                    ),
                     "btc", "btc-updown-5m-0", 0, "up", "down", 0,
                 )
                 mint.on_books(
@@ -441,12 +451,16 @@ class FocusedPairTests(unittest.TestCase):
                 mint.on_trade(1.1, True, 0.20, 5, "BUY")
                 mint.on_trade(1.8, False, 0.81, 5, "BUY")
                 settled, metrics = mint.settle(300, 1)
-                ledger.record_settlement(300, "mint", "btc", mint.slug, settled)
-                ledger.record_metrics(300, "mint", "btc", mint.slug, metrics)
+                ledger.record_settlement(300, strategy, "btc", mint.slug, settled)
+                ledger.record_metrics(300, strategy, "btc", mint.slug, metrics)
 
-                snapshot = report.snapshot_one(ledger.db, "mint")
+                snapshot = report.snapshot_one(ledger.db, strategy)
                 self.assertAlmostEqual(snapshot.pair_delay_p50_s, 0.7)
                 self.assertAlmostEqual(snapshot.pair_delay_p90_s, 0.7)
+                self.assertIn(
+                    "mint hedge | minthedge60p95 due=0 completed=0",
+                    report.text(str(Path(temp) / "paper.db")),
+                )
             finally:
                 ledger.close()
 

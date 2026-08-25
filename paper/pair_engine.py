@@ -62,6 +62,14 @@ class PairWindow:
         self.sell_opened_at: float | None = None
         self.buy_pairs = PairLots()
         self.sell_pairs = PairLots()
+        self.sell_hedge_due_seen = False
+        self.sell_hedge_execution_seen = False
+        self.sell_hedge_floor_seen = False
+        self.sell_hedge_due_episodes = 0
+        self.sell_hedge_execution_blocks = 0
+        self.sell_hedge_floor_blocks = 0
+        self.sell_hedge_completions = 0
+        self.sell_hedge_shares = 0.0
 
     def _desired(self, now: float, up: OrderBook,
                  down: OrderBook) -> dict[tuple[bool, str], float]:
@@ -264,6 +272,9 @@ class PairWindow:
             self.sell_opened_at = None
         elif before is None or after != before:
             self.sell_opened_at = now
+            self.sell_hedge_due_seen = False
+            self.sell_hedge_execution_seen = False
+            self.sell_hedge_floor_seen = False
 
     def _record_buy_pair(self, event_at: float, known_at: float, side: bool,
                          shares: float, net_price: float) -> None:
@@ -310,10 +321,16 @@ class PairWindow:
         if (delay is None or open_side is None or self.sell_opened_at is None
                 or now < self.sell_opened_at + delay + self.config.action_latency_s):
             return []
+        if not self.sell_hedge_due_seen:
+            self.sell_hedge_due_episodes += 1
+            self.sell_hedge_due_seen = True
         hedge_side = not open_side
         shares = min(self.sell_pairs.open_shares, self.inventory[hedge_side])
         legs = sweep(up if hedge_side else down, "sell", shares)
         if not legs:
+            if not self.sell_hedge_execution_seen:
+                self.sell_hedge_execution_blocks += 1
+                self.sell_hedge_execution_seen = True
             return []
         net_cash = sum(leg.price * leg.shares - leg.fee for leg in legs)
         pair_floor = (self.config.sell_sum_floor
@@ -321,6 +338,9 @@ class PairWindow:
                       else self.config.taker_pair_sum_floor)
         if (self.sell_pairs.worst_open_price(buying=False) + net_cash / shares
                 < pair_floor - 1e-9):
+            if not self.sell_hedge_floor_seen:
+                self.sell_hedge_floor_blocks += 1
+                self.sell_hedge_floor_seen = True
             return []
         self._close_order((hedge_side, "sell"), now, cancelled=True)
         records: list[dict[str, float | str]] = []
@@ -338,6 +358,8 @@ class PairWindow:
                 "action": "taker_sell", "price": leg.price, "size": leg.shares,
                 "signed_cash": net_cash, "outcome_up": int(hedge_side),
             })
+        self.sell_hedge_completions += 1
+        self.sell_hedge_shares += shares
         return records
 
     def on_books(self, now: float, up: OrderBook,
@@ -498,4 +520,12 @@ class PairWindow:
             "sell_pair_proceeds": self.sell_pairs.paired_value,
             "sell_pair_delays": self.sell_pairs.completion_delays,
         }
+        if self.config.taker_hedge_after_s is not None:
+            metrics.update({
+                "sell_hedge_due_episodes": self.sell_hedge_due_episodes,
+                "sell_hedge_execution_blocks": self.sell_hedge_execution_blocks,
+                "sell_hedge_floor_blocks": self.sell_hedge_floor_blocks,
+                "sell_hedge_completions": self.sell_hedge_completions,
+                "sell_hedge_shares": self.sell_hedge_shares,
+            })
         return settlement, metrics

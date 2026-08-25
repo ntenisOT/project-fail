@@ -226,6 +226,22 @@ def _integrity_lines(db: sqlite3.Connection) -> list[str]:
     ]
 
 
+def _hedge_lines(db: sqlite3.Connection, strategies: list[str]) -> list[str]:
+    lines: list[str] = []
+    for strategy in strategies:
+        metrics = _metrics(db, strategy)
+        if "sell_hedge_due_episodes" not in metrics:
+            continue
+        lines.append(
+            f"mint hedge | {strategy} due={metrics['sell_hedge_due_episodes']:.0f} "
+            f"completed={metrics.get('sell_hedge_completions', 0):.0f} "
+            f"execution-blocked={metrics.get('sell_hedge_execution_blocks', 0):.0f} "
+            f"floor-blocked={metrics.get('sell_hedge_floor_blocks', 0):.0f} "
+            f"shares={metrics.get('sell_hedge_shares', 0):.1f}"
+        )
+    return lines
+
+
 def text(db_path: str = "paper/paper.db") -> str:
     db = sqlite3.connect(db_path)
     strategies = [row[0] for row in db.execute(
@@ -267,6 +283,7 @@ def text(db_path: str = "paper/paper.db") -> str:
             f"{row.pair_delay_p50_s:>7.1f}s{row.pair_delay_p90_s:>7.1f}s"
         )
     out.extend(_integrity_lines(db))
+    out.extend(_hedge_lines(db, strategies))
     out.extend((
         "feed-quality breakdown; lagged windows retain measured feed-tail exposure",
         f"{'strategy':<14}{'quality':<14}{'wnd':>5}{'pnl$':>10}"

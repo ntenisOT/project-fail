@@ -268,6 +268,21 @@ bug is also fixed and covered by one focused test.
   window lagged, while local queue residence stayed at 1–3 ms. Gen57 therefore
   changes no strategy parameter: it only records the best executable repair
   pair sum after the timer so the next floor decision is evidence-based.
+- Gen57 supplied the missing A/B. In its first valid window both mint arms sold
+  all 20 complete pairs at a $1.027 average sum for +$0.55 neutral/adverse PnL.
+  In the next window, an Up sale at $0.12 remained open for more than three
+  minutes. The hedge eventually swept five Down shares at $0.84 and a
+  fee-inclusive $0.951 pair sum, then completed two more maker pairs; the
+  baseline waited 214 seconds and completed naturally at $1.03. Across the two
+  windows baseline earned +$0.70 versus hedge +$0.55. The $0.95 rule therefore
+  behaved as a bounded loss cap, but did not improve PnL in this observation.
+  Do not lower the floor from one episode.
+- Gen57 also exposed a quality-label defect: a 1.076-second event that occurred
+  after the mint inventory and orders were already flat still tainted the whole
+  window because prior fills were treated as permanent exposure. Gen58 tracks
+  actual order, pending-action, and open-leg intervals and attributes each
+  delayed event by its exchange timestamp. Missing timestamps remain
+  conservative. This changes classification only, not fills or strategy rules.
 
 A 15-minute generation is realistic for rejecting a mechanism or catching a
 runtime defect. It is not realistic for estimating edge. Promotion requires at

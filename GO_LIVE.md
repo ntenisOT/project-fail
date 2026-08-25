@@ -29,8 +29,8 @@ old approval/setup commands, and CTF split/merge fail closed in code.
 
 ## Strategy evidence required
 
-The four current hypotheses are `pair_churn20`, `pair_inside20`,
-`mint_cycle20`, and `mint_hedge40`. A candidate cannot advance unless a clean
+The four current hypotheses are `inv_churn20`, `inv_mm20`, `pair_inside20`,
+and `mint_cycle20`. A candidate cannot advance unless a clean
 generation demonstrates all of the following:
 
 - At least 288 full asset-windows (six hours across four assets); a window with

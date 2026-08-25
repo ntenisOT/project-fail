@@ -104,10 +104,10 @@ signature, not one universal mechanism. The current board tests only:
 
 | Strategy | Mechanic |
 |---|---|
-| `pair_churn20` | Join both best bids when their sum is ≤0.99, then offer balanced inventory when the ask sum is ≥1.01 |
+| `inv_churn20` | Start with 20 complete sets, finish one maker sell pair, then phase into below-$1 replenishment |
+| `inv_mm20` | Start with 20 complete sets and continuously quote guarded maker bids and asks as inventory permits |
 | `pair_inside20` | Improve both maker prices by one tick when pair sums remain ≤0.99/≥1.01, trading margin for queue priority |
 | `mint_cycle20` | Minted inventory with opposite-ask +2¢ anchors; after one side fills, quote only the other side above the realized pair floor before starting another clip |
-| `mint_hedge40` | Same mint cycle, but after 40 seconds an unmatched leg is sold through displayed bid depth with official taker fees |
 
 The simulator reconstructs public price levels from authoritative snapshots and
 `price_change` deltas. Joining the best price puts the displayed level size in
@@ -116,8 +116,9 @@ fill. Same-price quotes retain queue position, repricing loses it. All strategie
 use five-share clips, maker fees/rebates are excluded, and official resolved
 Gamma outcomes settle each window. A window whose first usable paired books
 arrive more than ten seconds late is observed but not scored. Actions activate
-after a configurable 65 ms delay: approximately twice
-fresh Ireland GET p90 as a conservative cancel/replace proxy. Existing orders can
+after a configurable 65 ms delay: approximately twice fresh Ireland GET p90,
+but still only a lower-bound proxy because authenticated POST/cancel is
+unmeasured. Existing orders can
 still fill while a delayed cancellation is in flight, and stale post-only
 replacements are rejected. Once one token fills, its exact open-leg price caps
 or floors the opposite-token quote; the reported pair sums are FIFO-matched

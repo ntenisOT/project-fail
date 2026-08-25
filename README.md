@@ -174,7 +174,10 @@ of censoring it. Settlement reports split these windows into `lagged` and `clean
 economics. A delayed `last_trade_price` does not freeze a fresh book, but its
 late fill awareness independently marks exposed windows `lagged`. Heartbeats
 report rolling server-event p50/p90/max lag, stale/delayed-trade event counts,
-and reconnect count. The ledger separately persists every truly invalid
+reconnect count, and the ordered feed-queue high-water mark. Socket reads are
+decoupled from event processing through a bounded 8,192-event queue; local queue
+delay still appears in event age, while overflow or disconnect invalidates the
+window. The ledger separately persists every truly invalid
 strategy-window, its reason, fills, peak committed capital, cash, and residual
 inventory. Reports include the cohort validity rate so rejected windows cannot
 silently disappear from the denominator. Completed opposite-token fills retain
@@ -344,6 +347,7 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 46 | 08-25 09:11 | replace the nearly redundant Basket985 arm with 5-share versus 10-share Basket99 twins and a fee-aware T+120 taker-completion twin; retain strict and Basket98 controls |
 | 47 | 08-25 09:49 | reject the 10-share arms after five windows; keep 5-share Basket99 control and isolate a T+180 new-pair cutoff from fee-aware completion at T+120/T+180 |
 | 48 | 08-25 10:05 | retain Basket98/Basket99/cutoff controls; replace redundant taker twins with a stable two-level replenishing ladder and an honest queue-aware mint-cycle control |
+| 49 | 08-25 10:20 | preserve the Gen48 board; decouple WebSocket draining from ordered processing after another real 1013 slow-consumer disconnect invalidated the first ladder/mint window |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

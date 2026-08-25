@@ -22,6 +22,7 @@ from live.feed_health import (
 )
 from live.window_clock import boundary_aligned_delay
 from paper import envload, report
+from paper.feed_pump import FeedPump
 from paper.ladder_engine import LadderWindow
 from paper.ledger_writer import LedgerWriter
 from paper.market_metadata import ActiveMarket, fetch_active_market
@@ -101,6 +102,7 @@ class State:
         self.events: collections.Counter[str] = collections.Counter()
         self.resolution_errors: collections.Counter[str] = collections.Counter()
         self.feed_health = FeedHealth()
+        self.feed_pump: FeedPump | None = None
         self.fresh_tokens: set[str] = set()
         self.stale_assets: set[str] = set()
 
@@ -324,28 +326,9 @@ async def market_task() -> None:
             ) as ws:
                 connected_at = time.monotonic()
                 await ws.send(json.dumps({"assets_ids": tokens, "type": "market"}))
-                last_ping = time.monotonic()
                 log.info("market ws subscribed %d tokens", len(tokens))
-                while not S.tokens_changed.is_set():
-                    elapsed = time.monotonic() - last_ping
-                    if elapsed >= 10:
-                        await ws.send("PING")
-                        last_ping = time.monotonic()
-                    try:
-                        raw = await asyncio.wait_for(
-                            ws.recv(), timeout=min(0.5, max(0.1, 10 - elapsed))
-                        )
-                    except asyncio.TimeoutError:
-                        continue
-                    if raw == "PONG":
-                        continue
-                    try:
-                        payload = json.loads(raw)
-                    except json.JSONDecodeError:
-                        continue
-                    for event in payload if isinstance(payload, list) else [payload]:
-                        if isinstance(event, dict):
-                            handle_event(event)
+                S.feed_pump = FeedPump(handle_event)
+                await S.feed_pump.run(ws, S.tokens_changed)
         except Exception as exc:
             if connected_at is not None:
                 S.feed_health.reconnect()
@@ -381,9 +364,11 @@ async def heartbeat_task() -> None:
         }
         orders = sum(len(window.orders) for windows in S.active.values()
                      for window in windows.values())
+        feed_queue_hwm = S.feed_pump.high_water if S.feed_pump is not None else 0
         log.info("hb | events=%s fills=%s active_orders=%d pending_resolution=%d "
-                 "feed_paused=%s feed=%s errors=%s", dict(S.events), active, orders,
-                 len(S.pending), sorted(S.stale_assets), S.feed_health.snapshot(),
+                 "feed_paused=%s feed=%s feed_queue_hwm=%d errors=%s",
+                 dict(S.events), active, orders, len(S.pending),
+                 sorted(S.stale_assets), S.feed_health.snapshot(), feed_queue_hwm,
                  dict(S.resolution_errors))
 
 

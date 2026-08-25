@@ -159,6 +159,11 @@ bug is also fixed and covered by one focused test.
   improved that window to +$0.23 but paid $0.17 in fees, while its T+180 twin was
   identical to the maker cutoff. A following window was invalidated on a real
   WebSocket slow-consumer reconnect rather than silently scored.
+- Gen48 immediately produced promising queue-aware mint and ladder fills, but a
+  second `1013 slow consumer` disconnect invalidated the window at T+171. Gen49
+  preserves the board but drains socket frames independently into a bounded,
+  ordered queue; queue delay remains part of measured event age and overflow
+  still fails closed.
 
 A 15-minute generation is realistic for rejecting a mechanism or catching a
 runtime defect. It is not realistic for estimating edge. Promotion requires at

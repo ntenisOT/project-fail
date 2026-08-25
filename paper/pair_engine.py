@@ -496,5 +496,6 @@ class PairWindow:
             "buy_pair_delays": self.buy_pairs.completion_delays,
             "sell_pair_shares": self.sell_pairs.paired_shares,
             "sell_pair_proceeds": self.sell_pairs.paired_value,
+            "sell_pair_delays": self.sell_pairs.completion_delays,
         }
         return settlement, metrics

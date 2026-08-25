@@ -203,6 +203,9 @@ class FocusedPairTests(unittest.TestCase):
         self.assertAlmostEqual(
             metrics["sell_pair_proceeds"] / metrics["sell_pair_shares"], 1.01
         )
+        self.assertEqual(len(metrics["sell_pair_delays"]), 1)
+        self.assertAlmostEqual(metrics["sell_pair_delays"][0][0], 0.7)
+        self.assertEqual(metrics["sell_pair_delays"][0][1], 5)
 
     def test_mint_hedge_closes_open_pair_after_wait_with_fee(self) -> None:
         config = PairConfig(
@@ -400,6 +403,29 @@ class FocusedPairTests(unittest.TestCase):
             self.assertIn("lagged", output)
             self.assertIn("812ms", output)
             ledger.close()
+
+    def test_report_reads_sell_pair_completion_delays(self) -> None:
+        with TemporaryDirectory() as temp:
+            ledger = Ledger(str(Path(temp) / "paper.db"))
+            try:
+                mint = PairWindow(
+                    PairConfig("mint", "mint", 0.6, action_latency_s=0),
+                    "btc", "btc-updown-5m-0", 0, "up", "down", 0,
+                )
+                mint.on_books(
+                    1.0, book(0.18, 0, 0.20, 0), book(0.79, 0, 0.81, 0)
+                )
+                mint.on_trade(1.1, True, 0.20, 5, "BUY")
+                mint.on_trade(1.8, False, 0.81, 5, "BUY")
+                settled, metrics = mint.settle(300, 1)
+                ledger.record_settlement(300, "mint", "btc", mint.slug, settled)
+                ledger.record_metrics(300, "mint", "btc", mint.slug, metrics)
+
+                snapshot = report.snapshot_one(ledger.db, "mint")
+                self.assertAlmostEqual(snapshot.pair_delay_p50_s, 0.7)
+                self.assertAlmostEqual(snapshot.pair_delay_p90_s, 0.7)
+            finally:
+                ledger.close()
 
 
 if __name__ == "__main__":

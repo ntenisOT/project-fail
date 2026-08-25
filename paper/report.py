@@ -74,18 +74,21 @@ def _pair_delays(db: sqlite3.Connection, strategy: str) -> tuple[float, float]:
             values = json.loads(raw)
         except (TypeError, json.JSONDecodeError):
             continue
-        delays = values.get("buy_pair_delays") if isinstance(values, dict) else None
-        if not isinstance(delays, list):
+        if not isinstance(values, dict):
             continue
-        for row in delays:
-            if not isinstance(row, (list, tuple)) or len(row) != 2:
+        for key in ("buy_pair_delays", "sell_pair_delays"):
+            delays = values.get(key)
+            if not isinstance(delays, list):
                 continue
-            try:
-                delay, shares = float(row[0]), float(row[1])
-            except (TypeError, ValueError):
-                continue
-            if delay >= 0 and shares > 0:
-                samples.append((delay, shares))
+            for row in delays:
+                if not isinstance(row, (list, tuple)) or len(row) != 2:
+                    continue
+                try:
+                    delay, shares = float(row[0]), float(row[1])
+                except (TypeError, ValueError):
+                    continue
+                if delay >= 0 and shares > 0:
+                    samples.append((delay, shares))
     return weighted_quantile(samples, 0.5), weighted_quantile(samples, 0.9)
 
 

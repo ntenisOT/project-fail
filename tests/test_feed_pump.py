@@ -2,7 +2,13 @@ import asyncio
 import json
 import time
 
-from live.feed_pump import FeedPump, FeedPumpStats, subscription_messages
+from live.feed_pump import (
+    FeedPump,
+    FeedPumpStats,
+    planned_boundary_refresh_allowed,
+    subscription_messages,
+    subscription_transition,
+)
 from live.loop_health import EventLoopHealth
 
 
@@ -59,6 +65,31 @@ def test_subscription_rotation_adds_before_removing() -> None:
         {"operation": "subscribe", "assets_ids": ["new-down", "new-up"]},
         {"operation": "unsubscribe", "assets_ids": ["old-down", "old-up"]},
     ]
+
+
+def test_planned_refresh_requires_a_new_uncommitted_window() -> None:
+    assert planned_boundary_refresh_allowed(301.0, [300.0], has_commitment=False)
+    assert not planned_boundary_refresh_allowed(301.0, [], has_commitment=False)
+    assert not planned_boundary_refresh_allowed(301.0, [300.0], has_commitment=True)
+    assert not planned_boundary_refresh_allowed(311.0, [300.0], has_commitment=False)
+    assert not planned_boundary_refresh_allowed(299.0, [300.0], has_commitment=False)
+
+
+def test_subscription_transition_preserves_committed_exposure() -> None:
+    planned, messages = subscription_transition(
+        {"old-up", "old-down"}, {"new-up", "new-down"}, now=301.0,
+        window_starts=[300.0], has_commitment=False,
+    )
+    assert planned and messages == []
+
+    planned, messages = subscription_transition(
+        {"old-up", "old-down"}, {"new-up", "new-down"}, now=301.0,
+        window_starts=[300.0], has_commitment=True,
+    )
+    assert not planned
+    assert messages == subscription_messages(
+        {"old-up", "old-down"}, {"new-up", "new-down"},
+    )
 
 
 def test_event_loop_health_retains_lifetime_and_resets_interval_peak() -> None:

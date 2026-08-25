@@ -10,6 +10,7 @@ from typing import Protocol, Sequence
 
 EVENT_QUEUE_CAPACITY = 8192
 PROCESS_YIELD_EVERY = 64
+BOUNDARY_REFRESH_GRACE_S = 10.0
 
 
 class WebSocketLike(Protocol):
@@ -19,6 +20,30 @@ class WebSocketLike(Protocol):
 
 class FeedBacklogError(RuntimeError):
     pass
+
+
+def planned_boundary_refresh_allowed(
+    now: float, window_starts: Sequence[float], has_commitment: bool,
+) -> bool:
+    """Refresh only before a new-window decision can create exposure."""
+    return (
+        bool(window_starts)
+        and not has_commitment
+        and all(0 <= now - start <= BOUNDARY_REFRESH_GRACE_S
+                for start in window_starts)
+    )
+
+
+def subscription_transition(
+    current: set[str], target: set[str], *, now: float,
+    window_starts: Sequence[float], has_commitment: bool,
+) -> tuple[bool, list[dict[str, str | Sequence[str]]]]:
+    """Choose a planned reconnect or a safe in-place token rotation."""
+    if current == target:
+        return False, []
+    if planned_boundary_refresh_allowed(now, window_starts, has_commitment):
+        return True, []
+    return False, subscription_messages(current, target)
 
 
 class FeedPumpStats:

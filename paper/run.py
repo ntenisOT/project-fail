@@ -26,7 +26,7 @@ from live.feed_pump import (
     FeedPump,
     FeedPumpStats,
     WebSocketLike,
-    subscription_messages,
+    subscription_transition,
 )
 from live.loop_health import EventLoopHealth
 from paper.ladder_engine import LadderWindow
@@ -127,6 +127,7 @@ class State:
         self.fresh_tokens: set[str] = set()
         self.stale_assets: set[str] = set()
         self.reference_feed = ReferenceFeed(ASSETS)
+        self.planned_market_refreshes = 0
 
 
 S = State()
@@ -355,15 +356,31 @@ def handle_event(event: dict[str, object]) -> None:
 
 async def _rotate_subscriptions(
     ws: WebSocketLike, subscribed: set[str],
-) -> None:
+) -> bool:
     while True:
         await S.tokens_changed.wait()
         S.tokens_changed.clear()
         target = set(S.tokens)
-        for message in subscription_messages(subscribed, target):
+        windows = [window for cohort in S.active.values()
+                   for window in cohort.values()]
+        has_commitment = any(
+            window.buys or window.sells or window.orders
+            or (window.pending is not None if isinstance(window, PairWindow)
+                else any(lane.pending is not None for lane in window.lanes))
+            for window in windows
+        )
+        planned, messages = subscription_transition(
+            subscribed, target, now=time.time(),
+            window_starts=[window.start for window in windows],
+            has_commitment=has_commitment,
+        )
+        if planned:
+            return True
+        for message in messages:
             await ws.send(json.dumps(message))
-        if target != subscribed:
-            log.info("market ws rotated %d -> %d tokens", len(subscribed), len(target))
+        if messages:
+            log.info("market ws rotated %d -> %d tokens",
+                     len(subscribed), len(target))
         subscribed = target
 
 
@@ -392,18 +409,25 @@ async def market_task() -> None:
                 pump_task = asyncio.create_task(S.feed_pump.run(ws, connection_stop))
                 rotate_task = asyncio.create_task(_rotate_subscriptions(ws, tokens))
                 tasks = {pump_task, rotate_task}
+                planned_refresh = False
                 try:
                     done, _ = await asyncio.wait(
                         tasks, return_when=asyncio.FIRST_COMPLETED,
                     )
                     for task in done:
-                        task.result()
+                        result = task.result()
+                        if task is rotate_task:
+                            planned_refresh = bool(result)
                 finally:
                     connection_stop.set()
                     for task in tasks:
                         if not task.done():
                             task.cancel()
                     await asyncio.gather(*tasks, return_exceptions=True)
+            if planned_refresh:
+                S.planned_market_refreshes += 1
+                log.info("market ws planned boundary refresh count=%d",
+                         S.planned_market_refreshes)
         except Exception as exc:
             if connected_at is not None:
                 S.feed_health.reconnect()
@@ -441,8 +465,10 @@ async def heartbeat_task() -> None:
                      for window in windows.values())
         feed_queue = S.feed_pump_stats.snapshot(reset_interval=True)
         log.info("hb | events=%s fills=%s active_orders=%d pending_resolution=%d "
+                 "planned_market_refreshes=%d "
                  "feed_paused=%s feed=%s feed_queue=%s loop=%s reference=%s errors=%s",
                  dict(S.events), active, orders, len(S.pending),
+                 S.planned_market_refreshes,
                  sorted(S.stale_assets),
                  S.feed_health.snapshot(reset_interval=True), feed_queue,
                  S.loop_health.snapshot(reset_interval=True),

@@ -94,7 +94,7 @@ class FocusedPairTests(unittest.TestCase):
                            "btc", "btc-updown-5m-0", 0, "up", "down", 0)
         invalid = PairWindow(PairConfig("invalid", "accumulate", 0.01, 0),
                              "btc", "btc-updown-5m-0", 0, "up", "down", 0)
-        invalid.invalidate(2.0, "stale_market_event")
+        invalid.invalidate(2.0, "stale_market_event", 812)
 
         scored, skipped = settle_valid({"valid": valid, "invalid": invalid}, 300, 1)
 
@@ -102,6 +102,7 @@ class FocusedPairTests(unittest.TestCase):
         self.assertEqual([(row.strategy, row.reason) for row in skipped], [
             ("invalid", "stale_market_event"),
         ])
+        self.assertEqual(skipped[0].event_lag_ms, 812)
 
     def test_entry_cutoff_cancels_balanced_quotes_but_completes_an_open_leg(self) -> None:
         config = PairConfig("cutoff", "accumulate", 0.01, 0, new_pair_cutoff_s=240)
@@ -354,6 +355,7 @@ class FocusedPairTests(unittest.TestCase):
             ledger.record_invalid_window(301.0, "rejected", "btc", "bad-slug", {
                 "reason": "stale_market_event", "n_fills": 1, "capital": 2.5,
                 "cash": -2.5, "up_shares": 5, "down_shares": 0,
+                "event_lag_ms": 812,
             })
             ledger.record_fill(301, "carry", "btc", "btc-updown-5m-300", {
                 "action": "buy", "price": 0.5, "size": 100,
@@ -375,6 +377,7 @@ class FocusedPairTests(unittest.TestCase):
             self.assertIn("btc", output)
             self.assertIn("validity=50.0%", output)
             self.assertIn("stale_market_event=1", output)
+            self.assertIn("max invalid event lag=812ms", output)
             ledger.close()
 
 

@@ -25,6 +25,7 @@ class SkippedWindow:
     cash: float
     up_shares: float
     down_shares: float
+    event_lag_ms: float | None
 
 
 def settle_valid(
@@ -38,6 +39,7 @@ def settle_valid(
                 strategy, window.slug, window.invalid_reason or "unknown",
                 window.buys + window.sells, window.peak, window.cash,
                 window.inventory[True], window.inventory[False],
+                window.invalid_event_lag_ms,
             ))
             continue
         settlement, metrics = window.settle(now, outcome_up)

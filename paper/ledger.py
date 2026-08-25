@@ -25,12 +25,18 @@ class Ledger:
               ts REAL, strategy TEXT, asset TEXT, slug TEXT, data TEXT);
             CREATE TABLE IF NOT EXISTS invalid_windows(
               ts REAL, strategy TEXT, asset TEXT, slug TEXT, reason TEXT,
-              n_fills INT, capital REAL, cash REAL, up_shares REAL, down_shares REAL);
+              n_fills INT, capital REAL, cash REAL, up_shares REAL, down_shares REAL,
+              event_lag_ms REAL);
             """
         )
         columns = {row[1] for row in self.db.execute("PRAGMA table_info(fills)")}
         if "outcome_up" not in columns:
             self.db.execute("ALTER TABLE fills ADD COLUMN outcome_up INT")
+        invalid_columns = {
+            row[1] for row in self.db.execute("PRAGMA table_info(invalid_windows)")
+        }
+        if "event_lag_ms" not in invalid_columns:
+            self.db.execute("ALTER TABLE invalid_windows ADD COLUMN event_lag_ms REAL")
         self.db.commit()
 
     def record_metrics(self, ts, strategy, asset, slug, metrics) -> None:
@@ -43,11 +49,12 @@ class Ledger:
     def record_invalid_window(self, ts, strategy, asset, slug, invalid) -> None:
         self.db.execute(
             """INSERT INTO invalid_windows(
-                 ts,strategy,asset,slug,reason,n_fills,capital,cash,up_shares,down_shares
-               ) VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                 ts,strategy,asset,slug,reason,n_fills,capital,cash,up_shares,down_shares,
+                 event_lag_ms
+               ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
             (ts, strategy, asset, slug, invalid["reason"], invalid["n_fills"],
              invalid["capital"], invalid["cash"], invalid["up_shares"],
-             invalid["down_shares"]),
+             invalid["down_shares"], invalid["event_lag_ms"]),
         )
         self.db.commit()
 

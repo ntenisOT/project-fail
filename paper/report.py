@@ -199,8 +199,9 @@ def _integrity_lines(db: sqlite3.Connection) -> list[str]:
     if has_invalid_audit is None:
         return (["cohort integrity | invalid-window audit unavailable for legacy DB"]
                 if scored else [])
-    invalid, invalid_fills, max_capital = db.execute(
-        """SELECT count(*),COALESCE(sum(n_fills),0),COALESCE(max(capital),0)
+    invalid, invalid_fills, max_capital, max_lag_ms = db.execute(
+        """SELECT count(*),COALESCE(sum(n_fills),0),COALESCE(max(capital),0),
+                  COALESCE(max(event_lag_ms),0)
            FROM invalid_windows"""
     ).fetchone()
     invalid = int(invalid)
@@ -215,7 +216,8 @@ def _integrity_lines(db: sqlite3.Connection) -> list[str]:
     return [
         f"cohort integrity | scored strategy-windows={scored} | invalid={invalid} | "
         f"validity={100 * scored / total:.1f}% | invalid fills={int(invalid_fills)} | "
-        f"max invalid committed=${float(max_capital):.2f}",
+        f"max invalid committed=${float(max_capital):.2f} | "
+        f"max invalid event lag={float(max_lag_ms):.0f}ms",
         f"invalid reasons | {reasons}",
     ]
 

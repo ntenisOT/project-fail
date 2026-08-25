@@ -189,6 +189,7 @@ async def settlement_task() -> None:
                         "cash": skipped_row.cash,
                         "up_shares": skipped_row.up_shares,
                         "down_shares": skipped_row.down_shares,
+                        "event_lag_ms": skipped_row.event_lag_ms,
                     },
                 )
                 log.info("skipped invalid strategy-window %s %s reason=%s",
@@ -236,6 +237,8 @@ def _invalidate_stale_market_event(event: dict[str, object], now: float) -> None
     if not assets:
         return
     stale = stale_market_event(event, now, MAX_MARKET_EVENT_LAG_S)
+    event_at = event_time_s(event)
+    event_lag_ms = None if event_at is None else max(0.0, 1000 * (now - event_at))
     if stale:
         S.events["stale_market_event"] += 1
         S.fresh_tokens.difference_update(tokens)
@@ -254,7 +257,7 @@ def _invalidate_stale_market_event(event: dict[str, object], now: float) -> None
             exposed = bool(window.orders or window.pending is not None
                            or window.buys or window.sells)
             if exposed:
-                window.invalidate(now, "stale_market_event")
+                window.invalidate(now, "stale_market_event", event_lag_ms)
 
 
 def handle_event(event: dict[str, object]) -> None:

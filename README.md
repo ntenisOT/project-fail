@@ -258,6 +258,7 @@ the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 32 | 08-25 05:xx | combine initial complete-set inventory with balanced maker sell-and-replenish churn |
 | 33 | 08-25 05:xx | phase inventory sell and replenishment cycles so crossed partial fills cannot deadlock accounting |
 | 34 | 08-25 05:xx | move per-fill SQLite commits to a single owned writer thread after another paper-only feed stall |
+| 35 | 08-25 05:xx | A/B phased inventory against continuous two-sided complete-set market making; retire rejected taker flattening |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

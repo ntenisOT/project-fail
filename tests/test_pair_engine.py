@@ -250,6 +250,23 @@ class FocusedPairTests(unittest.TestCase):
         self.assertAlmostEqual(metrics["buy_pair_cost"], 4.8)
         self.assertAlmostEqual(metrics["sell_pair_proceeds"], 5.2)
 
+    def test_inventory_mm_quotes_bids_and_asks_after_selling_sets(self) -> None:
+        config = PairConfig(
+            "inventory_mm", "churn", 0.01, action_latency_s=0,
+            initial_sets=10, max_inventory=10,
+        )
+        window = PairWindow(config, "btc", "btc-updown-5m-0", 0, "up", "down", 0)
+        up, down = book(0.48, 0, 0.52, 0), book(0.48, 0, 0.52, 0)
+        window.on_books(1.0, up, down)
+        self.assertEqual(set(window.orders), {(True, "sell"), (False, "sell")})
+        window.on_trade(1.1, True, 0.52, 5, "BUY")
+        window.on_trade(1.2, False, 0.52, 5, "BUY")
+        window.on_books(1.3, up, down)
+        self.assertEqual(set(window.orders), {
+            (True, "buy"), (False, "buy"),
+            (True, "sell"), (False, "sell"),
+        })
+
     def test_inside_quotes_trade_pair_margin_for_queue_priority(self) -> None:
         config = PairConfig("inside", "churn", 0.01, action_latency_s=0,
                             improve_ticks=1)

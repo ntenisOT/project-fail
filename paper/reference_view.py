@@ -7,33 +7,57 @@ the partial signal already agrees with the settled outcome 93.1% of the time
 with 60 seconds left, because settlement is a 60-second AVERAGE and half of it
 has already happened.
 
-The one thing this class must never do is let a strategy see a value before it
-was observed. Every read is bounded by an explicit `now`, and samples at or
-after `now` are invisible. A window that could peek even one second ahead
-would manufacture the entire result.
+The one thing this class must never do is let a strategy see a value before
+it was observed. Every read is bounded by an explicit `now`; a sample stamped
+exactly at `now` IS visible (it has just arrived), anything later is not.
+
+Two caveats the review seats raised and this class does NOT solve:
+  * It stores `observed_at`, not `received_at`. On the live feed every sample
+    arrives late - median 1.678s, p90 2.153s - so a caller passing
+    `now = observed_at` would still be reading ahead of delivery. The caller
+    must pass a real wall clock, and the opening/latest tolerances here are
+    looser than paper/reference_report.py's exact-T+0 requirement.
+  * Nothing imports this yet. It is not a live trading path.
 """
 from __future__ import annotations
 
 import bisect
+import math
 
 RETAIN_S = 900.0
+# A sample may legitimately arrive after a long feed gap, so plausibility is
+# a separate, wider bound than retention.
+MAX_SKEW_S = 300.0
 
 
 class ReferenceView:
     """Latest and historical TWAP values per asset, readable only causally."""
 
-    def __init__(self, retain_s: float = RETAIN_S) -> None:
+    def __init__(self, retain_s: float = RETAIN_S,
+                 max_skew_s: float = MAX_SKEW_S) -> None:
         if retain_s <= 0:
             raise ValueError("retain_s must be positive")
+        if max_skew_s <= 0:
+            raise ValueError("max_skew_s must be positive")
         self.retain_s = retain_s
+        self.max_skew_s = max_skew_s
         self._times: dict[str, list[float]] = {}
         self._values: dict[str, list[float]] = {}
 
     def update(self, asset: str, observed_at: float, value: float) -> None:
-        if value <= 0:
+        if not (value > 0) or not math.isfinite(observed_at):
+            # `not (value > 0)` also rejects NaN, which would poison the
+            # sorted order and make later reads silently wrong.
             return
         times = self._times.setdefault(asset, [])
         values = self._values.setdefault(asset, [])
+        # A sample stamped far in the future must not evict real history.
+        # Anchoring retention to the incoming timestamp means one skewed or
+        # malformed frame wipes the whole series and the strategy goes blind
+        # until the wall clock catches up - a free kill switch for anyone who
+        # can influence the feed. A real gap is fine; a 10,000s jump is not.
+        if times and observed_at > times[-1] + self.max_skew_s:
+            return
         # feeds can repeat or reorder; keep the series sorted and deduplicated
         position = bisect.bisect_left(times, observed_at)
         if position < len(times) and times[position] == observed_at:

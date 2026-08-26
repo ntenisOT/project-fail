@@ -86,5 +86,41 @@ class ReferenceViewCausalityTests(unittest.TestCase):
         self.assertIsNone(view.signal_bps("eth", 1000.0, now=1004.0))
 
 
+
+
+class ReferenceViewRobustnessTests(unittest.TestCase):
+    """Found by the review seats; the original 11 tests missed all of these."""
+
+    def test_a_far_future_sample_cannot_erase_history(self) -> None:
+        """Retention anchored to the incoming stamp is a free kill switch:
+        one skewed frame would wipe the series and blind the strategy."""
+        view = ReferenceView(retain_s=900.0)
+        for second in range(5):
+            view.update("btc", 1000.0 + second, 100.0 + second)
+        view.update("btc", 1000.0 + 10_000, 999.0)          # skewed frame
+        self.assertEqual(view.latest("btc", now=1004.0), (1004.0, 104.0),
+                         "real history must survive an implausible sample")
+        self.assertIsNotNone(view.at("btc", 1000.0, now=1004.0))
+
+    def test_non_finite_timestamps_are_rejected(self) -> None:
+        view = ReferenceView()
+        view.update("btc", 1000.0, 100.0)
+        view.update("btc", float("inf"), 500.0)
+        view.update("btc", float("nan"), 500.0)
+        self.assertEqual(view.latest("btc", now=1e12, max_age_s=1e12),
+                         (1000.0, 100.0))
+
+    def test_nan_value_is_rejected(self) -> None:
+        view = ReferenceView()
+        view.update("btc", 1000.0, float("nan"))
+        self.assertIsNone(view.latest("btc", now=1000.0))
+
+    def test_a_sample_stamped_exactly_now_is_visible(self) -> None:
+        """Pinning the documented contract: `now` is inclusive."""
+        view = ReferenceView()
+        view.update("btc", 1000.0, 100.0)
+        self.assertEqual(view.latest("btc", now=1000.0), (1000.0, 100.0))
+
+
 if __name__ == "__main__":
     unittest.main()

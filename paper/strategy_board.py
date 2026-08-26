@@ -65,22 +65,22 @@ def current_strategy_board(action_latency_s: float) -> tuple[PairConfig, ...]:
                    patient_bids=True, **common),
         PairConfig("basket95", "accumulate", 0.02, buy_sum_ceiling=0.95,
                    patient_bids=True, **common),
-        # MOMENTUM: the only edge measured cost-positive so far. On 600 BTC
-        # windows (tools/momentum_probe.py) a >=10c move over 10s predicts
-        # enough continuation to clear the 3.5c round-trip taker fee:
-        # +0.0196/share net over 1,030 trades. Below 5c the fee eats it.
-        # This is DIRECTIONAL and taker-side - it carries outcome risk between
-        # entry and exit and is not an arbitrage. It never rests a quote.
-        PairConfig("mom10", "momentum", 0.02, action_latency_s=action_latency_s,
-                   clip_shares=6.0, max_inventory=30.0, new_pair_start_s=15,
-                   momentum_threshold=0.10, momentum_lookback_s=10.0,
-                   momentum_hold_s=30.0),
-        # Control at the threshold where the tape says fees should eat the edge.
-        # If mom05 matches or beats mom10, the 0.10 result is not real.
-        PairConfig("mom05", "momentum", 0.02, action_latency_s=action_latency_s,
-                   clip_shares=6.0, max_inventory=30.0, new_pair_start_s=15,
-                   momentum_threshold=0.05, momentum_lookback_s=10.0,
-                   momentum_hold_s=30.0),
+        # Momentum RETIRED at Gen86/38 windows. The signal is real but ~5x too
+        # small to pay for itself: mom10 earned +$5.18 gross against $26.93 of
+        # taker fees (+$0.14/window of edge versus $0.71/window of cost), and
+        # mom05 was negative even gross (-$17.53), exactly as the tape said a
+        # 5c threshold would be. tools/momentum_probe.py measured +0.0196/share
+        # net, but it priced fills at 10s bucket VWAPs while the live engine
+        # sweeps real displayed depth across levels - that optimism was worth
+        # the entire edge. Taking liquidity on this signal cannot work.
+        #
+        # basket ceilings run monotonic at 38 windows (0.99 +12.7% > 0.97 +0.3%
+        # > 0.95 -11.3%) and basket99 achieves a 0.933 average pair, well inside
+        # its own ceiling - so the ceiling is not what binds. basket100 tests
+        # whether looser still is better, or whether the trend breaks once the
+        # cap stops excluding anything.
+        PairConfig("basket100", "accumulate", 0.02, buy_sum_ceiling=1.00,
+                   patient_bids=True, **common),
     )
 
 def canonical_board(configs: Sequence[PairConfig]) -> str:

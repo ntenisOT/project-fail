@@ -26,9 +26,22 @@ def target_pair_prices(
     price_up = max(0.05, min(0.95, round(1 - ask_down + spread, 2)))
     price_down = max(0.05, min(0.95, round(1 - ask_up + spread, 2)))
     if price_up + price_down < sum_floor:
-        bump = (sum_floor - price_up - price_down) / 2
-        price_up = min(0.95, round(price_up + bump + 0.005, 2))
-        price_down = min(0.95, round(price_down + bump + 0.005, 2))
+        # Raise by whole ticks, one at a time, and stop the moment the floor is
+        # cleared. The previous form added bump + 0.005 to EACH side and then
+        # rounded, overshooting by up to two ticks: with a 1.02 market and a
+        # 1.001 floor it returned a 1.02 pair - back AT the market, so the quote
+        # could never be lifted. Prices are 2-decimal, so the smallest pair that
+        # clears a 1.001 floor is 1.01: one tick inside that market.
+        tick = 0.01
+        for _ in range(200):
+            if price_up + price_down + 1e-9 >= sum_floor:
+                break
+            if price_up <= price_down:          # lift the cheaper leg first
+                price_up = min(0.95, round(price_up + tick, 2))
+            else:
+                price_down = min(0.95, round(price_down + tick, 2))
+            if price_up >= 0.95 and price_down >= 0.95:
+                break
     if price_up + price_down + 1e-9 < sum_floor:
         raise ValueError("guarded prices cannot satisfy the pair floor")
     return price_up, price_down

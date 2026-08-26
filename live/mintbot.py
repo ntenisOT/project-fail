@@ -70,7 +70,10 @@ KILL = "paper/KILL"
 DB = "live/mintbot.db"
 MINT_USD = float(os.environ.get("MINT_USD", "20"))
 MINT_DAY_CAP = float(os.environ.get("MINT_DAY_CAP", "250"))
-SPREAD = float(os.environ.get("MINT_SPREAD", "0.02"))
+# 0.02 anchored our pair AT the market (a 1.02 market produced a 1.02 quote,
+# never lifted). At 0.01 the pair lands one tick inside, which is the whole
+# difference between quoting and trading.
+SPREAD = float(os.environ.get("MINT_SPREAD", "0.01"))
 SUM_FLOOR = 1.005            # M8 floor of last resort; see pair_premium_floor
 # Measured pair-premium curve (tools/pair_cost_curve.py, 600 BTC windows,
 # 3.9M trades). The traded pair sum rises monotonically through the window:

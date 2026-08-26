@@ -6,9 +6,10 @@ import dataclasses
 from collections.abc import Mapping
 
 from paper.ladder_engine import LadderWindow
+from paper.momentum_engine import MomentumWindow
 from paper.pair_engine import PairWindow
 
-PaperWindow = PairWindow | LadderWindow
+PaperWindow = PairWindow | LadderWindow | MomentumWindow
 
 
 @dataclasses.dataclass(frozen=True)

@@ -15,13 +15,14 @@ from live.feed_health import (
     stale_market_event,
 )
 from paper.ladder_engine import LadderWindow
+from paper.momentum_engine import MomentumWindow
 from paper.market_metadata import ActiveMarket
 from paper.order_book import OrderBookCache, well_formed_book_event
 from paper.pair_engine import PairWindow
 from paper.pair_types import PairConfig
 from paper.settlement import settle_valid
 
-PaperWindow: TypeAlias = PairWindow | LadderWindow
+PaperWindow: TypeAlias = PairWindow | LadderWindow | MomentumWindow
 
 
 @dataclasses.dataclass(frozen=True)
@@ -136,8 +137,13 @@ class CohortEngine:
             raise ValueError(f"active token collision for {market.slug}")
         windows: dict[str, PaperWindow] = {}
         for config in self.configs:
-            if config.ladder_offsets:
-                window: PaperWindow = LadderWindow(
+            if config.mode == "momentum":
+                window: PaperWindow = MomentumWindow(
+                    config, market.asset, market.slug, market.start,
+                    market.up_token, market.down_token, observed_at,
+                )
+            elif config.ladder_offsets:
+                window = LadderWindow(
                     config, market.asset, market.slug, market.start,
                     market.up_token, market.down_token, observed_at,
                 )

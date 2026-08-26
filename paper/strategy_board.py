@@ -65,6 +65,22 @@ def current_strategy_board(action_latency_s: float) -> tuple[PairConfig, ...]:
                    patient_bids=True, **common),
         PairConfig("basket95", "accumulate", 0.02, buy_sum_ceiling=0.95,
                    patient_bids=True, **common),
+        # MOMENTUM: the only edge measured cost-positive so far. On 600 BTC
+        # windows (tools/momentum_probe.py) a >=10c move over 10s predicts
+        # enough continuation to clear the 3.5c round-trip taker fee:
+        # +0.0196/share net over 1,030 trades. Below 5c the fee eats it.
+        # This is DIRECTIONAL and taker-side - it carries outcome risk between
+        # entry and exit and is not an arbitrage. It never rests a quote.
+        PairConfig("mom10", "momentum", 0.02, action_latency_s=action_latency_s,
+                   clip_shares=6.0, max_inventory=30.0, new_pair_start_s=15,
+                   momentum_threshold=0.10, momentum_lookback_s=10.0,
+                   momentum_hold_s=30.0),
+        # Control at the threshold where the tape says fees should eat the edge.
+        # If mom05 matches or beats mom10, the 0.10 result is not real.
+        PairConfig("mom05", "momentum", 0.02, action_latency_s=action_latency_s,
+                   clip_shares=6.0, max_inventory=30.0, new_pair_start_s=15,
+                   momentum_threshold=0.05, momentum_lookback_s=10.0,
+                   momentum_hold_s=30.0),
     )
 
 def canonical_board(configs: Sequence[PairConfig]) -> str:

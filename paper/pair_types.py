@@ -9,7 +9,7 @@ from typing import Literal
 @dataclasses.dataclass(frozen=True)
 class PairConfig:
     name: str
-    mode: Literal["accumulate", "churn", "mint", "inventory"]
+    mode: Literal["accumulate", "churn", "mint", "inventory", "momentum"]
     requote_s: float
     action_latency_s: float = 0.065
     buy_sum_ceiling: float = 0.99
@@ -36,6 +36,14 @@ class PairConfig:
     # default refuses to quote at all, which makes any ceiling under ~0.99
     # structurally inert rather than selective (observed Gen83).
     patient_bids: bool = False
+    # momentum mode: measured on 600 BTC windows (tools/momentum_probe.py).
+    # A >=10c move over 10s predicts enough continuation to clear the 3.5c
+    # round-trip taker fee: net +0.0196/share over 1,030 trades. Below 5c the
+    # fee eats the edge, so the threshold is deliberately high and it fires
+    # about 1.7 times per window.
+    momentum_threshold: float = 0.10
+    momentum_lookback_s: float = 10.0
+    momentum_hold_s: float = 30.0
     basket_average_cap: bool = False
     ladder_offsets: tuple[int, ...] = ()
     quote_hold_s: float = 0.0

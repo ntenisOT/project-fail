@@ -9,7 +9,7 @@ from paper.strategy_board import (
 )
 
 
-def test_current_strategy_board_is_the_focused_fill_probe() -> None:
+def test_current_strategy_board_is_the_focused_observational_control() -> None:
     latency = 0.065
     expected = (
         PairConfig(
@@ -22,39 +22,11 @@ def test_current_strategy_board_is_the_focused_fill_probe() -> None:
 
     board = current_strategy_board(latency)
     assert board[0] == expected[0], "basket99 control must stay byte-identical"
-    assert [config.name for config in board] == [
-        "basket99", "basket99f285", "basket99f240", "basket99f180",
-        "twap240",
-    ]
+    assert [config.name for config in board] == ["basket99"]
     assert not [c for c in board if c.mode == "momentum"], (
-        "momentum retired: +$5.18 gross against $26.93 of taker fees")
-
-    # This board tests exactly one variable: when the naked residual is sold.
-    # Every other field must be identical to the control, or the arms are not
-    # measuring the flatten.
-    flatten = {c.name: c.flatten_residual_s for c in board
-               if c.twap_entry_s is None}
-    assert flatten == {"basket99": None, "basket99f285": 285.0,
-                       "basket99f240": 240.0, "basket99f180": 180.0}
-    control = board[0]
-    flatten_arms = [c for c in board if c.flatten_residual_s is not None]
-    assert len(flatten_arms) == 3
-    for config in flatten_arms:
-        differing = {
-            field for field in vars(control)
-            if getattr(control, field) != getattr(config, field)
-        }
-        assert differing == {"name", "flatten_residual_s"}, (
-            f"{config.name} differs from the control in {differing}; the "
-            "flatten experiment is only interpretable if nothing else moves")
-    twap = [c for c in board if c.twap_entry_s is not None]
-    assert [c.name for c in twap] == ["twap240"]
-    assert twap[0].twap_entry_s == 240.0
-    for config in board:
-        assert config.mode == "accumulate"
-        assert config.buy_sum_ceiling == 0.99
-        assert config.new_pair_start_s == 30
-        assert config.basket_average_cap
+        "the retired round-trip arm must not silently return")
+    assert not [c for c in board if c.mode == "terminal_momentum"], (
+        "terminal10 failed the causal counterfactual and must remain off-board")
 
 
 
@@ -63,7 +35,7 @@ def test_strategy_board_canonical_hash_is_stable() -> None:
 
     assert " " not in canonical_board(board)
     assert strategy_board_hash(board) == (
-        "830c6834c0884832bb903df206bcbc4a1bd209af9fd1dae43a352b604c641f3b"
+        "a9819cc55314019416de243c866da650f13a87face6658eab843f8ab4b09d9e5"
     )
 
 

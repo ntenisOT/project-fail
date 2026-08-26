@@ -15,7 +15,7 @@ from live.feed_health import (
     stale_market_event,
 )
 from paper.ladder_engine import LadderWindow
-from paper.momentum_engine import MomentumWindow
+from paper.momentum_engine import MomentumWindow, TerminalMomentumWindow
 from paper.reference_view import ReferenceView
 from paper.twap_engine import TwapWindow
 from paper.market_metadata import ActiveMarket
@@ -24,7 +24,9 @@ from paper.pair_engine import PairWindow
 from paper.pair_types import PairConfig
 from paper.settlement import settle_valid
 
-PaperWindow: TypeAlias = PairWindow | LadderWindow | MomentumWindow | TwapWindow
+PaperWindow: TypeAlias = (
+    PairWindow | LadderWindow | MomentumWindow | TerminalMomentumWindow | TwapWindow
+)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -201,6 +203,11 @@ class CohortEngine:
                     config, market.asset, market.slug, market.start,
                     market.up_token, market.down_token, observed_at,
                     reference_view=self.reference_view,
+                )
+            elif config.mode == "terminal_momentum":
+                window = TerminalMomentumWindow(
+                    config, market.asset, market.slug, market.start,
+                    market.up_token, market.down_token, observed_at,
                 )
             elif config.mode == "momentum":
                 window = MomentumWindow(

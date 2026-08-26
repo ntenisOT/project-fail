@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from paper.order_book import OrderBook
 from paper.pair_engine import PairWindow
-from paper.taker import sweep, sweep_available
+from paper.taker import sweep, sweep_available, sweep_buy_capped
 
 
 class MomentumWindow(PairWindow):
@@ -37,8 +37,8 @@ class MomentumWindow(PairWindow):
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)  # type: ignore[arg-type]
-        if self.config.mode != "momentum":
-            raise ValueError("MomentumWindow requires momentum mode")
+        if self.config.mode not in ("momentum", "terminal_momentum"):
+            raise ValueError("MomentumWindow requires a momentum mode")
         # mid history per side: list of (timestamp, mid)
         self._history: dict[bool, list[tuple[float, float]]] = {True: [], False: []}
         self._open_side: bool | None = None
@@ -169,3 +169,114 @@ class MomentumWindow(PairWindow):
                 records.extend(legs)
             break
         return records
+
+
+class TerminalMomentumWindow(MomentumWindow):
+    """Chase a fast midpoint move once, with delay and cap, then hold."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        if self.config.mode != "terminal_momentum":
+            raise ValueError("TerminalMomentumWindow requires terminal_momentum mode")
+        if (self.config.action_latency_s < 0
+                or self.config.momentum_chase_ticks < 0
+                or self.config.momentum_cooldown_s < 0
+                or self.config.momentum_max_entries <= 0):
+            raise ValueError("invalid terminal momentum timing or entry limits")
+        self._terminal_pending: tuple[bool, float, float] | None = None
+        self._terminal_last_attempt = -1e18
+        self.terminal_signals = 0
+        self.terminal_entries = 0
+        self.terminal_blocked = 0
+
+    def _desired(self, now: float, up: OrderBook,
+                 down: OrderBook) -> dict[tuple[bool, str], float]:
+        return {}
+
+    def _buy(self, now: float, side: bool, book: OrderBook,
+             max_price: float) -> list[dict[str, float | str]]:
+        room = self.config.max_inventory - self.inventory[side]
+        shares = min(self.config.clip_shares, room)
+        if shares <= 0:
+            return []
+        legs = sweep_buy_capped(book, shares, max_price)
+        if not legs:
+            self.terminal_blocked += 1
+            return []
+        records: list[dict[str, float | str]] = []
+        for leg in legs:
+            cost = leg.price * leg.shares + leg.fee
+            self.inventory[side] += leg.shares
+            self.cash -= cost
+            self.buys += 1
+            self.filled_shares += leg.shares
+            self.taker_fees += leg.fee
+            records.append({
+                "action": "terminal_momentum_buy", "price": leg.price,
+                "size": leg.shares, "signed_cash": -cost,
+                "outcome_up": int(side),
+            })
+        self.terminal_entries += 1
+        self._update_peak()
+        self._sync_exposure(now)
+        return records
+
+    def on_books(self, now: float, up: OrderBook,
+                 down: OrderBook) -> list[dict[str, float | str]]:
+        # Skip MomentumWindow.on_books: that method opens a round trip and
+        # exits it. This arm shares only its bounded midpoint history helpers.
+        records = PairWindow.on_books(self, now, up, down)
+        if not self.full_window or now < self.start or now >= self.end:
+            return records
+        books = {True: up, False: down}
+        for side in (True, False):
+            self._record_mid(side, now, books[side])
+
+        pending = self._terminal_pending
+        if pending is not None:
+            side, ready_at, max_price = pending
+            if now + 1e-9 < ready_at:
+                return records
+            self._terminal_pending = None
+            records.extend(self._buy(now, side, books[side], max_price))
+            return records
+
+        if (self.terminal_entries >= self.config.momentum_max_entries
+                or now < self.start + self.config.new_pair_start_s
+                or now - self._terminal_last_attempt
+                < self.config.momentum_cooldown_s
+                or now + self.config.action_latency_s >= self.end):
+            return records
+        candidates: list[tuple[float, bool]] = []
+        for side in (True, False):
+            move = self._move(side, now)
+            if move is not None and move >= self.config.momentum_threshold:
+                candidates.append((move, side))
+        if not candidates:
+            return records
+        _, side = max(candidates, key=lambda row: (row[0], row[1]))
+        book = books[side]
+        if book.best_ask is None:
+            return records
+        cap = min(
+            0.999,
+            round(book.best_ask + self.config.momentum_chase_ticks * book.tick, 10),
+        )
+        self._terminal_pending = (
+            side, now + self.config.action_latency_s, cap,
+        )
+        self._terminal_last_attempt = now
+        self.terminal_signals += 1
+        self._sync_exposure(now)
+        return records
+
+    def settle(self, now: float, outcome_up: int,
+               ) -> tuple[dict[str, float | int], dict[str, object]]:
+        settlement, metrics = super().settle(now, outcome_up)
+        metrics.update({
+            "terminal_momentum_signals": self.terminal_signals,
+            "terminal_momentum_entries": self.terminal_entries,
+            "terminal_momentum_blocked": self.terminal_blocked,
+            "terminal_momentum_pending": int(self._terminal_pending is not None),
+        })
+        return settlement, metrics

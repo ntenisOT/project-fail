@@ -104,7 +104,7 @@ class PairWindow:
                  down: OrderBook) -> dict[tuple[bool, str], float]:
         if now < self.start + self.config.new_pair_start_s:
             return {}
-        if self.config.mode == "momentum":
+        if self.config.mode in ("momentum", "terminal_momentum"):
             return {}          # momentum takes liquidity; it never rests quotes
         if self.config.mode == "mint" and self.config.mint_anchor_spread is not None:
             return self._mint_desired(now, up, down)

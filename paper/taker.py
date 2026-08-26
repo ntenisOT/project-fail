@@ -55,3 +55,25 @@ def sweep_available(
     if shares + 1e-9 < book.min_order_size:
         return []
     return sweep(book, side, shares)
+
+
+def sweep_buy_capped(
+    book: OrderBook, max_shares: float, max_price: float,
+) -> list[TakerLeg]:
+    """Buy displayed shares without crossing above a signal-time price cap."""
+    eligible = {
+        price: size for price, size in book.asks.items()
+        if price <= max_price + 1e-9 and size > 0
+    }
+    shares = min(max_shares, sum(eligible.values()))
+    if shares + 1e-9 < book.min_order_size:
+        return []
+    remaining = shares
+    legs: list[TakerLeg] = []
+    for price in sorted(eligible):
+        size = min(remaining, eligible[price])
+        legs.append(TakerLeg(price, size, crypto_fee(price, size)))
+        remaining -= size
+        if remaining <= 1e-9:
+            break
+    return legs if remaining <= 1e-9 else []

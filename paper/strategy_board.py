@@ -49,62 +49,26 @@ def current_strategy_board(action_latency_s: float) -> tuple[PairConfig, ...]:
         action_latency_s=action_latency_s, improve_ticks=1,
         require_both_to_start=True, basket_average_cap=True, new_pair_start_s=30,
     )
-    # RESIDUAL FLATTEN TEST. Gen91 (11 windows, 91.7% validity) separated the
-    # two halves of this strategy for the first time:
+    # Gen94 rejected the residual-flatten timings and the T+240 TWAP arm. Its
+    # four-asset feed was also operationally invalid (repeated provider 1013s),
+    # so the next board is a BTC-only observational capture with one untouched
+    # control.
     #
-    #   arm         edge$   outcome$   pnl$
-    #   basket99    +3.86     -7.21   -1.72
-    #   basket97    +4.82    -13.04   -5.36
-    #   basket95    +3.09    -16.52   -9.69
-    #   basket100   +3.70    -11.48   -4.09
+    # Exact Aug18-25 wallet lifecycles show that 0x75/0x5e/0x20d are takers, not
+    # paired maker arbitrageurs. Their selected buys earn about +0.3c to +1.3c
+    # per action, but the very next public ask is 1.5c to 2.3c worse and flips
+    # the same selection negative. Polygon settlement times cannot identify
+    # their offchain trigger, so a prospective causal book test is required.
     #
-    # The FIFO-paired mechanic earns money on every arm; the naked leftover leg
-    # loses more than it earns on every arm. Four independent arms do not all
-    # lose a coin flip at once, so the residual is adversely selected: the leg
-    # that fills and never completes is the leg informed takers were exiting.
-    #
-    # Ledger analysis of where the surviving imbalance is created rules out the
-    # obvious fix. Only 10% of residual shares appear after T+240 and 60% before
-    # T+180, so refusing late pair opens (new_pair_cutoff_s) would barely touch
-    # it. The residual forms mid-window and simply never completes.
-    #
-    # So the arms below hold every other variable fixed at basket99's incumbent
-    # settings and vary ONE thing: when we sell the naked excess into displayed
-    # depth, paying a real taker fee. That converts an uncontrolled adverse coin
-    # flip into a measured cost. basket99 stays as the untouched control so its
-    # history remains comparable, and three timings give a dose-response rather
-    # than a single yes/no.
-    #
-    # Prior arms retired here, not deleted from history: basket97/95 tested
-    # selectivity on the price axis and basket100 tested a looser ceiling. All
-    # three lost in Gen91, and their justification cited a winner-persistence
-    # result that has since been retracted as future-selected (see README).
-    # Momentum was retired at Gen86: real signal, ~5x too small for its fees.
+    # terminal10 was implemented as the smallest honest copy attempt: frozen
+    # 10c/10s momentum, 65ms local action time plus the documented 250ms taker
+    # delay, one-tick chase cap, fee, and terminal hold. A causal Gen94
+    # counterfactual filled all 16 clean BTC opportunities and lost $8.44
+    # (neutral -$13.44; adverse floor -$38.44), corroborating the independent
+    # historical holdout failure. Keep its engine for prospective/offline
+    # falsification, but do not put a rejected arm on the active board.
     return (
         PairConfig("basket99", "accumulate", 0.02, buy_sum_ceiling=0.99, **common),
-        PairConfig("basket99f285", "accumulate", 0.02, buy_sum_ceiling=0.99,
-                   flatten_residual_s=285.0, **common),
-        PairConfig("basket99f240", "accumulate", 0.02, buy_sum_ceiling=0.99,
-                   flatten_residual_s=240.0, **common),
-        PairConfig("basket99f180", "accumulate", 0.02, buy_sum_ceiling=0.99,
-                   flatten_residual_s=180.0, **common),
-        # TWAP arm. Both review seats returned NO-GO on TRADING the backtest of
-        # this, and were right: it ignored received_at (every sample arrives a
-        # median 1.678s late, so entry was priced before we held the signal),
-        # priced entry off already-consumed liquidity, ignored orderMinSize,
-        # and resolved tokens positionally in a way the sim could not detect.
-        # NO-GO meant do not trade it, not do not test it - so it runs here,
-        # where fills happen only against real public prints after queue-ahead
-        # depth, orderMinSize is enforced, tokens come from market_metadata,
-        # and settlement is the official outcome.
-        #
-        # Note what this arm is NOT: at T+240 the current TWAP covers
-        # T+180-240 and the settling one covers T+240-300, so there is zero
-        # overlap. This is autocorrelation - a forecast - not the "already
-        # observable" story the backtest was sold on, and it is therefore
-        # regime-dependent.
-        PairConfig("twap240", "accumulate", 0.02, buy_sum_ceiling=0.99,
-                   twap_entry_s=240.0, twap_min_bps=1.0, **common),
     )
 
 def canonical_board(configs: Sequence[PairConfig]) -> str:

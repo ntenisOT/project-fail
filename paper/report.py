@@ -283,6 +283,26 @@ def _hedge_lines(db: sqlite3.Connection, strategies: list[str]) -> list[str]:
     return lines
 
 
+def _terminal_momentum_lines(
+    db: sqlite3.Connection, strategies: list[str],
+) -> list[str]:
+    lines: list[str] = []
+    for strategy in strategies:
+        metrics = _metrics(db, strategy)
+        if "terminal_momentum_signals" not in metrics:
+            continue
+        signals = metrics["terminal_momentum_signals"]
+        entries = metrics.get("terminal_momentum_entries", 0.0)
+        fill_rate = entries / signals if signals else 0.0
+        lines.append(
+            f"terminal momentum | {strategy} signals={signals:.0f} "
+            f"entries={entries:.0f} fill-rate={fill_rate:.1%} "
+            f"blocked={metrics.get('terminal_momentum_blocked', 0):.0f} "
+            f"pending-at-settle={metrics.get('terminal_momentum_pending', 0):.0f}"
+        )
+    return lines
+
+
 def text(db_path: str = "paper/paper.db") -> str:
     db = sqlite3.connect(db_path)
     strategies = [row[0] for row in db.execute(
@@ -328,6 +348,7 @@ def text(db_path: str = "paper/paper.db") -> str:
         )
     out.extend(_integrity_lines(db))
     out.extend(_hedge_lines(db, strategies))
+    out.extend(_terminal_momentum_lines(db, strategies))
     out.extend((
         "feed-quality breakdown; lagged windows retain measured feed-tail exposure",
         f"{'strategy':<{strategy_width}}{'quality':<14}{'wnd':>5}{'pnl$':>10}"

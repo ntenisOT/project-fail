@@ -37,3 +37,27 @@ def test_report_ranks_adverse_floor_and_charges_invalid_inventory(tmp_path) -> N
     assert full.index("safe") < full.index("neutral_trap")
     assert telegram.index("safe") < telegram.index("neutral_trap")
     assert "floor" in telegram
+
+
+def test_report_exposes_terminal_momentum_reachability(tmp_path) -> None:
+    db_path = tmp_path / "paper.db"
+    ledger = Ledger(str(db_path))
+    ledger.record_settlement(2.0, "terminal10", "btc", "slug", {
+        "cash": -1.0, "residual": 1.0, "pnl": 0.0, "capital": 1.0,
+        "buys": 1, "sells": 0, "resid_shares": 1.0, "n_fills": 1,
+        "outcome_up": True,
+    })
+    ledger.record_metrics(2.0, "terminal10", "btc", "slug", {
+        "terminal_momentum_signals": 4,
+        "terminal_momentum_entries": 3,
+        "terminal_momentum_blocked": 1,
+        "terminal_momentum_pending": 0,
+    })
+    ledger.close()
+
+    output = text(str(db_path))
+
+    assert (
+        "terminal momentum | terminal10 signals=4 entries=3 "
+        "fill-rate=75.0% blocked=1 pending-at-settle=0"
+    ) in output

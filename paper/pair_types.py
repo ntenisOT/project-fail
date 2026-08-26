@@ -9,7 +9,10 @@ from typing import Literal
 @dataclasses.dataclass(frozen=True)
 class PairConfig:
     name: str
-    mode: Literal["accumulate", "churn", "mint", "inventory", "momentum"]
+    mode: Literal[
+        "accumulate", "churn", "mint", "inventory", "momentum",
+        "terminal_momentum",
+    ]
     requote_s: float
     action_latency_s: float = 0.065
     buy_sum_ceiling: float = 0.99
@@ -63,6 +66,12 @@ class PairConfig:
     momentum_threshold: float = 0.10
     momentum_lookback_s: float = 10.0
     momentum_hold_s: float = 30.0
+    # Winner-like terminal momentum is deliberately separate from the retired
+    # round-trip arm. It waits through modeled taker latency, refuses to chase
+    # more than this many ticks, and holds any fill to official settlement.
+    momentum_chase_ticks: int = 1
+    momentum_cooldown_s: float = 20.0
+    momentum_max_entries: int = 2
     basket_average_cap: bool = False
     ladder_offsets: tuple[int, ...] = ()
     quote_hold_s: float = 0.0

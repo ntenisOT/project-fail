@@ -42,6 +42,7 @@ from paper.market_metadata import ActiveMarket, fetch_active_market
 from paper.notify import notifier
 from paper.reference_feed import ReferenceFeed, ReferenceUpdate
 from paper.strategy_board import (
+    creation_strategy_board,
     current_strategy_board,
     preopen_strategy_board,
     strategy_board_hash,
@@ -70,6 +71,7 @@ if requested:
     ASSETS = {asset: prefix for asset, prefix in ASSETS.items() if asset in wanted}
 
 PREOPEN_TARGET_RAW = os.environ.get("PAPER_PREOPEN_TARGET_START")
+PREOPEN_MODE_RAW = os.environ.get("PAPER_PREOPEN_MODE")
 PREOPEN_TARGET_START: int | None = None
 if PREOPEN_TARGET_RAW:
     try:
@@ -79,9 +81,19 @@ if PREOPEN_TARGET_RAW:
     if PREOPEN_TARGET_START <= 0 or PREOPEN_TARGET_START % 300:
         raise RuntimeError("PAPER_PREOPEN_TARGET_START must be a positive 5-minute boundary")
 
+PREOPEN_MODE: str | None = None
+if PREOPEN_TARGET_START is not None:
+    PREOPEN_MODE = (PREOPEN_MODE_RAW or "tminus4").strip().lower()
+    if PREOPEN_MODE not in ("tminus4", "creation"):
+        raise RuntimeError("PAPER_PREOPEN_MODE must be tminus4 or creation")
+elif PREOPEN_MODE_RAW:
+    raise RuntimeError("PAPER_PREOPEN_MODE requires PAPER_PREOPEN_TARGET_START")
+
 STRATEGIES = (
-    preopen_strategy_board(ACTION_LATENCY_S)
-    if PREOPEN_TARGET_START is not None
+    creation_strategy_board(ACTION_LATENCY_S)
+    if PREOPEN_MODE == "creation"
+    else preopen_strategy_board(ACTION_LATENCY_S)
+    if PREOPEN_MODE == "tminus4"
     else current_strategy_board(ACTION_LATENCY_S)
 )
 MKT_WS = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
@@ -203,16 +215,21 @@ def _record_cohort(records: tuple[CohortRecord, ...]) -> None:
             raise TypeError(f"unsupported cohort record {type(record).__name__}")
 
 
-async def _discover(asset: str, base: int) -> tuple[str, ActiveMarket | None]:
+async def _discover(
+    asset: str, base: int,
+) -> tuple[str, ActiveMarket | None, bool]:
+    """Return market plus whether Gamma authoritatively showed it absent."""
     try:
-        return asset, await asyncio.to_thread(fetch_active_market, asset, base)
+        market = await asyncio.to_thread(fetch_active_market, asset, base)
+        return asset, market, market is None
     except RuntimeError as exc:
         log.warning("market discovery %s: %s", asset, exc)
-        return asset, None
+        return asset, None, False
 
 
 async def window_task() -> None:
     if PREOPEN_TARGET_START is not None:
+        creation_absence_seen: set[str] = set()
         while True:
             now = time.time()
             finished_any = False
@@ -238,9 +255,16 @@ async def window_task() -> None:
                     discoveries = await asyncio.gather(*(
                         _discover(asset, PREOPEN_TARGET_START) for asset in missing
                     ))
-                    for asset, market in discoveries:
+                    for asset, market, confirmed_absent in discoveries:
                         if market is None:
+                            if PREOPEN_MODE == "creation" and confirmed_absent:
+                                creation_absence_seen.add(asset)
                             continue
+                        if (PREOPEN_MODE == "creation"
+                                and asset not in creation_absence_seen):
+                            raise RuntimeError(
+                                f"creation target {market.slug} existed on first discovery"
+                            )
                         observed_at = time.time()
                         S.engine.open_market(market, observed_at)
                         S.markets[asset] = market
@@ -275,7 +299,7 @@ async def window_task() -> None:
         missing = [asset for asset in ASSETS if asset not in S.markets]
         if missing:
             discoveries = await asyncio.gather(*(_discover(asset, base) for asset in missing))
-            for asset, market in discoveries:
+            for asset, market, _confirmed_absent in discoveries:
                 if market is not None:
                     observed_at = time.time()
                     S.engine.open_market(market, observed_at)
@@ -517,6 +541,7 @@ async def main() -> None:
             "decision_cadence_s": DECISION_CADENCE_S,
             "assets": list(ASSETS),
             "preopen_target_start": PREOPEN_TARGET_START,
+            "preopen_mode": PREOPEN_MODE,
         },
     )
     if S.capture is not None:
@@ -527,11 +552,12 @@ async def main() -> None:
         })
     log.info("focused pair paper starting | strategies=%s | queue-ahead fills | "
              "action-latency=%dms | max-market-lag=%dms | decision cadence=%dms | "
-             "official Gamma outcomes | assets=%s | preopen-target=%s",
+             "official Gamma outcomes | assets=%s | preopen-target=%s | "
+             "preopen-mode=%s",
              names, round(ACTION_LATENCY_S * 1000),
              round(MAX_MARKET_EVENT_LAG_S * 1000),
              round(DECISION_CADENCE_S * 1000), list(ASSETS),
-             PREOPEN_TARGET_START)
+             PREOPEN_TARGET_START, PREOPEN_MODE)
     tasks = [
         asyncio.create_task(coroutine)
         for coroutine in (

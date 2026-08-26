@@ -3,6 +3,7 @@ from __future__ import annotations
 from paper.pair_types import PairConfig
 from paper.strategy_board import (
     canonical_board,
+    creation_strategy_board,
     current_strategy_board,
     execution_model_identity,
     strategy_board_hash,
@@ -37,6 +38,20 @@ def test_strategy_board_canonical_hash_is_stable() -> None:
     assert strategy_board_hash(board) == (
         "a9819cc55314019416de243c866da650f13a87face6658eab843f8ab4b09d9e5"
     )
+
+
+def test_creation_board_is_first_queue_with_one_realized_exit_twin() -> None:
+    board = creation_strategy_board(0.065)
+
+    assert [config.name for config in board] == [
+        "open99_hold", "open99_dynamic", "open99_flat285",
+    ]
+    assert all(config.activation_on_observation for config in board)
+    assert all(config.new_pair_start_s == -90_000 for config in board)
+    assert board[0].quote_hold_s == 90_000
+    assert board[1].quote_hold_s == 0
+    assert board[2].flatten_residual_s == 285
+    assert '"activation_on_observation":true' in canonical_board(board)
 
 
 def test_execution_model_identity_has_an_explicit_boundary() -> None:

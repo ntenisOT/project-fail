@@ -112,6 +112,40 @@ class FocusedPairTests(unittest.TestCase):
         self.assertFalse(late.full_window)
         self.assertEqual(late.invalid_reason, "late_first_books")
 
+    def test_creation_arm_activates_at_first_market_observation(self) -> None:
+        config = PairConfig(
+            "creation", "accumulate", 0.01, action_latency_s=0,
+            new_pair_start_s=-90_000, activation_on_observation=True,
+            require_both_to_start=True,
+        )
+        window = PairWindow(
+            config, "btc", "btc-updown-5m-100000", 100_000,
+            "up", "down", 15_000,
+        )
+
+        self.assertEqual(window.activation_start, 15_000)
+        window.on_books(
+            15_000, book(0.48, 0, 0.52, 5), book(0.49, 0, 0.51, 5),
+        )
+        self.assertTrue(window.full_window)
+        self.assertEqual(set(window.orders), {(True, "buy"), (False, "buy")})
+
+    def test_creation_arm_rejects_books_late_after_discovery(self) -> None:
+        config = PairConfig(
+            "creation", "accumulate", 0.01, action_latency_s=0,
+            new_pair_start_s=-90_000, activation_on_observation=True,
+        )
+        window = PairWindow(
+            config, "btc", "btc-updown-5m-100000", 100_000,
+            "up", "down", 15_000,
+        )
+
+        window.on_books(
+            15_011, book(0.48, 0, 0.52, 5), book(0.49, 0, 0.51, 5),
+        )
+        self.assertFalse(window.full_window)
+        self.assertEqual(window.invalid_reason, "late_first_books")
+
     def test_balanced_quote_hold_keeps_preopen_queue_price(self) -> None:
         config = PairConfig(
             "hold", "accumulate", 0.01, action_latency_s=0,

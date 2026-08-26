@@ -75,6 +75,10 @@ class PairConfig:
     basket_average_cap: bool = False
     ladder_offsets: tuple[int, ...] = ()
     quote_hold_s: float = 0.0
+    # Creation-time experiments start only when the runner first discovers a
+    # previously unavailable target. This must be explicit: treating any late
+    # process start as a valid queue test erases the advantage being measured.
+    activation_on_observation: bool = False
 
 
 @dataclasses.dataclass

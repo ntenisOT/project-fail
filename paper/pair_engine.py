@@ -53,12 +53,17 @@ class PairWindow:
         self.start, self.end = start, start + 300
         # Outcome-token books are live before the five-minute price interval.
         # A negative new_pair_start_s deliberately models an order resting in
-        # that pre-open book.  Validity must start at that strategy activation
-        # time, not at the later price-measurement boundary.
-        self.activation_start = start + min(0.0, config.new_pair_start_s)
-        self.full_window = (
-            self.activation_start if observed_at is None else observed_at
-        ) <= self.activation_start + 10
+        # that pre-open book. Validity normally starts at the frozen scheduled
+        # activation. A creation arm instead declares first discovery as its
+        # causal activation clock; this cannot be silently inferred for a late
+        # process because that would erase the queue-priority test.
+        scheduled_activation = start + min(0.0, config.new_pair_start_s)
+        opened_at = scheduled_activation if observed_at is None else observed_at
+        self.activation_start = (
+            opened_at if config.activation_on_observation
+            else scheduled_activation
+        )
+        self.full_window = opened_at <= self.activation_start + 10
         self.invalid_reason = None if self.full_window else "partial_startup"
         self.invalid_event_lag_ms: float | None = None
         self.first_books_at: float | None = None

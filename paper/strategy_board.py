@@ -96,10 +96,53 @@ def preopen_strategy_board(action_latency_s: float) -> tuple[PairConfig, ...]:
         PairConfig("pre99_dynamic", "accumulate", 0.02, **common),
     )
 
+
+def creation_strategy_board(action_latency_s: float) -> tuple[PairConfig, ...]:
+    """First-observation test for markets listed roughly one day before T0.
+
+    ``open99_hold`` preserves its original balanced pair until one leg fills.
+    ``open99_dynamic`` measures the cost of surrendering queue position to
+    follow the book. ``open99_flat285`` shares the held policy but realizes
+    any remaining one-sided exposure against displayed depth at T+285.
+    """
+    common = dict(
+        action_latency_s=action_latency_s,
+        improve_ticks=0,
+        require_both_to_start=True,
+        basket_average_cap=True,
+        new_pair_start_s=-90_000,
+        buy_sum_ceiling=0.99,
+        clip_shares=5,
+        max_inventory=20,
+        activation_on_observation=True,
+    )
+    return (
+        PairConfig(
+            "open99_hold", "accumulate", 0.02,
+            quote_hold_s=90_000, **common,
+        ),
+        PairConfig(
+            "open99_dynamic", "accumulate", 0.02, **common,
+        ),
+        PairConfig(
+            "open99_flat285", "accumulate", 0.02,
+            quote_hold_s=90_000, flatten_residual_s=285,
+            new_pair_cutoff_s=285, **common,
+        ),
+    )
+
 def canonical_board(configs: Sequence[PairConfig]) -> str:
     """Serialize every config field deterministically for experiment provenance."""
+    rows = []
+    for config in configs:
+        row = dataclasses.asdict(config)
+        # Preserve hashes of boards captured before this backward-compatible
+        # field existed. A true value remains explicit and hash-covered.
+        if not row["activation_on_observation"]:
+            del row["activation_on_observation"]
+        rows.append(row)
     return json.dumps(
-        [dataclasses.asdict(config) for config in configs],
+        rows,
         allow_nan=False,
         ensure_ascii=True,
         separators=(",", ":"),

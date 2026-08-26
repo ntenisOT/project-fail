@@ -91,6 +91,29 @@ evaluated in this state. Historical activity peaks at 13:00-18:00 UTC
 meaningful experiment window is the US session. Whether flow returns then is
 itself the measurement that dates the regime change.
 
+**Winners DO trade specific hours, and the best one avoids the peak.** PnL by
+UTC block over the Aug18-25 BTC windows:
+
+    0xce50c96b (11.4% margin, rank 1)
+      00-08 off    99 win  +$35,375  +$357.33/win   <- 92% of its profit
+      09-12 quiet   8 win   -$1,235  -$154.40/win
+      13-18 peak   11 win     +$717   +$65.15/win   <- only 7% of its fills
+      19-23 eve    16 win   +$2,519  +$157.42/win
+
+    0x3387ac (6.9%)  +$14.20 / +$8.51 / +$18.05 / +$9.01 per window - flat
+
+The always-on wallets (b27bc9, 0cb038, 1dd2a6) trade 85-100% of windows in
+every hour with a 25-27% share in 13-18 UTC, exactly the day share: no time
+selectivity at all. The top-margin wallet is the opposite - it concentrates in
+the thin overnight session and skips the busy one, consistent with scalping
+wider spreads against less competition.
+
+This corrects the note above: volume peaks at 13-18 UTC but EDGE appears to sit
+in 00-08 UTC. Volume and edge are not the same thing. Caveat: the 00-08 block
+is 99 windows (solid) while the negative 09-12 block is only 8 windows, so its
+sign is not established.
+
+
 
 
 ---

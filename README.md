@@ -4,20 +4,18 @@ Research → paper A/B → guarded live execution for Polymarket's 5-minute
 BTC/ETH/SOL/XRP "up or down" markets. One question end-to-end: *is there a
 replicable, low-capital edge, and what execution captures it?*
 
-**Status: NO-GO for real money.** V2-corrected forensics invalidated the old
-broad mint-and-sell taxonomy, but receipt-level attribution has now proven one
-specific frozen wallet's mechanism: `0x1dd2…51c2` split 750 complete sets before
-each of 31 BTC windows, sold both outcomes entirely as maker, and terminally
-merged an amount equal to the smaller side of the observed split-minus-fill
-ledger in 24. Hostile review then invalidated the old 50-cent "directional"
-narrative: chronological FIFO attributes about $57.36 of the fresh +$60.27
-settlement-marked result to paired-sale surplus and only $2.90 to price-relative
-residual performance, before the separately recorded $29.87 rebate. The lot
-allocation, complete wallet balance, cash finality, capital, and quote policy are
-not yet proven. This is a real mint-to-make mechanism candidate, not proven
-profitability or a launch gate. See
-`reports/2026-08-26-mint-to-make-hostile-review-adjudication.md`. No current paper
-arm has passed a prospective economic gate.
+**Status: NO-GO for real money.** Receipt attribution and the frozen integer
+ledger prove one wallet's 31-window split → two-sided maker sell → merge
+mechanism, not a profitable strategy. Its +$60.27 contractual terminal mark is
+not observed cash, 97.48% comes from five windows, the allocation is not
+identified, and the rebate-inclusive residual-zero-payoff case is -$70.24.
+Independent Opus/Qwen max-effort review found no material accounting bug but
+rejected implementation, another Basket99 variant, and every live path. The feed
+causality defect is fixed and Gen78 replayed exactly; this is an engineering GO
+for paper/shadow only. The next gate is an evidence-complete v2 ledger followed
+by one frozen sibling-wallet falsification. See
+`reports/2026-08-26-exact-mint-ledger-and-feed-causality.md`. No current paper arm
+has passed a prospective economic gate.
 
 ---
 
@@ -47,7 +45,7 @@ servers, VPNs, or proxies must not be used to circumvent a restriction.
 
 | Session | Command it runs | What it is |
 |---|---|---|
-| `paper` | `python -m paper.run` | one `basket99` maker-fill mechanics probe; no strategy is a promotion candidate (writes `paper/paper.db`) |
+| `paper` | stopped after clean Gen78 archival | Basket99 is not a promotion candidate; Gen78 is engineering calibration only |
 | `crossvenue` | `python -m tools.crossvenue_capture` | passive RTDS/Binance/Deribit causal capture; never feeds a strategy during collection |
 | `mintbot` | stopped; on-demand `MINTBOT_MODE=shadow MINTBOT_ASSETS=btc python -m live.mintbot` | do not duplicate paper's BTC feed during primary experiments; place mode is forbidden |
 

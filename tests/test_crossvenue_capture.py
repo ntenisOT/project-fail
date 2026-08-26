@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from tools.crossvenue_capture import SourceStats, arguments
 from tools.crossvenue_sources import parse_frame, source_specs
+from tools.transport_telemetry import clock_domain_identity
 
 
 def test_source_specs_use_exact_public_topics_and_websockets() -> None:
@@ -70,5 +73,18 @@ def test_deribit_batch_and_source_stats_are_measured_causally() -> None:
 def test_non_deribit_asset_default_omits_unsupported_source() -> None:
     args = arguments([
         "--asset", "sol", "--label", "smoke", "--output", "out/smoke.jsonl",
+        "--revision", "deadbeef",
     ])
     assert "deribit" not in args.sources
+
+
+def test_capture_provenance_requires_revision_and_stable_clock_identity() -> None:
+    first, second = clock_domain_identity(), clock_domain_identity()
+    assert first == second
+    assert len(first["host_sha256"]) == len(first["boot_sha256"]) == 64
+
+    with pytest.raises(SystemExit):
+        arguments([
+            "--asset", "btc", "--label", "smoke", "--output", "out/smoke.jsonl",
+            "--revision", "unknown",
+        ])

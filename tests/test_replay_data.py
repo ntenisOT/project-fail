@@ -57,7 +57,7 @@ def test_paper_dataset_rejects_marker_tampering(tmp_path) -> None:
 @pytest.mark.parametrize(
     ("field", "match"),
     (("runtime", "runtime"), ("model_identity", "model identity"),
-     ("raw_status", "raw status")),
+     ("raw_status", "raw status"), ("clock_domain", "clock domain")),
 )
 def test_paper_dataset_cross_binds_hashed_run_metadata(
     tmp_path, field: str, match: str,
@@ -77,6 +77,8 @@ def test_paper_dataset_cross_binds_hashed_run_metadata(
         dataset[field]["clock"] = 2
     elif field == "model_identity":
         dataset[field]["sha256"] = "0" * 64
+    elif field == "clock_domain":
+        dataset[field]["boot_sha256"] = "0" * 64
     else:
         dataset[field]["accepted_frames"] += 1
     path.write_text(json.dumps(dataset), encoding="utf-8")

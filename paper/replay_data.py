@@ -9,7 +9,11 @@ import json
 import pathlib
 from collections.abc import Iterator, Mapping
 
-from tools.transport_telemetry import RAW_FRAME_HEADER, RAW_FRAME_MAGIC
+from tools.transport_telemetry import (
+    RAW_FRAME_HEADER,
+    RAW_FRAME_MAGIC,
+    validate_clock_domain,
+)
 
 
 class CaptureIntegrityError(RuntimeError):
@@ -36,6 +40,7 @@ class PaperDataset:
     board_hash: str
     runtime: Mapping[str, object]
     model_identity: Mapping[str, object]
+    clock_domain: Mapping[str, str] | None
 
 
 def _sha256(path: pathlib.Path) -> str:
@@ -111,6 +116,7 @@ def load_paper_dataset(path: str | pathlib.Path) -> PaperDataset:
     events_meta = value.get("events")
     runtime = value.get("runtime")
     model_identity = value.get("model_identity")
+    raw_clock_domain = value.get("clock_domain")
     raw_status = value.get("raw_status")
     causal_status = value.get("causal_status")
     if (not isinstance(raw, dict) or not isinstance(causal, dict)
@@ -118,6 +124,13 @@ def load_paper_dataset(path: str | pathlib.Path) -> PaperDataset:
             or not isinstance(model_identity, dict) or not isinstance(raw_status, dict)
             or not isinstance(causal_status, dict)):
         raise CaptureIntegrityError("paper dataset metadata is incomplete")
+    try:
+        clock_domain = (
+            None if raw_clock_domain is None
+            else validate_clock_domain(raw_clock_domain)
+        )
+    except ValueError as exc:
+        raise CaptureIntegrityError(f"paper clock domain is invalid: {exc}") from exc
     raw_path = _child_path(target.parent, raw.get("name"), "raw manifest")
     causal_path = _child_path(target.parent, causal.get("name"), "causal manifest")
     events_path = _child_path(target.parent, events_meta.get("name"), "event marker")
@@ -158,6 +171,11 @@ def load_paper_dataset(path: str | pathlib.Path) -> PaperDataset:
         raise CaptureIntegrityError("paper runtime does not match run_start")
     if run_start.get("model_identity") != model_identity:
         raise CaptureIntegrityError("paper model identity does not match run_start")
+    if ((run_start.get("clock_domain") is None) != (clock_domain is None)
+            or (clock_domain is not None
+                and (run_start.get("clock_domain") != clock_domain
+                     or run_end.get("clock_domain") != clock_domain))):
+        raise CaptureIntegrityError("paper clock domain does not match run boundaries")
     if run_end.get("raw_status") != raw_status:
         raise CaptureIntegrityError("paper raw status does not match run_end")
     if run_end.get("causal_status") != causal_status:
@@ -173,7 +191,7 @@ def load_paper_dataset(path: str | pathlib.Path) -> PaperDataset:
     return PaperDataset(
         target, label, _sha256(target), raw_path, causal_path, tuple(events),
         board_hash, runtime,
-        model_identity,
+        model_identity, clock_domain,
     )
 
 

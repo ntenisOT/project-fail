@@ -27,11 +27,22 @@ from tools.transport_telemetry import (
     JsonlSink,
     RawFrameWriter,
     TcpExtrema,
+    clock_domain_identity,
+    validated_revision,
     websocket_tcp_info,
 )
 
 
 LABEL_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+
+def _timestamp_fields() -> dict[str, int | float]:
+    wall_ns = time.time_ns()
+    return {
+        "ts": wall_ns / 1_000_000_000,
+        "wall_ns": wall_ns,
+        "monotonic_ns": time.monotonic_ns(),
+    }
 
 
 def _sha256(path: pathlib.Path) -> str:
@@ -138,8 +149,8 @@ async def _connection(
         if spec.subscribe is not None:
             await ws.send(spec.subscribe)
         sink.emit({
-            "kind": "source_connected", "ts": time.time(), "source": spec.name,
-            "connection_id": connection_id,
+            "kind": "source_connected", **_timestamp_fields(),
+            "source": spec.name, "connection_id": connection_id,
         })
         connection_stop = asyncio.Event()
         tcp_task = asyncio.create_task(
@@ -162,7 +173,7 @@ async def _connection(
                     heartbeat_index += 1
                     sink.emit({
                         "kind": "source_heartbeat", "heartbeat_index": heartbeat_index,
-                        "ts": time.time(), "source": spec.name,
+                        **_timestamp_fields(), "source": spec.name,
                         "connection_id": connection_id,
                         "connected_s": round(now_mono - connected_mono, 3),
                         "stats": stats.snapshot(), "tcp": tcp_lifetime.snapshot(),
@@ -214,14 +225,14 @@ async def _source_loop(
         except Exception as exc:
             reconnects += 1
             sink.emit({
-                "kind": "source_closed", "ts": time.time(), "source": spec.name,
+                "kind": "source_closed", **_timestamp_fields(), "source": spec.name,
                 "connection_id": connection_id, "reconnects": reconnects,
                 "error_type": exc.__class__.__name__, "error": str(exc),
                 "stats": stats.snapshot(), "tcp": tcp.snapshot(),
             })
             await asyncio.sleep(min(5.0, 0.1 * 2 ** min(reconnects - 1, 6)))
     sink.emit({
-        "kind": "source_final", "ts": time.time(), "source": spec.name,
+        "kind": "source_final", **_timestamp_fields(), "source": spec.name,
         "connections": connection_id, "reconnects": reconnects,
         "stats": stats.snapshot(), "tcp": tcp.snapshot(),
         "raw": None if raw is None else raw.snapshot(),
@@ -236,9 +247,10 @@ async def run(args: argparse.Namespace) -> None:
         raise FileExistsError(f"refusing to overwrite {dataset}")
     sink = JsonlSink(output, append=args.append)
     started_at = time.time()
+    clock_domain = clock_domain_identity()
     sink.emit({
         "kind": "capture_start", "schema": "project-fail-crossvenue-v1",
-        "wall_ns": time.time_ns(), "monotonic_ns": time.monotonic_ns(),
+        **_timestamp_fields(), "clock_domain": clock_domain,
         "label": args.label, "asset": args.asset, "revision": args.revision,
         "sources": [dataclasses.asdict(spec) for spec in specs],
         "raw_limit_gb": args.raw_limit_gb, "raw_chunk_mb": args.raw_chunk_mb,
@@ -259,7 +271,9 @@ async def run(args: argparse.Namespace) -> None:
     try:
         while not stop_all.is_set():
             if args.kill_file and pathlib.Path(args.kill_file).exists():
-                sink.emit({"kind": "stopped", "ts": time.time(), "reason": "kill_file"})
+                sink.emit({
+                    "kind": "stopped", **_timestamp_fields(), "reason": "kill_file",
+                })
                 stop_all.set()
                 break
             await asyncio.sleep(0.5)
@@ -274,12 +288,12 @@ async def run(args: argparse.Namespace) -> None:
         for source, writer in writers.items():
             writer.close()
             sink.emit({
-                "kind": "raw_final", "ts": time.time(), "source": source,
+                "kind": "raw_final", **_timestamp_fields(), "source": source,
                 "raw": writer.snapshot(),
             })
         sink.emit({
-            "kind": "capture_end", "wall_ns": time.time_ns(),
-            "monotonic_ns": time.monotonic_ns(), "label": args.label,
+            "kind": "capture_end", **_timestamp_fields(),
+            "clock_domain": clock_domain, "label": args.label,
         })
         sink.close()
         if writers:
@@ -296,6 +310,7 @@ async def run(args: argparse.Namespace) -> None:
                 "label": args.label, "asset": args.asset,
                 "revision": args.revision, "started_at": started_at,
                 "ended_at": time.time(),
+                "clock_domain": clock_domain,
                 "telemetry": {"path": os.path.relpath(output, dataset.parent),
                               "sha256": _sha256(output)},
                 "raw_manifests": raw_manifests,
@@ -324,7 +339,7 @@ def arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--raw-chunk-mb", type=float, default=256)
     parser.add_argument("--kill-file", default="paper/CROSSVENUE_KILL")
     parser.add_argument("--append", action="store_true")
-    parser.add_argument("--revision", default="unknown")
+    parser.add_argument("--revision", required=True, type=validated_revision)
     args = parser.parse_args(argv)
     if (not LABEL_RE.fullmatch(args.label) or args.duration_s <= 0
             or args.heartbeat_s <= 0 or args.tcp_cadence_s <= 0

@@ -9,9 +9,11 @@ import json
 import os
 import pathlib
 import queue
+import re
 import socket
 import struct
 import threading
+import time
 from typing import TextIO
 
 
@@ -24,10 +26,67 @@ _TCP_INFO_INTS = (
 )
 RAW_FRAME_MAGIC = b"PFRAWV2\n"
 RAW_FRAME_HEADER = struct.Struct("!QQI")
+CLOCK_DOMAIN_SCHEMA = "project-fail-clock-domain-v1"
+REVISION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{6,127}$")
 
 
 class CaptureWriteError(RuntimeError):
     """A bounded raw capture can no longer preserve every submitted frame."""
+
+
+def validated_revision(value: str) -> str:
+    """Return an explicit immutable/dirty revision label, never a placeholder."""
+    revision = value.strip()
+    if (not REVISION_RE.fullmatch(revision)
+            or revision.lower() in {"unknown", "none", "null", "dirty"}):
+        raise ValueError("revision must be an explicit immutable or dirty identity")
+    return revision
+
+
+def _identity_value(path: pathlib.Path, fallback: str) -> tuple[str, str]:
+    try:
+        value = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        value = ""
+    return (path.as_posix(), value) if value else ("fallback", fallback)
+
+
+def clock_domain_identity() -> dict[str, str]:
+    """Return hashed host/boot identity without exposing machine identifiers."""
+    host_source, host = _identity_value(
+        pathlib.Path("/etc/machine-id"), socket.gethostname().lower(),
+    )
+    estimated_boot = str(
+        round((time.time_ns() - time.monotonic_ns()) / 10_000_000_000)
+    )
+    boot_source, boot = _identity_value(
+        pathlib.Path("/proc/sys/kernel/random/boot_id"), estimated_boot,
+    )
+
+    def digest(kind: str, value: str) -> str:
+        return hashlib.sha256(f"{kind}\0{value}".encode()).hexdigest()
+
+    return {
+        "schema": CLOCK_DOMAIN_SCHEMA,
+        "host_sha256": digest("host", host),
+        "boot_sha256": digest("boot", boot),
+        "host_source": host_source,
+        "boot_source": boot_source,
+    }
+
+
+def validate_clock_domain(value: object) -> dict[str, str]:
+    """Validate and normalize a serialized clock-domain identity."""
+    if not isinstance(value, dict) or value.get("schema") != CLOCK_DOMAIN_SCHEMA:
+        raise ValueError("invalid clock-domain schema")
+    result = {key: str(value.get(key) or "") for key in (
+        "schema", "host_sha256", "boot_sha256", "host_source", "boot_source",
+    )}
+    hashes = (result["host_sha256"], result["boot_sha256"])
+    if (any(not re.fullmatch(r"[0-9a-f]{64}", item) for item in hashes)
+            or not result["host_source"] or not result["boot_source"]):
+        raise ValueError("invalid clock-domain identity")
+    return result
 
 
 @dataclasses.dataclass

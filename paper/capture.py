@@ -14,7 +14,12 @@ from collections.abc import Mapping
 from paper.market_metadata import ActiveMarket
 from paper.strategy_board import execution_model_identity
 from tools.market_windows import ResolvedWindow
-from tools.transport_telemetry import CaptureWriteError, JsonlSink, RawFrameWriter
+from tools.transport_telemetry import (
+    CaptureWriteError,
+    JsonlSink,
+    RawFrameWriter,
+    clock_domain_identity,
+)
 
 
 CAUSAL_EVENT = 1
@@ -45,6 +50,7 @@ class PaperCapture:
         self.board_hash = board_hash
         self.runtime = dict(runtime)
         self.model_identity = dict(model_identity or execution_model_identity())
+        self.clock_domain = clock_domain_identity()
         self.started_at = time.time()
         self.events_path = directory / f"{label}.events.jsonl"
         self.dataset_path = directory / f"{label}.dataset.json"
@@ -70,6 +76,7 @@ class PaperCapture:
             "monotonic_ns": time.monotonic_ns(), "label": label,
             "board_hash": board_hash, "runtime": self.runtime,
             "model_identity": self.model_identity,
+            "clock_domain": self.clock_domain,
         })
 
     @classmethod
@@ -198,6 +205,7 @@ class PaperCapture:
             self.events.emit({
                 "kind": "run_end", "wall_ns": time.time_ns(),
                 "monotonic_ns": time.monotonic_ns(),
+                "clock_domain": self.clock_domain,
                 "raw_status": raw_status, "causal_status": causal_status,
             })
             self.events.close()
@@ -211,6 +219,7 @@ class PaperCapture:
                 "board_hash": self.board_hash,
                 "runtime": self.runtime,
                 "model_identity": self.model_identity,
+                "clock_domain": self.clock_domain,
                 "raw": {"name": raw_manifest.name, "sha256": _sha256(raw_manifest)},
                 "causal": {
                     "name": causal_manifest.name, "sha256": _sha256(causal_manifest),

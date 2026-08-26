@@ -89,6 +89,9 @@ class PairWindow:
         self.sell_hedge_partial_executions = 0
         self.sell_hedge_shares = 0.0
         self.sell_hedge_best_pair_sum = 0.0
+        self.flattened = False
+        self.flatten_shares = 0.0
+        self.flatten_blocked = 0
         self.exposure = ExposureTimeline()
         self.fill_probe = FillProbe()
 
@@ -338,6 +341,44 @@ class PairWindow:
         elif before is None or after != before:
             self.buy_opened_at = known_at
 
+    def _flatten_residual(self, now: float, up: OrderBook,
+                          down: OrderBook) -> list[dict[str, float | str]]:
+        """Sell the naked excess leg before settlement, at a real price+fee.
+
+        Matched pairs settle at $1 whatever happens; the unmatched excess is a
+        coin flip we have been losing. Selling it into displayed depth turns
+        that into a bounded, measured cost that shows up in cash rather than
+        in outcome luck. Runs once per window.
+        """
+        at = self.config.flatten_residual_s
+        if at is None or self.flattened or now < self.start + at:
+            return []
+        self.flattened = True
+        excess_side = self.inventory[True] > self.inventory[False]
+        shares = abs(self.inventory[True] - self.inventory[False])
+        if shares <= 0:
+            return []
+        book = up if excess_side else down
+        legs = sweep(book, "sell", shares) or sweep_available(book, "sell", shares)
+        if not legs:
+            self.flatten_blocked += 1
+            return []
+        records: list[dict[str, float | str]] = []
+        for leg in legs:
+            net = leg.price * leg.shares - leg.fee
+            self.inventory[excess_side] -= leg.shares
+            self.cash += net
+            self.taker_fees += leg.fee
+            self.sells += 1
+            self.flatten_shares += leg.shares
+            records.append({
+                "action": "flatten_sell", "price": leg.price,
+                "size": leg.shares, "signed_cash": net,
+                "outcome_up": int(excess_side),
+            })
+        self._update_peak()
+        return records
+
     def _hedge_buy_pair(self, now: float, up: OrderBook,
                         down: OrderBook) -> list[dict[str, float | str]]:
         plan = plan_buy_completion(
@@ -447,6 +488,7 @@ class PairWindow:
         self._activate_pending(now, up, down)
         records = self._hedge_buy_pair(now, up, down)
         records.extend(self._hedge_sell_pair(now, up, down))
+        records.extend(self._flatten_residual(now, up, down))
         if self.pending is not None or now - self.last_requote < self.config.requote_s:
             self._sync_exposure(now)
             return records

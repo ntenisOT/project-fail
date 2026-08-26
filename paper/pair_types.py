@@ -19,6 +19,18 @@ class PairConfig:
     mint_sets: float = 20.0
     initial_sets: float = 0.0
     new_pair_cutoff_s: float = 300.0
+    # Taker-flatten any naked residual this many seconds into the window.
+    # Gen91 (11 windows) had every arm positive on FIFO-paired edge and deeply
+    # negative on settlement outcome - basket99 +$3.86 edge against -$7.21
+    # outcome - so the leftover leg gives back more than the pair mechanic
+    # earns, and it does so on all four arms at once, which is adverse
+    # selection rather than luck. Ledger analysis puts only 10% of residual
+    # shares after T+240 and 60% before T+180, so refusing late pair opens
+    # would barely touch it; the residual is created mid-window and never
+    # completes. Selling it at a known price with a known fee converts an
+    # uncontrolled coin flip into a measured cost. None keeps the old
+    # behaviour so an arm can act as the control.
+    flatten_residual_s: float | None = None
     buy_taker_after_s: float | None = None
     taker_hedge_after_s: float | None = None
     taker_pair_sum_floor: float | None = None

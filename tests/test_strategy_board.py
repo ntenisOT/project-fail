@@ -23,21 +23,31 @@ def test_current_strategy_board_is_the_focused_fill_probe() -> None:
     board = current_strategy_board(latency)
     assert board[0] == expected[0], "basket99 control must stay byte-identical"
     assert [config.name for config in board] == [
-        "basket99", "basket97", "basket95", "basket100",
+        "basket99", "basket99f285", "basket99f240", "basket99f180",
     ]
-    ceilings = {c.name: c.buy_sum_ceiling for c in board if c.mode == "accumulate"}
-    assert ceilings == {"basket99": 0.99, "basket97": 0.97,
-                        "basket95": 0.95, "basket100": 1.00}
     assert not [c for c in board if c.mode == "momentum"], (
         "momentum retired: +$5.18 gross against $26.93 of taker fees")
-    # the selective arms must rest below the book, not refuse to quote
-    patient = {c.name: c.patient_bids for c in board if c.mode == "accumulate"}
-    assert patient == {"basket99": False, "basket97": True,
-                       "basket95": True, "basket100": True}
+
+    # This board tests exactly one variable: when the naked residual is sold.
+    # Every other field must be identical to the control, or the arms are not
+    # measuring the flatten.
+    flatten = {c.name: c.flatten_residual_s for c in board}
+    assert flatten == {"basket99": None, "basket99f285": 285.0,
+                       "basket99f240": 240.0, "basket99f180": 180.0}
+    control = board[0]
+    for config in board[1:]:
+        differing = {
+            field for field in vars(control)
+            if getattr(control, field) != getattr(config, field)
+        }
+        assert differing == {"name", "flatten_residual_s"}, (
+            f"{config.name} differs from the control in {differing}; the "
+            "flatten experiment is only interpretable if nothing else moves")
     for config in board:
-        if config.mode == "accumulate":
-            assert config.new_pair_start_s == 30
-            assert config.basket_average_cap
+        assert config.mode == "accumulate"
+        assert config.buy_sum_ceiling == 0.99
+        assert config.new_pair_start_s == 30
+        assert config.basket_average_cap
 
 
 
@@ -46,7 +56,7 @@ def test_strategy_board_canonical_hash_is_stable() -> None:
 
     assert " " not in canonical_board(board)
     assert strategy_board_hash(board) == (
-        "da5c9690f1475886865cc53c3a3df3bcbcaa38c9fbf5b14111e414523439daea"
+        "73473bec6c4d8ed4f4278bc4502969e82d35977e89f971e1418cd0ca5c54c620"
     )
 
 

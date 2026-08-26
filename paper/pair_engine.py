@@ -14,6 +14,21 @@ from paper.pair_types import PairConfig, PendingRequote, RestingOrder
 from paper.taker import crypto_maker_rebate, sweep, sweep_available
 
 
+def _exceeds_cap(total: float, cap: float) -> bool:
+    """True only if `total` is over `cap` by more than float representation error.
+
+    Tick prices are not exactly representable in binary, so summing two of them
+    can land a hair above a cap the pair exactly meets: 0.02 + 0.93 is
+    0.9500000000000001, and a bare `> 0.95` refuses a pair that fits. 32 of the
+    exact-fit tick pairs across the 0.95/0.97/0.99/1.00 ceilings are rejected
+    that way, which quietly biases the lower-ceiling arms toward not quoting.
+
+    The tolerance is far below one tick (0.01), so a pair that genuinely
+    exceeds the cap by any tradeable amount is still rejected.
+    """
+    return total - cap > 1e-9
+
+
 def _tick_price(value: float, tick: float, round_up: bool) -> float:
     units = math.ceil((value - 1e-9) / tick) if round_up else math.floor((value + 1e-9) / tick)
     return round(units * tick, 10)
@@ -123,7 +138,8 @@ class PairWindow:
                 start_cap = self.buy_pairs.next_pair_sum_cap(
                     self.config.buy_sum_ceiling, self.config.clip_shares,
                 )
-            if open_side is None and sum(improved_bids.values()) > start_cap:
+            if open_side is None and _exceeds_cap(
+                    sum(improved_bids.values()), start_cap):
                 if self.config.patient_bids:
                     # Rest below the book at what we are willing to pay instead
                     # of refusing to quote; scale both legs so the pair meets

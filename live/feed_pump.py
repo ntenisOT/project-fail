@@ -10,6 +10,8 @@ from typing import Protocol, Sequence
 
 EVENT_QUEUE_CAPACITY = 8192
 PROCESS_YIELD_EVERY = 64
+PING_INTERVAL_S = 10.0
+INBOUND_LIVENESS_TIMEOUT_S = 15.0
 
 
 class WebSocketLike(Protocol):
@@ -145,7 +147,12 @@ class FeedPump:
         frame_sink: Callable[[int, int, str | bytes], int | None] | None = None,
         processed_sink: Callable[[int, int, int, int], None] | None = None,
         timestamped_handler: Callable[[dict[str, object], int, int], None] | None = None,
+        ping_interval_s: float = PING_INTERVAL_S,
+        inbound_liveness_timeout_s: float = INBOUND_LIVENESS_TIMEOUT_S,
     ) -> None:
+        if (ping_interval_s <= 0
+                or inbound_liveness_timeout_s <= ping_interval_s):
+            raise ValueError("inbound liveness timeout must exceed the positive ping interval")
         self.handler = handler
         self.queue: asyncio.Queue[tuple[dict[str, object], float, int, int]] = (
             asyncio.Queue(capacity)
@@ -154,6 +161,8 @@ class FeedPump:
         self.frame_sink = frame_sink
         self.processed_sink = processed_sink
         self.timestamped_handler = timestamped_handler
+        self.ping_interval_s = ping_interval_s
+        self.inbound_liveness_timeout_s = inbound_liveness_timeout_s
         self._next_frame_id = 0
 
     @property
@@ -162,18 +171,33 @@ class FeedPump:
 
     async def _read(self, ws: WebSocketLike, stop: asyncio.Event) -> None:
         last_ping = time.monotonic()
+        last_inbound = last_ping
         while not stop.is_set():
             self.stats.observe_ws_depth(websocket_frame_depth(ws))
-            elapsed = time.monotonic() - last_ping
-            if elapsed >= 10:
-                await ws.send("PING")
+            now = time.monotonic()
+            if now - last_ping >= self.ping_interval_s:
+                try:
+                    await asyncio.wait_for(
+                        ws.send("PING"),
+                        timeout=self.inbound_liveness_timeout_s - self.ping_interval_s,
+                    )
+                except asyncio.TimeoutError as exc:
+                    raise FeedIntegrityError("market websocket ping send timeout") from exc
                 last_ping = time.monotonic()
+            if now - last_inbound >= self.inbound_liveness_timeout_s:
+                raise FeedIntegrityError("market websocket inbound liveness timeout")
+            now = time.monotonic()
+            deadline = min(
+                last_ping + self.ping_interval_s,
+                last_inbound + self.inbound_liveness_timeout_s,
+            )
             try:
                 raw = await asyncio.wait_for(
-                    ws.recv(), timeout=min(0.5, max(0.1, 10 - elapsed)),
+                    ws.recv(), timeout=min(0.5, max(0.001, deadline - now)),
                 )
             except asyncio.TimeoutError:
                 continue
+            last_inbound = time.monotonic()
             self.stats.observe_ws_depth(websocket_frame_depth(ws))
             if raw == "PONG":
                 continue

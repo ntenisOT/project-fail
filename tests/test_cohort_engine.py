@@ -119,7 +119,7 @@ def test_unattributable_malformed_delta_invalidates_every_active_book() -> None:
     assert engine.runtime_snapshot()["stale_assets"] == ["btc"]
 
 
-def test_book_freshness_expires_during_feed_silence() -> None:
+def test_unchanged_causal_book_remains_valid_during_healthy_feed_silence() -> None:
     engine = CohortEngine((_config("pair"),), max_event_lag_s=0.4)
     engine.open_market(_market(), 0)
     engine.on_event(_book("up-0", 1), 1.39)
@@ -132,7 +132,7 @@ def test_book_freshness_expires_during_feed_silence() -> None:
     assert engine.runtime_snapshot()["stale_assets"] == []
 
     engine.tick(1.401)
-    assert engine.runtime_snapshot()["stale_assets"] == ["btc"]
+    assert engine.runtime_snapshot()["stale_assets"] == []
 
 
 def test_trade_causality_respects_pre_and_post_activation_times() -> None:

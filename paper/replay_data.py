@@ -41,6 +41,7 @@ class PaperDataset:
     runtime: Mapping[str, object]
     model_identity: Mapping[str, object]
     clock_domain: Mapping[str, str] | None
+    transport_gaps: tuple[dict[str, object], ...]
 
 
 def _sha256(path: pathlib.Path) -> str:
@@ -98,6 +99,64 @@ def _status_matches_manifest(
     recorded_manifest = pathlib.Path(str(status.get("manifest") or ""))
     if recorded_manifest.name != manifest_path.name:
         raise CaptureIntegrityError(f"paper {kind} status mismatch: manifest")
+
+
+def _transport_gaps(events: list[dict[str, object]]) -> tuple[dict[str, object], ...]:
+    """Validate connection alternation and return exact unavailable intervals."""
+    connected = False
+    gap_start = events[0]
+    failures: list[dict[str, object]] = []
+    gaps: list[dict[str, object]] = []
+
+    def point(row: Mapping[str, object], field: str) -> int:
+        try:
+            value = int(str(row.get(field)))
+        except (TypeError, ValueError) as exc:
+            raise CaptureIntegrityError(f"paper lifecycle lacks {field}") from exc
+        if value < 0:
+            raise CaptureIntegrityError(f"paper lifecycle has negative {field}")
+        return value
+
+    def close_gap(end: Mapping[str, object]) -> None:
+        start_wall, start_mono = point(gap_start, "wall_ns"), point(gap_start, "monotonic_ns")
+        end_wall, end_mono = point(end, "wall_ns"), point(end, "monotonic_ns")
+        if end_wall < start_wall or end_mono < start_mono:
+            raise CaptureIntegrityError("paper transport gap has reversed endpoints")
+        gaps.append({
+            "start_kind": str(gap_start.get("kind") or ""),
+            "start_wall_ns": start_wall, "start_monotonic_ns": start_mono,
+            "end_kind": str(end.get("kind") or ""),
+            "end_wall_ns": end_wall, "end_monotonic_ns": end_mono,
+            "duration_ns": end_mono - start_mono,
+            "connection_failures": list(failures),
+        })
+
+    for index, row in enumerate(events[1:-1], 1):
+        kind = str(row.get("kind") or "")
+        if kind == "connection":
+            if connected:
+                raise CaptureIntegrityError("paper connection marker is duplicated")
+            close_gap(row)
+            connected = True
+            failures = []
+        elif kind == "disconnect":
+            if not connected:
+                raise CaptureIntegrityError("paper disconnect occurs while unavailable")
+            connected = False
+            gap_start = row
+            failures = []
+        elif kind == "connection_failure":
+            if connected:
+                raise CaptureIntegrityError("paper connection failure occurs while connected")
+            failures.append({
+                "marker_index": index,
+                "wall_ns": point(row, "wall_ns"),
+                "monotonic_ns": point(row, "monotonic_ns"),
+                "reason": str(row.get("reason") or ""),
+            })
+    if not connected:
+        close_gap(events[-1])
+    return tuple(gaps)
 
 
 def load_paper_dataset(path: str | pathlib.Path) -> PaperDataset:
@@ -180,6 +239,7 @@ def load_paper_dataset(path: str | pathlib.Path) -> PaperDataset:
         raise CaptureIntegrityError("paper raw status does not match run_end")
     if run_end.get("causal_status") != causal_status:
         raise CaptureIntegrityError("paper causal status does not match run_end")
+    transport_gaps = _transport_gaps(events)
     raw_manifest = _manifest(raw_path)
     causal_manifest = _manifest(causal_path)
     if raw_manifest.get("label") != label:
@@ -191,7 +251,7 @@ def load_paper_dataset(path: str | pathlib.Path) -> PaperDataset:
     return PaperDataset(
         target, label, _sha256(target), raw_path, causal_path, tuple(events),
         board_hash, runtime,
-        model_identity, clock_domain,
+        model_identity, clock_domain, transport_gaps,
     )
 
 

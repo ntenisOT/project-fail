@@ -134,6 +134,11 @@ def build_join(
             "label": paper.label, "board_hash": paper.board_hash,
             "model_identity": dict(paper.model_identity), "runtime": dict(paper.runtime),
             "raw": paper_raw, "causal": paper_causal,
+            "transport_gaps": list(paper.transport_gaps),
+            "transport_gap_policy": "all_exact_paper_socket_unavailable_intervals",
+            "book_chain_gap_policy": (
+                "extend each transport or rejected-depth gap until both token books rebootstrap"
+            ),
         },
         "crossvenue": {
             "path": cross.path.as_posix(), "sha256": cross.sha256,

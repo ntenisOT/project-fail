@@ -304,9 +304,7 @@ class CohortEngine:
         for token in tuple(self._fresh_tokens):
             book = self.books.get(token)
             if (book is None or not book.bootstrapped
-                    or now < book.received_at
-                    or now - book.received_at > self.max_event_lag_s
-                    or now - book.source_at > self.max_event_lag_s):
+                    or now < book.received_at):
                 self._fresh_tokens.discard(token)
         for asset, cohort in self._active.items():
             required = {cohort.market.up_token, cohort.market.down_token}

@@ -4,7 +4,12 @@ import json
 
 import pytest
 
-from paper.replay_data import CaptureIntegrityError, iter_raw_frames, load_paper_dataset
+from paper.replay_data import (
+    CaptureIntegrityError,
+    _transport_gaps,
+    iter_raw_frames,
+    load_paper_dataset,
+)
 from tools.transport_telemetry import RawFrameWriter
 
 
@@ -52,6 +57,28 @@ def test_paper_dataset_rejects_marker_tampering(tmp_path) -> None:
 
     with pytest.raises(CaptureIntegrityError, match="marker hash"):
         load_paper_dataset(tmp_path / "paper.dataset.json")
+
+
+def test_paper_transport_gaps_validate_alternation_and_preserve_exact_bounds() -> None:
+    events = [
+        {"kind": "run_start", "wall_ns": 100, "monotonic_ns": 10},
+        {"kind": "connection", "wall_ns": 110, "monotonic_ns": 20},
+        {"kind": "disconnect", "wall_ns": 120, "monotonic_ns": 30},
+        {"kind": "connection_failure", "wall_ns": 125, "monotonic_ns": 35,
+         "reason": "retry"},
+        {"kind": "connection", "wall_ns": 130, "monotonic_ns": 40},
+        {"kind": "run_end", "wall_ns": 140, "monotonic_ns": 50},
+    ]
+
+    gaps = _transport_gaps(events)
+
+    assert [(gap["start_monotonic_ns"], gap["end_monotonic_ns"]) for gap in gaps] == [
+        (10, 20), (30, 40),
+    ]
+    assert gaps[1]["duration_ns"] == 10
+    assert gaps[1]["connection_failures"][0]["reason"] == "retry"
+    with pytest.raises(CaptureIntegrityError, match="connection marker is duplicated"):
+        _transport_gaps([events[0], events[1], events[1], events[-1]])
 
 
 @pytest.mark.parametrize(

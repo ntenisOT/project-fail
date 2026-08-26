@@ -119,6 +119,27 @@ def test_feed_pump_reconnects_instead_of_hiding_malformed_frames() -> None:
             asyncio.run(FeedPump(lambda _event: None).run(Socket(raw), asyncio.Event()))
 
 
+def test_feed_pump_fails_closed_when_ping_receives_no_inbound_liveness() -> None:
+    class Socket:
+        sent: list[str] = []
+
+        async def send(self, message: str) -> None:
+            self.sent.append(message)
+
+        async def recv(self) -> str:
+            await asyncio.sleep(1)
+            return "never reached"
+
+    socket = Socket()
+    pump = FeedPump(
+        lambda _event: None, ping_interval_s=0.005, inbound_liveness_timeout_s=0.01,
+    )
+
+    with pytest.raises(FeedIntegrityError, match="inbound liveness timeout"):
+        asyncio.run(pump.run(socket, asyncio.Event()))
+    assert socket.sent and set(socket.sent) == {"PING"}
+
+
 def test_subscription_rotation_adds_before_removing() -> None:
     assert subscription_messages({"old-up", "old-down"}, {"new-up", "new-down"}) == [
         {"operation": "subscribe", "assets_ids": ["new-down", "new-up"]},

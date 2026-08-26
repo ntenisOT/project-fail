@@ -87,6 +87,33 @@ def test_zero_fill_window_is_explicit_and_merge_ordering_fails_closed() -> None:
         _window_accounting(window, [split, {**merge, "amount_base": "99"}], [], None)
 
 
+def test_partial_two_sided_sales_then_nonzero_merge_reconcile_exactly() -> None:
+    window = _window(1_000, 1)
+    split = _split(window, 100, 10, 900)
+    fills = [
+        _sale(window, "up", 40, 30, 20, 1),
+        _sale(window, "down", 40, 30, 20, 2),
+    ]
+    merge = {
+        **split,
+        "type": "merge",
+        "amount_base": "60",
+        "block_number": 30,
+        "timestamp": 1_200,
+        "log_index": 3,
+        "tx_hash": "0x" + "33" * 32,
+    }
+
+    summary, events = _window_accounting(window, [split, merge], fills, None)
+
+    assert summary["maker_sell_count"] == 2
+    assert summary["merge_base"] == "60"
+    assert summary["contractual_terminal_pnl_base"] == "20"
+    assert [event["type"] for event in events] == [
+        "split", "maker_sell", "maker_sell", "merge",
+    ]
+
+
 def test_capital_reports_portfolio_and_non_cross_netted_paths_separately() -> None:
     first, second = _window(1_000, 1), _window(1_300, 2)
     first_events = [
@@ -132,6 +159,10 @@ def test_fill_normalization_accepts_only_unique_fee_zero_v2_maker_sales() -> Non
         fill_events([tuple(buy)], [window], wallet)
     with pytest.raises(EvidenceError, match="duplicate owner fill"):
         fill_events([valid, valid], [window], wallet)
+    self_trade = list(valid)
+    self_trade[6] = wallet
+    with pytest.raises(EvidenceError, match="self-trades"):
+        fill_events([tuple(self_trade)], [window], wallet)
     taker_only = list(valid)
     taker_only[5], taker_only[6], taker_only[15], taker_only[16] = (
         "counterparty", wallet, False, False,

@@ -36,6 +36,12 @@
     "qualifying_precursor_wallet_count": 11,
     "qualifying_precursor_wallets_sha256": "5fb2ccd3aa4728ea30e74d71700eadd7e3af8d5c513da43a15a3467cd7c373a3"
   },
+  "selection_lifecycle": {
+    "lifecycle_start": 1787596800,
+    "lifecycle_end_exclusive": 1787703000,
+    "post_last_market_close_s": 3300,
+    "purpose": "historical_membership_reproduction_only"
+  },
   "wallets": [
     "0x0ab7993cd51f552a61e9211e424578f5bfc66fe6",
     "0x32c4922da31d9f90232ea40748846e5ccc48b175",
@@ -57,6 +63,20 @@
   "projections": {
     "wallets_sha256": "d0ed4375eaa133a6894f48a35ab99185822725b1bb40766a37de00df134f8391",
     "split_evidence_sha256": "4f7a2841fec5e0e446ae2ff990a4b1b5ed1a0ee093d356bbb97b363ade01fefa"
+  },
+  "pre_registered_gate": {
+    "endpoint": "contractual_terminal_pnl_base_ex_rebate",
+    "statistical_unit": "market_window_sum_across_frozen_10_wallets",
+    "wallets": 10,
+    "windows": 31,
+    "wallet_windows": 310,
+    "required_positive_wallets": 7,
+    "positive_definition": "strictly_greater_than_zero",
+    "minimum_t_statistic": "2",
+    "zero_variance_policy": "non_passing",
+    "rebate_policy": "forbidden_in_primary_falsification",
+    "incomplete_ledger_policy": "inconclusive_no_result_never_drop_or_replace_wallets",
+    "pass_authorization": "one_prospective_causal_paper_design_only"
   },
   "limitations": [
     "full-period behavioral selection, not an out-of-sample winner cohort",

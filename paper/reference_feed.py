@@ -14,7 +14,17 @@ import websockets
 
 RTDS_WS = "wss://ws-live-data.polymarket.com"
 TOPIC = "crypto_prices_twap_sixty"
+PING_INTERVAL_S = 5.0
+# Transport liveness, mirroring the market feed: ANY inbound frame (PONG or an
+# unparsed message included) renews the lease. Gen79 proved the previous model
+# could not detect a silent publisher death - updates froze at 738 for 80+
+# minutes with reconnects=0 because recv() simply timed out and continued.
+INBOUND_LIVENESS_TIMEOUT_S = 15.0
 log = logging.getLogger("paper.reference")
+
+
+class ReferenceStall(RuntimeError):
+    """No inbound frame arrived within the transport lease."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -69,12 +79,14 @@ class ReferenceFeed:
         self.assets = {asset.lower() for asset in assets}
         self.updates = 0
         self.reconnects = 0
+        self.stalls = 0
         self.max_age_ms = 0.0
 
     def snapshot(self) -> dict[str, int]:
         return {
             "updates": self.updates,
             "reconnects": self.reconnects,
+            "stalls": self.stalls,
             "max_age_ms": round(self.max_age_ms),
         }
 
@@ -88,15 +100,23 @@ class ReferenceFeed:
                 ) as ws:
                     connected_at = time.monotonic()
                     await ws.send(subscription_message(self.assets))
-                    next_ping = time.monotonic() + 5
+                    next_ping = connected_at + PING_INTERVAL_S
+                    last_inbound = connected_at
                     while True:
-                        if time.monotonic() >= next_ping:
+                        now = time.monotonic()
+                        if now - last_inbound >= INBOUND_LIVENESS_TIMEOUT_S:
+                            self.stalls += 1
+                            raise ReferenceStall(
+                                "reference websocket inbound liveness timeout "
+                                f"({INBOUND_LIVENESS_TIMEOUT_S:.0f}s)")
+                        if now >= next_ping:
                             await ws.send("PING")
-                            next_ping = time.monotonic() + 5
+                            next_ping = time.monotonic() + PING_INTERVAL_S
                         try:
                             raw = await asyncio.wait_for(ws.recv(), timeout=1)
                         except asyncio.TimeoutError:
                             continue
+                        last_inbound = time.monotonic()
                         received_at = time.time()
                         update = parse_update(raw, received_at, self.assets)
                         if update is None:

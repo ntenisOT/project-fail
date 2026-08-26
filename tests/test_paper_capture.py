@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 
 import pytest
 
@@ -20,6 +21,8 @@ def test_paper_capture_binds_frames_market_outcome_and_board(tmp_path) -> None:
                           "11", "22", 5)
     capture.market_open(market, 301.0)
     capture.connection(True, observed_at=302.0)
+    capture.transport_liveness("transport_ping", time.time_ns(), time.monotonic_ns())
+    capture.transport_liveness("transport_pong", time.time_ns(), time.monotonic_ns())
     frame_id = capture.frame_sink(10, 20, b'{"event_type":"book"}')
     capture.processed_event(11, 21, frame_id, 0)
     capture.quote_tick(12, 22)
@@ -40,7 +43,7 @@ def test_paper_capture_binds_frames_market_outcome_and_board(tmp_path) -> None:
     assert dataset["board_hash"] == "abc"
     assert {row["kind"] for row in events} >= {
         "run_start", "market_open", "market_finish", "connection", "resolution",
-        "run_end",
+        "transport_ping", "transport_pong", "run_end",
     }
     assert next(row for row in events if row["kind"] == "connection")[
         "observed_at"

@@ -120,6 +120,8 @@ def source_rows(client: Any, windows: Sequence[ResolvedWindow], wallet: str,
         "erc1155_mapped_token_rows": int(erc[1]),
         "erc1155_target_address_rows": int(erc[2]),
         "erc1155_mapped_target_address_rows": int(erc[3]),
+        "erc1155_coverage_status": "known_incomplete_token_mapping_not_custody_complete",
+        "erc1155_custody_complete": False,
         "usdc_transfers_global_rows": int(client.command(
             "SELECT count() FROM usdc_transfers FINAL")),
         "sql": {"fills": fills_sql, "redemptions": redemptions_sql,
@@ -145,6 +147,8 @@ def fill_events(rows: Sequence[tuple], windows: Sequence[ResolvedWindow],
         if key in seen:
             raise EvidenceError("duplicate owner fill block/log key")
         seen.add(key)
+        if str(maker) == str(taker):
+            raise EvidenceError("self-trades are forbidden in mint accounting")
         if (str(maker) != wallet or not is_v2 or not is_maker or neg_risk
                 or str(maker_asset) == "0" or str(taker_asset) != "0"
                 or integer(fee, "fee") != 0):

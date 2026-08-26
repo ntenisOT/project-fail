@@ -147,6 +147,7 @@ class FeedPump:
         frame_sink: Callable[[int, int, str | bytes], int | None] | None = None,
         processed_sink: Callable[[int, int, int, int], None] | None = None,
         timestamped_handler: Callable[[dict[str, object], int, int], None] | None = None,
+        liveness_sink: Callable[[str, int, int], None] | None = None,
         ping_interval_s: float = PING_INTERVAL_S,
         inbound_liveness_timeout_s: float = INBOUND_LIVENESS_TIMEOUT_S,
     ) -> None:
@@ -161,6 +162,7 @@ class FeedPump:
         self.frame_sink = frame_sink
         self.processed_sink = processed_sink
         self.timestamped_handler = timestamped_handler
+        self.liveness_sink = liveness_sink
         self.ping_interval_s = ping_interval_s
         self.inbound_liveness_timeout_s = inbound_liveness_timeout_s
         self._next_frame_id = 0
@@ -183,10 +185,16 @@ class FeedPump:
                     )
                 except asyncio.TimeoutError as exc:
                     raise FeedIntegrityError("market websocket ping send timeout") from exc
-                last_ping = time.monotonic()
+                ping_wall_ns = time.time_ns()
+                ping_monotonic_ns = time.monotonic_ns()
+                last_ping = ping_monotonic_ns / 1_000_000_000
+                if self.liveness_sink is not None:
+                    self.liveness_sink(
+                        "transport_ping", ping_wall_ns, ping_monotonic_ns,
+                    )
+            now = time.monotonic()
             if now - last_inbound >= self.inbound_liveness_timeout_s:
                 raise FeedIntegrityError("market websocket inbound liveness timeout")
-            now = time.monotonic()
             deadline = min(
                 last_ping + self.ping_interval_s,
                 last_inbound + self.inbound_liveness_timeout_s,
@@ -197,9 +205,15 @@ class FeedPump:
                 )
             except asyncio.TimeoutError:
                 continue
-            last_inbound = time.monotonic()
+            inbound_wall_ns = time.time_ns()
+            inbound_monotonic_ns = time.monotonic_ns()
+            last_inbound = inbound_monotonic_ns / 1_000_000_000
             self.stats.observe_ws_depth(websocket_frame_depth(ws))
-            if raw == "PONG":
+            if raw in ("PONG", b"PONG"):
+                if self.liveness_sink is not None:
+                    self.liveness_sink(
+                        "transport_pong", inbound_wall_ns, inbound_monotonic_ns,
+                    )
                 continue
             frame_id = self._next_frame_id
             self._next_frame_id += 1

@@ -189,6 +189,8 @@ def validated_attribution_artifact(
         for name, value in expected_counts.items()
     ):
         raise EvidenceError("attribution counts do not reconcile to exact results")
+    if classifications["unresolved"] != 0:
+        raise EvidenceError("attribution contains unresolved candidate rows")
     return candidate_rows, result_rows
 
 

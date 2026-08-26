@@ -335,6 +335,9 @@ async def market_task() -> None:
                         None if S.capture is None else S.capture.processed_event
                     ),
                     timestamped_handler=handle_event_at,
+                    liveness_sink=(
+                        None if S.capture is None else S.capture.transport_liveness
+                    ),
                 )
                 connection_stop = asyncio.Event()
                 pump_task = asyncio.create_task(S.feed_pump.run(ws, connection_stop))

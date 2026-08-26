@@ -274,6 +274,10 @@ def test_join_binds_complete_datasets_and_rejects_clock_domain_mismatch(
     assert report["passive_artifacts"]["gamma"]["validation"]["lookback_s"] == [60]
     assert report["passive_artifacts"]["wallet_fills"]["validation"]["inactive_wallets"] == 1
     assert report["feature_join_contract"]["hardcoded_twap_regime"] is False
+    assert report["paper"]["book_chain_gaps"] is None
+    assert report["paper"]["book_chain_gap_status"] == (
+        "not_materialized_event_study_no_go"
+    )
 
     _downgrade_source_finals_to_exact_v1(cross)
     exact_v1 = build_join(paper, cross, artifacts, "analysis-deadbeef")

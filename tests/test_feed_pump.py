@@ -140,6 +140,40 @@ def test_feed_pump_fails_closed_when_ping_receives_no_inbound_liveness() -> None
     assert socket.sent and set(socket.sent) == {"PING"}
 
 
+def test_feed_pump_records_ping_and_accepts_text_or_binary_pong() -> None:
+    stop = asyncio.Event()
+    markers: list[str] = []
+
+    class Socket:
+        def __init__(self) -> None:
+            self.received = 0
+            self.sent = 0
+
+        async def send(self, message: str) -> None:
+            assert message == "PING"
+            self.sent += 1
+
+        async def recv(self) -> str | bytes:
+            self.received += 1
+            if self.sent:
+                stop.set()
+            return b"PONG" if self.received % 2 else "PONG"
+
+    pump = FeedPump(
+        lambda _event: None,
+        ping_interval_s=0.005,
+        inbound_liveness_timeout_s=0.5,
+        liveness_sink=lambda kind, wall, mono: (
+            markers.append(kind) if wall > 0 and mono > 0 else None
+        ),
+    )
+
+    asyncio.run(pump.run(Socket(), stop))
+
+    assert "transport_ping" in markers
+    assert markers.count("transport_pong") >= 2
+
+
 def test_subscription_rotation_adds_before_removing() -> None:
     assert subscription_messages({"old-up", "old-down"}, {"new-up", "new-down"}) == [
         {"operation": "subscribe", "assets_ids": ["new-down", "new-up"]},

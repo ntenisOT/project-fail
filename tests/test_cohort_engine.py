@@ -131,7 +131,7 @@ def test_unchanged_causal_book_remains_valid_during_healthy_feed_silence() -> No
     engine.tick(1.39)
     assert engine.runtime_snapshot()["stale_assets"] == []
 
-    engine.tick(1.401)
+    engine.tick(20.0)
     assert engine.runtime_snapshot()["stale_assets"] == []
 
 

@@ -22,7 +22,7 @@ GIT_RE = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")
 MONEY_RE = re.compile(r"^(?:0|[1-9][0-9]*)(?:\.[0-9]{1,6})?$")
 SOURCE_PATHS = tuple(dict.fromkeys((
     "tools/mint_accounting.py", "tools/mint_accounting_capital.py",
-    "tools/mint_cohort_aggregate.py",
+    "tools/mint_cohort_aggregate.py", "tools/mint_falsification_gate.py",
     "tools/mint_accounting_clickhouse.py", "tools/mint_accounting_core.py",
     "tools/mint_accounting_inputs.py", "tools/mint_accounting_outcomes.py",
     "tools/mint_attribution_validation.py",

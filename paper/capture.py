@@ -172,6 +172,15 @@ class PaperCapture:
             "monotonic_ns": time.monotonic_ns(), "reason": reason,
         })
 
+    def transport_liveness(self, kind: str, wall_ns: int, monotonic_ns: int) -> None:
+        if kind not in {"transport_ping", "transport_pong"}:
+            raise ValueError("unknown transport liveness marker")
+        if wall_ns < 0 or monotonic_ns < 0:
+            raise ValueError("transport liveness timestamps must be non-negative")
+        self._emit({
+            "kind": kind, "wall_ns": wall_ns, "monotonic_ns": monotonic_ns,
+        })
+
     def market_finish(
         self, asset: str, slug: str, start: int, observed_at: float,
     ) -> None:

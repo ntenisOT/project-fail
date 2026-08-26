@@ -20,13 +20,18 @@ from tools.mint_accounting_inputs import (
     signed_integer,
     validated_revision_manifest,
 )
+from tools.mint_falsification_gate import evaluate_gate, validated_gate_spec
 
 
-COHORT_SCHEMA = "project-fail-mint-sibling-cohort-proof-v1"
+COHORT_SCHEMA = "project-fail-mint-sibling-cohort-proof-v2"
 LEDGER_SCHEMA = "project-fail-mint-observed-accounting-v2"
-SCHEMA = "project-fail-mint-sibling-falsification-v1"
+SCHEMA = "project-fail-mint-sibling-falsification-v2"
 UNIVERSE_KEYS = ("asset", "slug", "start", "condition_id", "up_token", "down_token")
 COMMON_INPUTS = ("candidate", "attribution", "receipt_cache")
+ACCOUNTING_SOURCE_WATERMARKS = (
+    "erc1155_transfers", "redemptions", "trade_history",
+)
+ACCOUNTING_TAIL_S = 24 * 60 * 60
 
 
 class WindowMetric(TypedDict):
@@ -64,7 +69,6 @@ class WalletAggregate(TypedDict):
     split_principal_base: str
     sale_cash_base: str
     merge_return_base: str
-    rebate_endpoint_base: str | None
     capital: object
 
 
@@ -101,7 +105,7 @@ def _input_hash(inputs: Mapping[str, object], name: str) -> str:
 
 
 def _ledger_window(
-    row: Mapping[str, object], expected: Mapping[str, object],
+    row: Mapping[str, object], expected: Mapping[str, object], expected_winner_up: int,
 ) -> WindowMetric:
     if (str(row.get("slug") or "") != str(expected.get("slug") or "")
             or integer(row.get("start"), "ledger window start") != integer(
@@ -109,8 +113,9 @@ def _ledger_window(
             )):
         raise EvidenceError("ledger window differs from the fixed cohort universe")
     winner = str(row.get("winner") or "")
-    if winner not in {"up", "down"}:
-        raise EvidenceError("ledger window lacks an authoritative binary winner")
+    expected_winner = "up" if expected_winner_up == 1 else "down"
+    if winner != expected_winner:
+        raise EvidenceError("ledger window winner differs from its payout mapping")
     split = integer(row.get("split_base"), "window split")
     sold_up = integer(row.get("sold_up_base"), "window sold up")
     sold_down = integer(row.get("sold_down_base"), "window sold down")
@@ -142,6 +147,7 @@ def aggregate(
         raise EvidenceError("unsupported mint sibling cohort proof")
     if validated_revision_manifest(cohort.get("revision")) != dict(expected_revision):
         raise EvidenceError("cohort proof revision differs from the aggregate revision")
+    gate_spec = validated_gate_spec(cohort.get("gate_spec"))
     raw_wallets = cohort.get("wallets")
     counts = _object(cohort.get("counts"), "cohort counts")
     if (not isinstance(raw_wallets, list)
@@ -150,15 +156,43 @@ def aggregate(
         raise EvidenceError("cohort wallets are malformed or duplicated")
     wallets = [str(wallet) for wallet in raw_wallets]
     if (wallets != sorted(wallets) or len(set(wallets)) != len(wallets)
-            or len(wallets) != integer(counts.get("wallets"), "cohort wallets")):
+            or len(wallets) != integer(counts.get("wallets"), "cohort wallets")
+            or len(wallets) != integer(gate_spec["wallets"], "gate wallets")):
         raise EvidenceError("cohort wallets are malformed or duplicated")
     universe = _universe(cohort)
     if (len(universe) != integer(counts.get("windows"), "cohort windows")
+            or len(universe) != integer(gate_spec["windows"], "gate windows")
             or len(wallets) * len(universe) != integer(
                 counts.get("wallet_windows"), "cohort wallet-windows"
+            )
+            or len(wallets) * len(universe) != integer(
+                gate_spec["wallet_windows"], "gate wallet-windows"
             )):
-        raise EvidenceError("cohort proof is not its declared fixed grid")
+        raise EvidenceError("cohort proof is not the exact frozen 10x31 grid")
+    lifecycle = _object(cohort.get("accounting_lifecycle"), "cohort accounting lifecycle")
+    lifecycle_start = integer(lifecycle.get("lifecycle_start"), "cohort lifecycle start")
+    lifecycle_end = integer(
+        lifecycle.get("lifecycle_end_exclusive"), "cohort lifecycle end"
+    )
+    lifecycle_tail = integer(
+        lifecycle.get("post_close_tail_s"), "cohort post-close tail"
+    )
+    final_window_start = max(integer(row["start"], "cohort window start")
+                             for row in universe.values())
+    if (lifecycle_start >= lifecycle_end or lifecycle_tail != ACCOUNTING_TAIL_S
+            or lifecycle_end != final_window_start + 300 + lifecycle_tail):
+        raise EvidenceError("cohort accounting lifecycle is not the exact 24-hour tail")
+    candidate_watermarks = _object(
+        lifecycle.get("source_watermark_unix_s"), "cohort candidate source watermarks"
+    )
+    if set(candidate_watermarks) != {"splits_merges", "trade_history"} or any(
+        integer(candidate_watermarks[name], f"cohort {name} watermark") < lifecycle_end
+        for name in ("splits_merges", "trade_history")
+    ):
+        raise EvidenceError("cohort candidate sources end before the accounting lifecycle")
     cohort_sources = _object(cohort.get("source_sha256"), "cohort source hashes")
+    if set(cohort_sources) != set(COMMON_INPUTS):
+        raise EvidenceError("cohort current source hash set is invalid")
     expected_sources = {
         name: digest(str(cohort_sources.get(name) or ""), f"cohort {name} SHA-256")
         for name in COMMON_INPUTS
@@ -172,7 +206,7 @@ def aggregate(
         raise EvidenceError("ledger set does not cover the exact frozen wallet cohort")
 
     outcome_sha: str | None = None
-    rebate_modes: set[bool] = set()
+    authoritative_winners: dict[str, int] | None = None
     wallet_rows: list[WalletAggregate] = []
     window_accumulator: dict[str, WindowAggregate] = {
         condition: {
@@ -194,8 +228,15 @@ def aggregate(
         if validated_revision_manifest(ledger.get("revision")) != dict(expected_revision):
             raise EvidenceError("ledger revision differs from the aggregate revision")
         scope = _object(ledger.get("scope"), "ledger scope")
-        if (scope.get("wallet") != wallet or scope.get("complete_wallet") is not False
-                or scope.get("cash_realized") is not False):
+        if (scope.get("wallet") != wallet or scope.get("chain_id") != 137
+                or integer(scope.get("lifecycle_start"), "ledger lifecycle start")
+                != lifecycle_start
+                or integer(
+                    scope.get("lifecycle_end_exclusive"), "ledger lifecycle end"
+                ) != lifecycle_end
+                or scope.get("complete_wallet") is not False
+                or scope.get("cash_realized") is not False
+                or scope.get("collateral_cash_path_observed") is not False):
             raise EvidenceError("ledger scope does not match the fixed observed-ledger basis")
         inputs = _object(ledger.get("inputs"), "ledger inputs")
         if any(_input_hash(inputs, name) != expected_sources[name] for name in COMMON_INPUTS):
@@ -205,52 +246,70 @@ def aggregate(
             outcome_sha = current_outcome_sha
         elif outcome_sha != current_outcome_sha:
             raise EvidenceError("cohort ledgers do not share one payout artifact")
-        has_rebate = "rebate" in inputs
-        rebate_modes.add(has_rebate)
+        if "rebate" in inputs:
+            raise EvidenceError("rebate artifacts are forbidden in primary falsification")
         mapping_rows = _rows(ledger.get("market_mapping"), "ledger market mapping")
         projection: dict[str, dict[str, object]] = {}
+        ledger_winners: dict[str, int] = {}
         for raw in mapping_rows:
-            if any(key not in raw for key in UNIVERSE_KEYS):
+            if any(key not in raw for key in (*UNIVERSE_KEYS, "winner_up")):
                 raise EvidenceError("ledger market mapping row is incomplete")
             row = {key: raw[key] for key in UNIVERSE_KEYS}
             condition = str(row["condition_id"] or "").lower()
             row["condition_id"] = condition
             if condition in projection:
                 raise EvidenceError("ledger market mapping duplicates a condition")
+            winner_up = integer(raw.get("winner_up"), "ledger mapping winner")
+            if winner_up not in (0, 1):
+                raise EvidenceError("ledger market mapping winner is not binary")
             projection[condition] = row
+            ledger_winners[condition] = winner_up
         if projection != universe:
             raise EvidenceError("ledger market mapping differs from the cohort universe")
+        if authoritative_winners is None:
+            authoritative_winners = ledger_winners
+        elif authoritative_winners != ledger_winners:
+            raise EvidenceError("cohort ledgers disagree on authoritative winners")
         ledger_windows = _rows(ledger.get("windows"), "ledger windows")
         validated_windows: dict[str, WindowMetric] = {}
         for raw in ledger_windows:
             condition = str(raw.get("condition_id") or "").lower()
             if condition not in universe or condition in validated_windows:
                 raise EvidenceError("ledger windows escape or duplicate the cohort universe")
-            validated_windows[condition] = _ledger_window(raw, universe[condition])
+            validated_windows[condition] = _ledger_window(
+                raw, universe[condition], ledger_winners[condition]
+            )
         if set(validated_windows) != set(universe):
             raise EvidenceError("ledger does not cover every cohort window")
         coverage = _object(ledger.get("source_coverage"), "ledger source coverage")
+        watermarks = _object(
+            coverage.get("source_watermark_unix_s"), "ledger source watermarks"
+        )
+        if set(watermarks) != set(ACCOUNTING_SOURCE_WATERMARKS) or any(
+            integer(watermarks[name], f"ledger {name} watermark") < lifecycle_end
+            for name in ACCOUNTING_SOURCE_WATERMARKS
+        ):
+            raise EvidenceError("ledger sources end before the accounting lifecycle")
+        if (
+            coverage.get("erc1155_coverage_status")
+            != "known_incomplete_token_mapping_not_custody_complete"
+            or coverage.get("erc1155_custody_complete") is not False
+            or integer(
+                coverage.get("erc1155_mapped_token_rows"),
+                "mapped ERC-1155 token rows",
+            ) != 0
+        ):
+            raise EvidenceError("ledger must disclose incomplete ERC-1155 custody coverage")
         if integer(coverage.get("target_trade_involvement_rows"), "target involvement") != integer(
             coverage.get("accepted_fee_zero_v2_maker_sale_rows"), "accepted maker sales"
         ):
             raise EvidenceError("ledger target involvement was not exhaustively normalized")
         totals = _object(ledger.get("totals"), "ledger totals")
         overlay = _object(totals.get("rebate_overlay"), "ledger rebate overlay")
-        endpoint = overlay.get("endpoint_base")
-        if has_rebate:
-            rebate_endpoint = integer(endpoint, "rebate endpoint")
-        elif endpoint is None:
-            rebate_endpoint = None
-        else:
-            raise EvidenceError("ledger rebate input and endpoint disagree")
-        if any((row["rebate_endpoint_base"] is None) == has_rebate
-               for row in validated_windows.values()):
-            raise EvidenceError("ledger window rebate coverage is incomplete")
-        if has_rebate and rebate_endpoint != sum(
-            integer(row["rebate_endpoint_base"], "window rebate endpoint")
-            for row in validated_windows.values()
-        ):
-            raise EvidenceError("ledger rebate endpoint does not reconcile to its windows")
+        if (overlay.get("endpoint_base") is not None
+                or any(row["rebate_endpoint_base"] is not None
+                       for row in validated_windows.values())):
+            raise EvidenceError("rebate endpoints are forbidden in primary falsification")
         terminal = signed_integer(totals.get("contractual_terminal_pnl_base"), "terminal")
         floor = signed_integer(
             totals.get("contractual_pair_recovery_residual_zero_floor_pnl_base"), "floor"
@@ -288,9 +347,6 @@ def aggregate(
             "split_principal_base": str(split_total),
             "sale_cash_base": str(sale_cash_total),
             "merge_return_base": str(merge_total),
-            "rebate_endpoint_base": (
-                None if rebate_endpoint is None else str(rebate_endpoint)
-            ),
             "capital": ledger.get("capital"),
         })
         for condition, window_metric in validated_windows.items():
@@ -306,24 +362,21 @@ def aggregate(
             aggregate_row["residual_zero_floor_pnl_base"] += window_metric[
                 "residual_zero_floor_pnl_base"
             ]
-    if len(rebate_modes) != 1:
-        raise EvidenceError("cohort ledgers mix absent and complete rebate evidence")
-    rebate_complete = rebate_modes == {True}
     terminal_total = sum(int(row["terminal_pnl_base_ex_rebate"]) for row in wallet_rows)
     floor_total = sum(int(row["residual_zero_floor_pnl_base_ex_rebate"])
                       for row in wallet_rows)
-    rebate_total = (
-        sum(int(str(row["rebate_endpoint_base"])) for row in wallet_rows)
-        if rebate_complete else None
-    )
     split_total = sum(int(row["split_principal_base"]) for row in wallet_rows)
     sale_cash_total = sum(int(row["sale_cash_base"]) for row in wallet_rows)
     merge_total = sum(int(row["merge_return_base"]) for row in wallet_rows)
     window_rows: list[dict[str, object]] = []
+    window_terminal_values: list[int] = []
     for aggregate_metric in sorted(
         window_accumulator.values(),
         key=lambda item: (item["start"], item["condition_id"]),
     ):
+        if aggregate_metric["wallets"] != len(wallets):
+            raise EvidenceError("pooled market window does not contain all ten wallets")
+        window_terminal_values.append(aggregate_metric["terminal_pnl_base"])
         window_rows.append({
             **aggregate_metric,
             "terminal_pnl_base": str(aggregate_metric["terminal_pnl_base"]),
@@ -331,15 +384,23 @@ def aggregate(
                 aggregate_metric["residual_zero_floor_pnl_base"]
             ),
         })
+    if sum(window_terminal_values) != terminal_total:
+        raise EvidenceError("pooled market-window endpoint does not reconcile to wallet totals")
+    gate = evaluate_gate(
+        gate_spec,
+        [int(row["terminal_pnl_base_ex_rebate"]) for row in wallet_rows],
+        window_terminal_values,
+    )
     return {
         "schema": SCHEMA,
         "basis": "fixed_10x31_observed_ledgers_with_contractual_terminal_marks",
         "counts": {"wallets": len(wallets), "windows": len(universe),
                    "wallet_windows": len(wallets) * len(universe)},
         "common_inputs": {**expected_sources, "outcomes": outcome_sha},
-        "rebate_evidence": "complete" if rebate_complete else "absent",
+        "rebate_policy": gate_spec["rebate_policy"],
         "wallets": wallet_rows,
         "windows": window_rows,
+        "pre_registered_gate": gate,
         "totals": {
             "terminal_pnl_base_ex_rebate": str(terminal_total),
             "residual_zero_floor_pnl_base_ex_rebate": str(floor_total),
@@ -355,12 +416,17 @@ def aggregate(
             "both_outcomes_sold_wallet_windows": sum(
                 row["both_outcomes_sold_windows"] for row in wallet_rows
             ),
-            "rebate_endpoint_base": None if rebate_total is None else str(rebate_total),
         },
         "capital_policy": (
             "per-wallet paths only; no cross-address netting or cohort ROI because "
             "operator independence is unproven"
         ),
+        "claim_limits": {
+            "complete_wallet": False,
+            "cash_realized": False,
+            "erc1155_custody_complete": False,
+            "result_type": "mechanics_based_falsification_not_wallet_cash_pnl",
+        },
     }
 
 

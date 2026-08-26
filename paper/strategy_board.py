@@ -27,10 +27,12 @@ MODEL_SOURCES = (
     "paper/pair_lots.py",
     "paper/pair_types.py",
     "paper/reference_feed.py",
+    "paper/reference_view.py",
     "paper/run.py",
     "paper/settlement.py",
     "paper/strategy_board.py",
     "paper/taker.py",
+    "paper/twap_engine.py",
     "live/feed_health.py",
     "live/feed_pump.py",
     "live/loop_health.py",
@@ -86,6 +88,23 @@ def current_strategy_board(action_latency_s: float) -> tuple[PairConfig, ...]:
                    flatten_residual_s=240.0, **common),
         PairConfig("basket99f180", "accumulate", 0.02, buy_sum_ceiling=0.99,
                    flatten_residual_s=180.0, **common),
+        # TWAP arm. Both review seats returned NO-GO on TRADING the backtest of
+        # this, and were right: it ignored received_at (every sample arrives a
+        # median 1.678s late, so entry was priced before we held the signal),
+        # priced entry off already-consumed liquidity, ignored orderMinSize,
+        # and resolved tokens positionally in a way the sim could not detect.
+        # NO-GO meant do not trade it, not do not test it - so it runs here,
+        # where fills happen only against real public prints after queue-ahead
+        # depth, orderMinSize is enforced, tokens come from market_metadata,
+        # and settlement is the official outcome.
+        #
+        # Note what this arm is NOT: at T+240 the current TWAP covers
+        # T+180-240 and the settling one covers T+240-300, so there is zero
+        # overlap. This is autocorrelation - a forecast - not the "already
+        # observable" story the backtest was sold on, and it is therefore
+        # regime-dependent.
+        PairConfig("twap240", "accumulate", 0.02, buy_sum_ceiling=0.99,
+                   twap_entry_s=240.0, twap_min_bps=1.0, **common),
     )
 
 def canonical_board(configs: Sequence[PairConfig]) -> str:

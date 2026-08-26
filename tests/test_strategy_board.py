@@ -24,6 +24,7 @@ def test_current_strategy_board_is_the_focused_fill_probe() -> None:
     assert board[0] == expected[0], "basket99 control must stay byte-identical"
     assert [config.name for config in board] == [
         "basket99", "basket99f285", "basket99f240", "basket99f180",
+        "twap240",
     ]
     assert not [c for c in board if c.mode == "momentum"], (
         "momentum retired: +$5.18 gross against $26.93 of taker fees")
@@ -31,11 +32,14 @@ def test_current_strategy_board_is_the_focused_fill_probe() -> None:
     # This board tests exactly one variable: when the naked residual is sold.
     # Every other field must be identical to the control, or the arms are not
     # measuring the flatten.
-    flatten = {c.name: c.flatten_residual_s for c in board}
+    flatten = {c.name: c.flatten_residual_s for c in board
+               if c.twap_entry_s is None}
     assert flatten == {"basket99": None, "basket99f285": 285.0,
                        "basket99f240": 240.0, "basket99f180": 180.0}
     control = board[0]
-    for config in board[1:]:
+    flatten_arms = [c for c in board if c.flatten_residual_s is not None]
+    assert len(flatten_arms) == 3
+    for config in flatten_arms:
         differing = {
             field for field in vars(control)
             if getattr(control, field) != getattr(config, field)
@@ -43,6 +47,9 @@ def test_current_strategy_board_is_the_focused_fill_probe() -> None:
         assert differing == {"name", "flatten_residual_s"}, (
             f"{config.name} differs from the control in {differing}; the "
             "flatten experiment is only interpretable if nothing else moves")
+    twap = [c for c in board if c.twap_entry_s is not None]
+    assert [c.name for c in twap] == ["twap240"]
+    assert twap[0].twap_entry_s == 240.0
     for config in board:
         assert config.mode == "accumulate"
         assert config.buy_sum_ceiling == 0.99
@@ -56,7 +63,7 @@ def test_strategy_board_canonical_hash_is_stable() -> None:
 
     assert " " not in canonical_board(board)
     assert strategy_board_hash(board) == (
-        "73473bec6c4d8ed4f4278bc4502969e82d35977e89f971e1418cd0ca5c54c620"
+        "830c6834c0884832bb903df206bcbc4a1bd209af9fd1dae43a352b604c641f3b"
     )
 
 
@@ -64,4 +71,4 @@ def test_execution_model_identity_has_an_explicit_boundary() -> None:
     identity = execution_model_identity()
 
     assert identity["schema"] == "project-fail-paper-model-v2"
-    assert identity["source_count"] == 25
+    assert identity["source_count"] == 27

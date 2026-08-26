@@ -107,6 +107,14 @@ S = State()
 
 
 def _record_reference(update: ReferenceUpdate) -> None:
+    # Publish on RECEIPT, not on the timestamp the sample describes. Every
+    # sample arrives late (median 1.678s on this feed), and both review seats
+    # called pricing a decision at observed_at textbook lookahead.
+    try:
+        S.engine.reference_view.update(
+            update.asset, float(update.observed_at), int(update.value_e18) / 1e18)
+    except (ValueError, TypeError, AttributeError):
+        pass
     S.ledger.record_reference(
         update.asset, update.observed_at, update.received_at,
         update.value_e18, update.window_s,

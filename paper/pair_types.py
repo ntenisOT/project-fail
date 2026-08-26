@@ -31,6 +31,13 @@ class PairConfig:
     # uncontrolled coin flip into a measured cost. None keeps the old
     # behaviour so an arm can act as the control.
     flatten_residual_s: float | None = None
+    # TWAP arm: take the favoured side this many seconds into the window.
+    # None disables it. Both review seats returned NO-GO on trading the
+    # backtest of this; the arm exists to answer them with queue-aware fills
+    # on official outcomes rather than with a replayed tape.
+    twap_entry_s: float | None = None
+    twap_min_bps: float = 1.0
+    twap_max_age_s: float = 10.0
     buy_taker_after_s: float | None = None
     taker_hedge_after_s: float | None = None
     taker_pair_sum_floor: float | None = None

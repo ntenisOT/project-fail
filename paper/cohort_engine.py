@@ -16,13 +16,15 @@ from live.feed_health import (
 )
 from paper.ladder_engine import LadderWindow
 from paper.momentum_engine import MomentumWindow
+from paper.reference_view import ReferenceView
+from paper.twap_engine import TwapWindow
 from paper.market_metadata import ActiveMarket
 from paper.order_book import OrderBookCache, well_formed_book_event
 from paper.pair_engine import PairWindow
 from paper.pair_types import PairConfig
 from paper.settlement import settle_valid
 
-PaperWindow: TypeAlias = PairWindow | LadderWindow | MomentumWindow
+PaperWindow: TypeAlias = PairWindow | LadderWindow | MomentumWindow | TwapWindow
 
 
 @dataclasses.dataclass(frozen=True)
@@ -103,6 +105,9 @@ class CohortEngine:
         self._stale_assets: set[str] = set()
         self._published: set[tuple[str, str]] = set()
         self._published_slugs: dict[tuple[str, str], str] = {}
+        # Shared causal TWAP view. Empty unless the runner feeds it, so an arm
+        # that wants it simply never trades rather than trading blind.
+        self.reference_view = ReferenceView()
 
     def reset_feed(self) -> None:
         """Forget all book state until fresh snapshots arrive for active markets."""
@@ -191,8 +196,14 @@ class CohortEngine:
             raise ValueError(f"active token collision for {market.slug}")
         windows: dict[str, PaperWindow] = {}
         for config in self.configs:
-            if config.mode == "momentum":
-                window: PaperWindow = MomentumWindow(
+            if config.twap_entry_s is not None:
+                window: PaperWindow = TwapWindow(
+                    config, market.asset, market.slug, market.start,
+                    market.up_token, market.down_token, observed_at,
+                    reference_view=self.reference_view,
+                )
+            elif config.mode == "momentum":
+                window = MomentumWindow(
                     config, market.asset, market.slug, market.start,
                     market.up_token, market.down_token, observed_at,
                 )

@@ -68,6 +68,8 @@ def tokens_for(start: int) -> tuple[str, str] | None:
     return (ids[0], ids[1]) if ids and len(ids) >= 2 else None
 
 
+# Any print, regardless of side. Optimistic: a mark you cannot
+# necessarily buy at.
 PRICE_SQL = """
 SELECT argMax(px, ts) AS last_px FROM (
   SELECT toUnixTimestamp(block_timestamp) AS ts,
@@ -82,6 +84,24 @@ SELECT argMax(px, ts) AS last_px FROM (
 WHERE px IS NOT NULL AND px > 0 AND px < 1
 """
 
+# Only prints where a TAKER BOUGHT this token, i.e. someone lifted the ask.
+# The maker gives the token and the taker gives USDC ('0'), so the executed
+# price is an ask we could actually have paid - which is what buying costs.
+ASK_SQL = """
+SELECT argMax(px, ts) AS ask_px, argMax(sh, ts) AS ask_sh FROM (
+  SELECT toUnixTimestamp(block_timestamp) AS ts,
+         toFloat64(taker_amount_filled) / nullIf(toFloat64(maker_amount_filled), 0)
+           AS px,
+         toFloat64(maker_amount_filled) / 1e6 AS sh
+  FROM trade_history
+  WHERE block_timestamp >  toDateTime({lo:UInt32})
+    AND block_timestamp <= toDateTime({hi:UInt32})
+    AND maker_asset_id = {tok:String}
+    AND taker_asset_id = '0'
+)
+WHERE px IS NOT NULL AND px > 0 AND px < 1
+"""
+
 
 def main() -> None:
     ap = argparse.ArgumentParser()
@@ -89,6 +109,13 @@ def main() -> None:
     ap.add_argument("--checkpoints", nargs="+", type=int, default=[240, 270, 285])
     ap.add_argument("--min-bps", type=float, default=1.0,
                     help="ignore windows whose signal is flatter than this")
+    ap.add_argument("--ask", action="store_true",
+                    help="enter at a real ask print (taker-buy) instead of any print")
+    ap.add_argument("--fresh-s", type=int, default=0,
+                    help="only use prints within this many seconds of the "
+                         "checkpoint; 0 means any print since the window opened. "
+                         "A stale print fabricates an entry price that was never "
+                         "available at the checkpoint.")
     args = ap.parse_args()
 
     windows = load_reference(args.dbs)
@@ -125,28 +152,34 @@ def main() -> None:
                 continue
             predict_up = signal_bps > 0
             token = up_token if predict_up else down_token
-            rows = c.query(PRICE_SQL, parameters={
-                "lo": start, "hi": start + cp, "tok": token}).result_rows
+            sql = ASK_SQL if args.ask else PRICE_SQL
+            lo = start + cp - args.fresh_s if args.fresh_s else start
+            rows = c.query(sql, parameters={
+                "lo": lo, "hi": start + cp, "tok": token}).result_rows
             price = rows[0][0] if rows and rows[0][0] else None
             if price is None:
                 continue
+            size = float(rows[0][1]) if args.ask and len(rows[0]) > 1 else 0.0
             won = (predict_up == outcome_up)
             pnl = (1.0 if won else 0.0) - price - taker_fee(price)
-            results[cp].append((pnl, price, won))
+            results[cp].append((pnl, price, won, size))
 
     print(f"windows resolved: {resolved}   token lookup failed: {skipped}\n")
     print(f"{'checkpoint':<16}{'n':>5}{'hit%':>8}{'avg entry':>11}"
-          f"{'avg P&L/share':>15}{'total':>10}")
+          f"{'avg P&L/share':>15}{'total':>10}{'med size':>12}")
     for cp in args.checkpoints:
         rows = results[cp]
         if not rows:
             continue
         n = len(rows)
-        hit = sum(1 for _, _, w in rows if w) / n
-        entry = sum(p for _, p, _ in rows) / n
-        avg = sum(x for x, _, _ in rows) / n
+        hit = sum(1 for r in rows if r[2]) / n
+        entry = sum(r[1] for r in rows) / n
+        avg = sum(r[0] for r in rows) / n
+        sizes = sorted(r[3] for r in rows if r[3] > 0)
+        med_sz = sizes[len(sizes)//2] if sizes else 0.0
         print(f"T+{cp} ({300-cp:>2}s left){n:>5}{hit:>7.1%}{entry:>11.3f}"
-              f"{avg:>+15.4f}{sum(x for x,_,_ in rows):>+10.2f}")
+              f"{avg:>+15.4f}{sum(r[0] for r in rows):>+10.2f}"
+              f"{med_sz:>10.1f}sh")
 
     print("\nEntry uses the last TRADED price and assumes unlimited size with no")
     print("queue or impact, so these numbers are an upper bound on what is real.")

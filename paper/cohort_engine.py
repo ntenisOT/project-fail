@@ -101,6 +101,8 @@ class CohortEngine:
         self._token_map: dict[str, tuple[str, bool]] = {}
         self._fresh_tokens: set[str] = set()
         self._stale_assets: set[str] = set()
+        self._published: set[tuple[str, str]] = set()
+        self._published_slugs: dict[tuple[str, str], str] = {}
 
     def reset_feed(self) -> None:
         """Forget all book state until fresh snapshots arrive for active markets."""
@@ -136,8 +138,16 @@ class CohortEngine:
         mirrors the paper board rather than re-deriving prices. A side with no
         resting order is published as None, which the executor reads as
         "cancel that side".
+
+        A (strategy, token) that stops quoting entirely - both sides gone, the
+        window invalidated, or the market retired - must still be published
+        once with both sides None. Dropping it silently leaves the executor
+        holding its last desired quote until the 240s stale-intent fallback
+        (live/executor.py STALE_INTENT_S), so a quote the paper board withdrew
+        in 65ms would stay live on the real book for minutes.
         """
         quotes: list[dict[str, object]] = []
+        current: set[tuple[str, str]] = set()
         for cohort in self._active.values():
             for name, window in cohort.windows.items():
                 if not window.full_window or window.invalid_reason:
@@ -147,15 +157,30 @@ class CohortEngine:
                     sell = window.orders.get((side_up, "sell"))
                     if buy is None and sell is None:
                         continue
+                    token = window.tokens[side_up]
+                    current.add((name, token))
+                    self._published_slugs[(name, token)] = window.slug
                     quotes.append({
                         "strategy": name,
-                        "token": window.tokens[side_up],
+                        "token": token,
                         "slug": window.slug,
                         "bid": None if buy is None else round(buy.price, 2),
                         "bid_shares": 0.0 if buy is None else round(buy.size, 2),
                         "ask": None if sell is None else round(sell.price, 2),
                         "ask_shares": 0.0 if sell is None else round(sell.size, 2),
                     })
+        for name, token in sorted(self._published - current):
+            quotes.append({
+                "strategy": name,
+                "token": token,
+                "slug": self._published_slugs.pop((name, token), ""),
+                "bid": None,
+                "bid_shares": 0.0,
+                "ask": None,
+                "ask_shares": 0.0,
+                "withdraw": True,
+            })
+        self._published = current
         return quotes
 
     def open_market(self, market: ActiveMarket, observed_at: float) -> None:

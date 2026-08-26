@@ -23,20 +23,16 @@ def test_current_strategy_board_is_the_focused_fill_probe() -> None:
     board = current_strategy_board(latency)
     assert board[0] == expected[0], "basket99 control must stay byte-identical"
     assert [config.name for config in board] == [
-        "basket99", "mintlate", "mintlate_f6", "mintwin",
+        "basket99", "basket97", "basket95",
     ]
-    mint = {config.name: config for config in board if config.mode == "mint"}
-    # winner-matched parameters (tools/winner_profile.py, 391 BTC windows)
-    assert mint["mintwin"].sell_sum_floor == 1.00
-    assert mint["mintwin"].new_pair_start_s == 5
-    # tape-driven late arms: the traded pair premium only exists after ~180s
-    assert mint["mintlate"].sell_sum_floor == 1.03
-    assert mint["mintlate"].new_pair_start_s == 180
-    assert mint["mintlate_f6"].sell_sum_floor == 1.06
-    assert mint["mintlate_f6"].new_pair_start_s == 210
-    for name in ("mintlate", "mintlate_f6", "mintwin"):
-        assert mint[name].imbalance_tolerance == 7.0
-        assert mint[name].clip_shares == 6.0
+    ceilings = {config.name: config.buy_sum_ceiling for config in board}
+    assert ceilings == {"basket99": 0.99, "basket97": 0.97, "basket95": 0.95}
+    for config in board:
+        assert config.mode == "accumulate"
+        assert config.new_pair_start_s == 30
+        assert config.basket_average_cap
+
+
 
 
 def test_strategy_board_canonical_hash_is_stable() -> None:
@@ -44,7 +40,7 @@ def test_strategy_board_canonical_hash_is_stable() -> None:
 
     assert " " not in canonical_board(board)
     assert strategy_board_hash(board) == (
-        "b5fc566ba78347e7e5e84641de54b95d00288562ae17c7df6dae7dd0c2838c29"
+        "38a89bf7d46696055254433c9a76040e42da5a8d5f5fa8c1b3ffb352f926f741"
     )
 
 

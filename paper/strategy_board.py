@@ -43,35 +43,26 @@ MODEL_SOURCES = (
 
 def current_strategy_board(action_latency_s: float) -> tuple[PairConfig, ...]:
     """Return the exact focused paper board for a modeled action latency."""
-    mint = dict(
-        action_latency_s=action_latency_s, mint_anchor_spread=0.0,
-        clip_shares=6.0, mint_sets=200.0, max_inventory=200.0,
-        imbalance_tolerance=7.0, require_both_to_start=True,
+    common = dict(
+        action_latency_s=action_latency_s, improve_ticks=1,
+        require_both_to_start=True, basket_average_cap=True, new_pair_start_s=30,
     )
     return (
-        # Incumbent control: buy-side paired accumulator (the retired thesis).
-        PairConfig(
-            "basket99", "accumulate", 0.02,
-            action_latency_s=action_latency_s, buy_sum_ceiling=0.99,
-            improve_ticks=1, require_both_to_start=True,
-            basket_average_cap=True, new_pair_start_s=30,
-        ),
-        # PUBLIC-TAPE FINDING (600 BTC windows, 3.9M trades): the traded pair
-        # cost rises monotonically through the window --
-        #   -180..0s 0.998 | 0..120s ~1.00 | 120..180s 1.02
-        #   180..240s 1.04-1.07 | 240..300s 1.08-1.11
-        # So a minted set is worth ~par early and an 8-11% premium late. Early
-        # mint arms could never fill because a >=1.00 ask sat ABOVE a 0.998
-        # market. These arms concentrate selling where the premium exists.
-        PairConfig("mintlate", "mint", 0.02, sell_sum_floor=1.03,
-                   new_pair_start_s=180, new_pair_cutoff_s=295, **mint),
-        # Higher-premium twin: only sells into the richest part of the curve.
-        PairConfig("mintlate_f6", "mint", 0.02, sell_sum_floor=1.06,
-                   new_pair_start_s=210, new_pair_cutoff_s=295, **mint),
-        # Retained early control: proves the zero-fill diagnosis is timing, not
-        # tolerance or floor (this is the previous mintwin configuration).
-        PairConfig("mintwin", "mint", 0.02, sell_sum_floor=1.00,
-                   new_pair_start_s=5, new_pair_cutoff_s=285, **mint),
+        # Incumbent control, unchanged so its history stays comparable.
+        PairConfig("basket99", "accumulate", 0.02, buy_sum_ceiling=0.99, **common),
+        # SELECTIVITY TEST. Out-of-sample persistence (tools/winner_persistence.py,
+        # 78 wallets, Aug18-22 vs Aug22-25): margin persists (rho +0.517, z +4.54)
+        # and the behaviour predicting HIGHER next-period margin is selective and
+        # thin, not continuous:
+        #   both-sided %  -0.464 (z -4.07)   fills/market -0.361 (z -3.16)
+        #   volume        -0.363 (z -3.18)   maker share  -0.230 (z -2.02)
+        # Every mint arm was the opposite profile and took zero fills. These arms
+        # run the same mechanic as basket99 but demand a cheaper pair, so they
+        # fill less often at a better price: selectivity on the price axis, which
+        # the engine supports without a refactor. The tape shows the cheapest 25%
+        # of pre-open volume reaches <=0.97 in 58% of windows.
+        PairConfig("basket97", "accumulate", 0.02, buy_sum_ceiling=0.97, **common),
+        PairConfig("basket95", "accumulate", 0.02, buy_sum_ceiling=0.95, **common),
     )
 
 def canonical_board(configs: Sequence[PairConfig]) -> str:

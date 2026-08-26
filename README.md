@@ -4,24 +4,49 @@ Research → paper A/B → guarded live execution for Polymarket's 5-minute
 BTC/ETH/SOL/XRP "up or down" markets. One question end-to-end: *is there a
 replicable, low-capital edge, and what execution captures it?*
 
-**Status: NO-GO for real money.** Receipt attribution and the frozen integer
-v1 ledger prove one wallet's 31-window split → two-sided maker sell → merge
-mechanism, not a profitable strategy. Its +$60.27 contractual terminal mark is
-not observed cash, 97.48% comes from five windows, the allocation is not
-identified, and the rebate-inclusive residual-zero-payoff case is -$70.24.
-Independent Opus/Qwen max-effort review found no material v1 arithmetic bug but
-rejected implementation, another Basket99 variant, and every live path. Revision
-`3f910c0` implements the evidence-complete v2 producer and frozen ten-wallet
-falsification; it cannot emit results until ClickHouse covers the pre-registered
-24-hour tail through **2026-08-26 23:15 UTC** and Polygon provides a finalized
-anchor beyond it. Gen78 replayed exactly, but Gen79 then exposed a separate false
-book-expiry defect: unchanged event-driven books were being called stale after
-400 ms. Revision `a6dec0c` fixes that readiness model and adds a 15-second
-inbound transport lease. Gen79 economics are invalid and no corrected economic
-replay exists yet. The next economic gate remains exactly one frozen
-sibling-wallet falsification. See
-`reports/2026-08-26-exact-mint-ledger-and-feed-causality.md`. No current paper arm
-has passed a prospective economic gate.
+**Status: NO-GO for real money.** Live geoblock returns blocked=true for both
+machines (see below), so no order path may run regardless of strategy quality.
+
+**2026-08-26 finding that inverts this project's core thesis.** Winner margin
+IS real and repeatable: ranking wallets independently in Aug18-22 and Aug22-25
+(78 wallets with >$1k volume in both) gives Spearman rho +0.517 (z +4.54) on
+margin and +0.746 (z +6.54) on $/market. Copying period-A's top-20 by margin
+returns 4.03% margin in period B against a 2.42% population mean, 0/20 losers.
+So "copy the winners" is not survivorship bias.
+
+But the behaviour that predicts HIGHER next-period margin is the opposite of
+what every arm in this repo was built to do:
+
+    both-sided %   -0.464 (z -4.07)      fills/market  -0.361 (z -3.16)
+    volume         -0.363 (z -3.18)      maker share % -0.230 (z -2.02)
+
+Continuous, two-sided, high-fill, maker-heavy quoting predicts LOWER margin.
+The persistent high-margin cohort (n=11, >3% margin AND >$500 profit in both
+periods) has median 1% maker share, $728 of taker fees, and 88 markets - they
+are selective takers, not market makers. The top one (0xce50c96b) trades 9% of
+windows, ~232 fills per traded window, $390/window, and its terminal
+directional side wins 53.8% - a coin flip. That is intra-window scalping, and
+replicating it needs a signal we do not have.
+
+Supporting measurements, all reproducible:
+  - tools/pair_cost_curve.py: traded pair cost rises monotonically through the
+    window (0.998 pre-open -> 1.02 by T+180 -> 1.08-1.11 at T+240-300).
+  - tools/tape_backtest.py: neither reading of that curve is capturable by a
+    symmetric two-sided maker. Pre-open bids are adverse-selected (-$4.21 to
+    -$11.03/window static; ~$0.00 book-anchored); late selling loses -$1.60 to
+    -$2.81/window at a 13-27% win rate, because the late premium is
+    volume-weighted onto the winning side. Both tests are queue-OPTIMISTIC.
+  - tools/winner_profile.py: 0x1dd2a69e - the wallet the mint thesis was built
+    on - ranks #58 of 300 at 0.33% of volume. Its mechanism is real; its
+    profitability is not.
+
+Caveat that must travel with the persistence numbers: margin is pnl/volume and
+is mechanically higher for selective low-volume traders, every tertile had zero
+losers so the week was broadly favourable, and absolute profit at OUR capital -
+not margin - is the decision variable.
+
+The paper board is now a selectivity test (basket99/97/95) rather than another
+mint variant. No paper arm has passed a prospective economic gate.
 
 ---
 

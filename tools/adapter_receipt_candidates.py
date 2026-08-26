@@ -4,22 +4,24 @@ from __future__ import annotations
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
+from importlib.metadata import PackageNotFoundError, version
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 from typing import Any, Mapping, Sequence, cast
 
 import clickhouse_connect  # type: ignore[import-untyped]
 
 from tools.clickhouse_forensics import (
     LIFECYCLE_LOOKBACK_S,
-    LIFECYCLE_TAIL_S,
     SETTINGS,
     window_external_data,
 )
 from tools.crossvenue_dataset import JoinIntegrityError
+from tools.evidence_provenance import CANDIDATE_PRODUCER_PATHS
 from tools.market_windows import ASSET_PREFIX, ResolvedWindow, fetch_gamma_window, load_window_cache
 from tools.top_setters import DEFAULT_CACHE, parse_timestamp
 import tools.winner_artifacts as winner_artifacts
@@ -36,6 +38,9 @@ ADAPTER_KIND = {
 }
 HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
 HARD_MAX_CANDIDATES = 10_000
+DEFAULT_POST_CLOSE_TAIL_S = 24 * 60 * 60
+MAX_POST_CLOSE_TAIL_S = 7 * 24 * 60 * 60
+BEHAVIOR_SOURCE_PATHS = CANDIDATE_PRODUCER_PATHS
 EXPECTED_COLUMNS = {
     "splits_merges": {
         "block_number": "UInt64", "block_timestamp": "DateTime64(0, 'UTC')",
@@ -129,6 +134,13 @@ def _mapping_rows(windows: Sequence[ResolvedWindow]) -> list[dict[str, object]]:
         "up_token": window.up_token, "winner_up": window.winner_up,
     } for window in windows]
 
+
+def _lifecycle_bounds(start: int, end: int, post_close_tail_s: int) -> tuple[int, int]:
+    if end < start or post_close_tail_s < 0:
+        raise ExportError("invalid lifecycle bounds")
+    return start - LIFECYCLE_LOOKBACK_S, end + 300 + post_close_tail_s
+
+
 def _validate_schema(client: Any) -> None:
     for table, required in EXPECTED_COLUMNS.items():
         actual = {str(row[0]): str(row[1]) for row in client.query(f"DESCRIBE TABLE {table}").result_rows}
@@ -139,20 +151,18 @@ def _candidate_sql(t0: int, t1: int) -> str:
     return f"""
     WITH clob_legs AS (
       SELECT th.tx_hash AS clob_tx, w.condition_id AS clob_condition, w.token AS clob_token,
-             if(th.maker_asset_id='0',toInt256(th.taker_amount_filled),
-                -toInt256(th.maker_amount_filled)) AS clob_delta
-      FROM trade_history th INNER JOIN set_windows w
+             if(th.maker_asset_id='0','split','merge') AS clob_op,
+             if(th.maker_asset_id='0',th.taker_amount_filled,
+                th.maker_amount_filled) AS clob_amount
+      FROM trade_history AS th FINAL INNER JOIN set_windows w
         ON if(th.maker_asset_id='0',th.taker_asset_id,th.maker_asset_id)=w.token
       WHERE th.block_timestamp>=toDateTime({t0}) AND th.block_timestamp<toDateTime({t1})
         AND ((th.maker_asset_id='0' AND th.taker_asset_id!='0')
              OR (th.taker_asset_id='0' AND th.maker_asset_id!='0'))
-    ), clob_nets AS (
-      SELECT clob_tx, clob_condition, clob_token, sum(clob_delta) AS clob_net
-      FROM clob_legs GROUP BY clob_tx, clob_condition, clob_token
     ), clob_token_ops AS (
-      SELECT clob_tx, clob_condition, clob_token,
-             if(clob_net>0,'split','merge') AS clob_op,
-             toUInt256(abs(clob_net)) AS clob_amount FROM clob_nets WHERE clob_net!=0
+      SELECT clob_tx, clob_condition, clob_op, clob_token,
+             sum(clob_amount) AS clob_amount
+      FROM clob_legs GROUP BY clob_tx, clob_condition, clob_op, clob_token
     ), clob_ops AS (
       SELECT clob_tx, clob_condition, clob_op, clob_amount, toUInt8(1) AS matched
       FROM clob_token_ops GROUP BY clob_tx, clob_condition, clob_op, clob_amount
@@ -162,7 +172,7 @@ def _candidate_sql(t0: int, t1: int) -> str:
            lower(toString(sm.tx_hash)), lower(sm.condition_id), toString(sm.op),
            lower(sm.stakeholder), toString(sm.amount),
            ifNull(co.matched,0)=1 AS same_tx_clob
-    FROM splits_merges sm
+    FROM splits_merges AS sm FINAL
     INNER JOIN (SELECT DISTINCT condition_id FROM set_windows) w
       ON lower(sm.condition_id)=w.condition_id
     LEFT JOIN clob_ops co ON sm.tx_hash=co.clob_tx
@@ -233,12 +243,40 @@ def _candidate_rows(
         raise ExportError(f"candidate count {len(candidates)} exceeds bound {max_candidates}")
     return candidates, duplicate_rows
 
-def _git_head(repo: Path) -> str:
+def _revision(repo: Path) -> dict[str, object]:
     try:
-        return subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, check=True,
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, check=True,
                               capture_output=True, text=True).stdout.strip()
+        dirty = subprocess.run(
+            ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+            cwd=repo, check=True, capture_output=True, text=True,
+        ).stdout.strip()
     except (OSError, subprocess.CalledProcessError) as exc:
         raise ExportError("unable to resolve Git revision") from exc
+    if dirty:
+        raise ExportError("behavior-relevant producer sources are dirty")
+    source_hashes = {
+        relative: _sha256((repo / relative).read_bytes())
+        for relative in BEHAVIOR_SOURCE_PATHS
+    }
+    try:
+        runtime = {
+            "python_implementation": sys.implementation.name,
+            "python_version": ".".join(str(value) for value in sys.version_info[:3]),
+            "clickhouse_connect_version": version("clickhouse-connect"),
+        }
+    except PackageNotFoundError as exc:
+        raise ExportError("an exact producer runtime dependency is unavailable") from exc
+    return {
+        "git_head": head,
+        "source_sha256": source_hashes,
+        "revision_sha256": _sha256(_canonical({
+            "git_head": head,
+            "source_sha256": source_hashes,
+            "runtime": runtime,
+        })),
+        "runtime": runtime,
+    }
 
 def _write_immutable(path: Path, payload: Mapping[str, object]) -> str:
     encoded = json.dumps(payload, indent=2, sort_keys=True, allow_nan=False).encode() + b"\n"
@@ -253,7 +291,8 @@ def run(args: argparse.Namespace) -> tuple[str, int]:
     if args.end < args.start or args.start % 300 or args.end % 300:
         raise ExportError("start/end must be an increasing five-minute-aligned interval")
     source_path = Path(__file__).resolve()
-    source_hash = _sha256(source_path.read_bytes())
+    repo = source_path.parents[1]
+    start_revision = _revision(repo)
     cohort, cohort_hash = _load_cohort(args.cohort, args.cohort_sha256, args.start)
     windows, fetched = _resolve_windows(
         args.start, args.end, args.market_cache, workers=args.workers,
@@ -261,7 +300,7 @@ def run(args: argparse.Namespace) -> tuple[str, int]:
     )
     mapping = _mapping_rows(windows)
     mapping_hash = _sha256(_canonical(mapping))
-    t0, t1 = args.start - LIFECYCLE_LOOKBACK_S, args.end + LIFECYCLE_TAIL_S
+    t0, t1 = _lifecycle_bounds(args.start, args.end, args.post_close_tail_s)
     client = clickhouse_connect.get_client(
         host="localhost", port=8123, username="copypoly", password="copypoly",
         database="copypoly",
@@ -283,8 +322,9 @@ def run(args: argparse.Namespace) -> tuple[str, int]:
     query_spec = {
         "adapters": {kind: adapter for adapter, kind in ADAPTER_KIND.items()},
         "current_adapter_rule": "all mapped-condition lifecycle split/merge operations",
-        "legacy_factory_rule": "exclude exact tx+condition+op+UInt256 net CLOB-flow joins",
+        "legacy_factory_rule": "exclude exact tx+condition+op+UInt256 summed CLOB-flow joins",
         "lifecycle_end_exclusive": t1, "lifecycle_start": t0,
+        "post_close_tail_s": args.post_close_tail_s,
         "schema": QUERY_SCHEMA, "settings": SETTINGS, "sql": sql,
     }
     query_hash = _sha256(_canonical(query_spec))
@@ -298,7 +338,6 @@ def run(args: argparse.Namespace) -> tuple[str, int]:
         "source_watermark_unix_s": watermarks,
         "start": args.start, "start_block": start_block,
     }
-    repo = source_path.parents[1]
     payload = {
         "schema": SCHEMA, "query": query, "candidate_query": query_spec,
         "cohort": cohort, "market_mapping": mapping,
@@ -307,10 +346,10 @@ def run(args: argparse.Namespace) -> tuple[str, int]:
             "deduplicated_source_rows": duplicate_rows, "gamma_fetched_in_memory": fetched,
             "markets": len(mapping),
         },
-        "generator": {"git_head": _git_head(repo), "source_sha256": source_hash},
+        "generator": start_revision,
         "limitations": [
             "no Polygon receipts or traces are fetched by this producer",
-            "legacy candidates exclude only exact tx/condition/op/amount CLOB set joins",
+            "legacy candidates exclude only exact op-separated tx/condition/op/amount CLOB set joins",
             "current adapter candidates are lifecycle events and remain unattributed until receipts decode",
             "candidate block bounds cover emitted candidates; timestamp bounds define the source query",
         ],
@@ -318,8 +357,8 @@ def run(args: argparse.Namespace) -> tuple[str, int]:
     }
     if _sha256(args.cohort.read_bytes()) != cohort_hash:
         raise ExportError("cohort changed during export")
-    if _sha256(source_path.read_bytes()) != source_hash:
-        raise ExportError("producer source changed during export")
+    if _revision(repo) != start_revision:
+        raise ExportError("producer revision changed during export")
     digest = _write_immutable(args.output, payload)
     return digest, len(candidates)
 
@@ -333,10 +372,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--max-candidates", type=int, default=4_000)
+    parser.add_argument("--post-close-tail-s", type=int, default=DEFAULT_POST_CLOSE_TAIL_S)
     parser.add_argument("--no-fetch", action="store_true")
     args = parser.parse_args(argv)
-    if not 1 <= args.workers <= 32 or not 1 <= args.max_candidates <= HARD_MAX_CANDIDATES:
-        parser.error("workers must be 1..32 and max-candidates 1..10000")
+    if (not 1 <= args.workers <= 32
+            or not 1 <= args.max_candidates <= HARD_MAX_CANDIDATES
+            or not 0 <= args.post_close_tail_s <= MAX_POST_CLOSE_TAIL_S):
+        parser.error(
+            "workers must be 1..32, max-candidates 1..10000, and "
+            "post-close-tail-s 0..604800"
+        )
     try:
         digest, count = run(args)
     except (ExportError, FileExistsError, OSError, RuntimeError) as exc:

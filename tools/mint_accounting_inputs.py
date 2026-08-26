@@ -4,23 +4,35 @@ from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
 import hashlib
+from importlib.metadata import PackageNotFoundError, version
 import json
 from pathlib import Path
 import re
 import subprocess
+import sys
 from typing import Any, Mapping
 
 from tools.market_windows import ResolvedWindow
+from tools.evidence_provenance import ATTRIBUTION_PRODUCER_PATHS, CANDIDATE_PRODUCER_PATHS
 
 
 WALLET_RE = re.compile(r"^0x[0-9a-f]{40}$")
 SHA_RE = re.compile(r"^[0-9a-f]{64}$")
+GIT_RE = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")
 MONEY_RE = re.compile(r"^(?:0|[1-9][0-9]*)(?:\.[0-9]{1,6})?$")
-STANDARD_ADAPTER = "0xada100db00ca00073811820692005400218fce1f"
-SOURCE_NAMES = (
-    "mint_accounting.py", "mint_accounting_clickhouse.py",
-    "mint_accounting_core.py", "mint_accounting_inputs.py",
-)
+SOURCE_PATHS = tuple(dict.fromkeys((
+    "tools/mint_accounting.py", "tools/mint_accounting_capital.py",
+    "tools/mint_cohort_aggregate.py",
+    "tools/mint_accounting_clickhouse.py", "tools/mint_accounting_core.py",
+    "tools/mint_accounting_inputs.py", "tools/mint_accounting_outcomes.py",
+    "tools/mint_attribution_validation.py",
+    "tools/mint_ctf_rpc.py",
+    "tools/mint_sibling_cohort.py", "research/mint_sibling_cohort_v1.json",
+    "tools/market_windows.py", "tools/clickhouse_forensics.py",
+    "tools/wallet_metrics.py", "requirements.txt",
+    *CANDIDATE_PRODUCER_PATHS,
+    *ATTRIBUTION_PRODUCER_PATHS,
+)))
 
 
 class EvidenceError(ValueError):
@@ -89,20 +101,6 @@ def signed_integer(value: object, field: str) -> int:
         raise EvidenceError(f"{field} must be an integer") from exc
 
 
-def _candidate_key(row: Mapping[str, object]) -> tuple[object, ...]:
-    tokens = row.get("token_ids")
-    if not isinstance(tokens, list) or len(tokens) != 2:
-        raise EvidenceError("candidate token_ids must contain exactly two tokens")
-    return (
-        str(row.get("adapter") or "").lower(), str(row.get("amount")),
-        str(row.get("condition_id") or "").lower(), str(row.get("op") or ""),
-        integer(row.get("source_block_number"), "source_block_number"),
-        integer(row.get("source_block_timestamp"), "source_block_timestamp"),
-        integer(row.get("source_log_index"), "source_log_index"),
-        tuple(str(token) for token in tokens), str(row.get("tx_hash") or "").lower(),
-    )
-
-
 def mapping(candidate: Mapping[str, object]) -> tuple[list[ResolvedWindow], dict[str, Any]]:
     rows, query = candidate.get("market_mapping"), candidate.get("query")
     if not isinstance(rows, list) or not isinstance(query, dict):
@@ -118,45 +116,6 @@ def mapping(candidate: Mapping[str, object]) -> tuple[list[ResolvedWindow], dict
     return windows, query
 
 
-def attributed_events(
-    candidate: Mapping[str, object], attribution: Mapping[str, object], wallet: str,
-) -> tuple[list[dict[str, Any]], dict[str, str]]:
-    candidates, results, settings = (
-        candidate.get("candidates"), attribution.get("results"), attribution.get("settings"),
-    )
-    if (not isinstance(candidates, list) or not isinstance(results, list)
-            or not isinstance(settings, Mapping)
-            or settings.get("amount_tolerance_base_units") != 0):
-        raise EvidenceError("receipt attribution rows or zero-tolerance settings are missing")
-    source = {_candidate_key(row): row for row in candidates if isinstance(row, Mapping)}
-    if len(source) != len(candidates):
-        raise EvidenceError("candidate rows are malformed or duplicated")
-    selected, receipts = [], {}
-    for result in results:
-        if not isinstance(result, dict) or not isinstance(result.get("attribution"), dict):
-            raise EvidenceError("malformed attribution result")
-        proof = result["attribution"]
-        addresses = {str(proof.get(name) or "").lower() for name in ("wallet", "counterparty")}
-        if wallet not in addresses:
-            continue
-        if addresses != {wallet} or proof.get("classification") != "explicit_wallet":
-            raise EvidenceError("target attribution is not an explicit single-wallet proof")
-        row = result.get("candidate")
-        if not isinstance(row, dict) or _candidate_key(row) not in source:
-            raise EvidenceError("attribution does not rejoin an exact candidate")
-        if str(row.get("adapter") or "").lower() != STANDARD_ADAPTER:
-            raise EvidenceError("target event is not the standard adapter")
-        receipt_hash = digest(str(result.get("receipt_sha256")), "receipt_sha256")
-        tx_hash = str(row.get("tx_hash") or "").lower()
-        if tx_hash in receipts:
-            raise EvidenceError("duplicate target receipt transaction")
-        receipts[tx_hash] = receipt_hash
-        selected.append(row)
-    if not selected:
-        raise EvidenceError("no target receipt-attributed lifecycle events")
-    return selected, receipts
-
-
 def verify_receipts(path: Path, expected_sha: str, receipts: Mapping[str, str]) -> None:
     if hash_file(path) != digest(expected_sha, "receipt cache SHA-256"):
         raise EvidenceError("receipt cache SHA-256 mismatch")
@@ -169,7 +128,16 @@ def verify_receipts(path: Path, expected_sha: str, receipts: Mapping[str, str]) 
                 if tx_hash in receipts:
                     if row.get("schema") != "project-fail-polygon-receipt-cache-v1":
                         raise EvidenceError("target receipt cache schema mismatch")
-                    found[tx_hash] = digest(str(row.get("receipt_sha256")), "receipt_sha256")
+                    receipt = row.get("receipt")
+                    if not isinstance(receipt, Mapping):
+                        raise EvidenceError("target receipt cache row lacks its receipt")
+                    declared = digest(str(row.get("receipt_sha256")), "receipt_sha256")
+                    if (sha256(canonical(receipt)) != declared
+                            or str(receipt.get("transactionHash") or "").lower() != tx_hash):
+                        raise EvidenceError("target cached receipt content or transaction is invalid")
+                    if tx_hash in found:
+                        raise EvidenceError("target receipt cache transaction is duplicated")
+                    found[tx_hash] = declared
     except (AttributeError, json.JSONDecodeError) as exc:
         raise EvidenceError("receipt cache contains a malformed row") from exc
     if found != dict(receipts):
@@ -209,9 +177,55 @@ def rebates(
 
 
 def revision(repo: Path) -> dict[str, object]:
-    source_dir = Path(__file__).resolve().parent
-    hashes = {name: hash_file(source_dir / name) for name in SOURCE_NAMES}
-    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, check=True,
-                          capture_output=True, text=True).stdout.strip()
-    return {"git_head": head, "source_sha256": hashes,
-            "revision_sha256": sha256(canonical({"git_head": head, "source_sha256": hashes}))}
+    dirty = subprocess.run(
+        ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+        cwd=repo, check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    if dirty:
+        raise EvidenceError("the repository is dirty; exact accounting requires a clean revision")
+    hashes = {name: hash_file(repo / name) for name in SOURCE_PATHS}
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, check=True,
+        capture_output=True, text=True,
+    ).stdout.strip().lower()
+    if not GIT_RE.fullmatch(head):
+        raise EvidenceError("git HEAD is not a canonical revision")
+    try:
+        runtime = {
+            "python_implementation": sys.implementation.name,
+            "python_version": ".".join(str(value) for value in sys.version_info[:3]),
+            "clickhouse_connect_version": version("clickhouse-connect"),
+            "eth_utils_version": version("eth-utils"),
+        }
+    except PackageNotFoundError as exc:
+        raise EvidenceError("an exact accounting runtime dependency is unavailable") from exc
+    frozen = {"git_head": head, "source_sha256": hashes, "runtime": runtime}
+    return {**frozen, "revision_sha256": sha256(canonical(frozen))}
+
+
+def validated_revision_manifest(value: object) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        raise EvidenceError("producer revision manifest is missing")
+    head = str(value.get("git_head") or "").lower()
+    raw_sources, raw_runtime = value.get("source_sha256"), value.get("runtime")
+    if (not GIT_RE.fullmatch(head) or not isinstance(raw_sources, Mapping)
+            or set(raw_sources) != set(SOURCE_PATHS) or not isinstance(raw_runtime, Mapping)):
+        raise EvidenceError("producer revision manifest has an invalid shape")
+    sources = {
+        name: digest(str(raw_sources[name]), f"producer source {name}")
+        for name in SOURCE_PATHS
+    }
+    required_runtime = (
+        "python_implementation", "python_version",
+        "clickhouse_connect_version", "eth_utils_version",
+    )
+    if set(raw_runtime) != set(required_runtime):
+        raise EvidenceError("producer runtime manifest has an invalid shape")
+    runtime = {name: str(raw_runtime[name]) for name in required_runtime}
+    if any(not item for item in runtime.values()):
+        raise EvidenceError("producer runtime manifest contains an empty value")
+    frozen = {"git_head": head, "source_sha256": sources, "runtime": runtime}
+    expected = sha256(canonical(frozen))
+    if value.get("revision_sha256") != expected:
+        raise EvidenceError("producer revision manifest hash is invalid")
+    return {**frozen, "revision_sha256": expected}

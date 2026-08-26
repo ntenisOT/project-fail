@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import time
 from typing import TYPE_CHECKING, Mapping, Sequence
 import urllib.request
@@ -18,12 +19,15 @@ import urllib.request
 if TYPE_CHECKING:
     from tools.adapter_receipt_core import classify_receipt
     from tools.adapter_receipt_input import InputError, load_input
+    from tools.evidence_provenance import ATTRIBUTION_PRODUCER_PATHS
 elif __package__:
     from .adapter_receipt_core import classify_receipt
     from .adapter_receipt_input import InputError, load_input
+    from .evidence_provenance import ATTRIBUTION_PRODUCER_PATHS
 else:
     from adapter_receipt_core import classify_receipt
     from adapter_receipt_input import InputError, load_input
+    from evidence_provenance import ATTRIBUTION_PRODUCER_PATHS
 
 CACHE_SCHEMA = "project-fail-polygon-receipt-cache-v1"
 OUTPUT_SCHEMA = "project-fail-adapter-receipt-attribution-v1"
@@ -172,12 +176,23 @@ def _git_head(repo: Path) -> str:
 
 
 def _revision(repo: Path) -> dict[str, object]:
-    source_paths = [Path(__file__).with_name(name).resolve() for name in (
-        "adapter_receipt_attributor.py", "adapter_receipt_core.py", "adapter_receipt_input.py")]
-    source_hashes = {path.name: _sha256(path.read_bytes()) for path in sorted(source_paths)}
+    dirty = subprocess.run(
+        ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+        cwd=repo, check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    if dirty:
+        raise RuntimeError("receipt attribution requires a clean exact revision")
+    source_hashes = {
+        relative: _sha256((repo / relative).read_bytes())
+        for relative in ATTRIBUTION_PRODUCER_PATHS
+    }
     git_head = _git_head(repo)
-    revision_hash = _sha256(_canonical({"git_head": git_head, "source_sha256": source_hashes}))
-    return {"git_head": git_head, "source_sha256": source_hashes, "revision_sha256": revision_hash}
+    runtime = {
+        "python_implementation": sys.implementation.name,
+        "python_version": ".".join(str(value) for value in sys.version_info[:3]),
+    }
+    frozen = {"git_head": git_head, "source_sha256": source_hashes, "runtime": runtime}
+    return {**frozen, "revision_sha256": _sha256(_canonical(frozen))}
 
 
 def _write_immutable(path: Path, payload: Mapping[str, object]) -> str:

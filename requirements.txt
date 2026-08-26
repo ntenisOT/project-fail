@@ -1,3 +1,4 @@
 clickhouse-connect>=0.8
+eth-utils>=6.0
 websockets>=13.0
 py-clob-client-v2

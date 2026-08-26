@@ -58,10 +58,11 @@ SELECT block_number, toUInt32(block_timestamp), log_index, lower(toString(tx_has
        order_hash, lower(maker), lower(taker), maker_asset_id, taker_asset_id,
        toString(maker_amount_filled), toString(taker_amount_filled), toString(fee),
        is_neg_risk, lower(condition_id), outcome_index,
-       tx_hash IN v2_transactions, lower(taker) NOT IN ({exchanges})
+       tx_hash IN v2_transactions,
+       lower(maker)='{wallet}' AND lower(taker) NOT IN ({exchanges})
 FROM trade_history FINAL
 WHERE block_timestamp>=toDateTime({t0}) AND block_timestamp<toDateTime({t1})
-  AND lower(maker)='{wallet}'
+  AND (lower(maker)='{wallet}' OR lower(taker)='{wallet}')
   AND (maker_asset_id IN (SELECT token FROM set_windows)
        OR taker_asset_id IN (SELECT token FROM set_windows))
 ORDER BY block_number, log_index
@@ -101,17 +102,24 @@ def source_rows(client: Any, windows: Sequence[ResolvedWindow], wallet: str,
         redemptions_sql, settings=SETTINGS, external_data=window_external_data(windows),
     ).result_rows
     erc_sql = f"""SELECT count(), countIf(token_id IN (SELECT token FROM set_windows)),
-      countIf(lower(from_addr)='{wallet}' OR lower(to_addr)='{wallet}')
+      countIf(lower(from_addr)='{wallet}' OR lower(to_addr)='{wallet}'),
+      countIf(token_id IN (SELECT token FROM set_windows)
+        AND (lower(from_addr)='{wallet}' OR lower(to_addr)='{wallet}'))
       FROM erc1155_transfers FINAL
       WHERE block_timestamp>=toDateTime({t0}) AND block_timestamp<toDateTime({t1})"""
     erc = client.query(erc_sql, settings=SETTINGS,
                        external_data=window_external_data(windows)).result_rows[0]
+    if int(erc[1]) != 0:
+        raise EvidenceError(
+            "mapped ERC-1155 transfers exist but are not integrated into the v2 ledger"
+        )
     coverage = {
         "clickhouse_version": str(client.command("SELECT version()")),
         "source_watermark_unix_s": watermarks,
         "erc1155_interval_rows": int(erc[0]),
         "erc1155_mapped_token_rows": int(erc[1]),
         "erc1155_target_address_rows": int(erc[2]),
+        "erc1155_mapped_target_address_rows": int(erc[3]),
         "usdc_transfers_global_rows": int(client.command(
             "SELECT count() FROM usdc_transfers FINAL")),
         "sql": {"fills": fills_sql, "redemptions": redemptions_sql,
@@ -165,23 +173,14 @@ def fill_events(rows: Sequence[tuple], windows: Sequence[ResolvedWindow],
 
 def redemption_events(rows: Sequence[tuple], conditions: set[str],
                       wallet: str) -> list[dict[str, object]]:
-    events = []
     for row in rows:
         (block, timestamp, log_index, tx_hash, redeemer, condition, collateral,
          parent, index_sets, payout) = row
         condition, collateral = str(condition).lower(), str(collateral).lower()
         if str(redeemer) != wallet or condition not in conditions:
             raise EvidenceError("redemption row escaped the exact target join")
-        amount = integer(payout, "redemption payout")
-        if collateral == PUSD and amount:
-            raise EvidenceError("target pUSD redemption needs token-consumption proof")
-        events.append({
-            "type": "redemption_observation", "block_number": int(block),
-            "timestamp": int(timestamp), "log_index": int(log_index),
-            "tx_hash": str(tx_hash), "condition_id": condition,
-            "collateral_token": collateral, "parent_collection_id": str(parent),
-            "index_sets": [str(value) for value in index_sets], "payout_base": str(amount),
-            "ledger_applied": False,
-            "reason": "legacy_or_zero_payout_not_attributable_to_pusd_observed_ledger",
-        })
-    return events
+        del block, timestamp, log_index, tx_hash, collateral, parent, index_sets, payout
+        raise EvidenceError(
+            "target redemption needs exact token-consumption accounting even at zero payout"
+        )
+    return []

@@ -1,0 +1,68 @@
+{
+  "schema": "project-fail-mint-sibling-cohort-v1",
+  "sources": {
+    "candidate": {
+      "path": "out/gen76-fresh31-adapter-receipt-candidates-v1.json",
+      "sha256": "073886fe970707d23927dfcc30342b31eb7fc2c6cef5717d49b1535c374be651"
+    },
+    "attribution": {
+      "path": "out/gen76-fresh31-adapter-receipt-attribution-v1.json",
+      "sha256": "4c37c45aaffeb925e72dd6aab1ef0985b8a9eeaa81f0d397d3fc1898d4363f31"
+    },
+    "receipt_cache": {
+      "path": "out/gen76-polygon-receipt-cache-v1.jsonl",
+      "sha256": "1457722847aabfcca193097e4378c7ce0dd9bc8c3e055d9955850a65bbac8fef"
+    }
+  },
+  "universe": {
+    "chain_id": 137,
+    "asset": "btc",
+    "start": 1787690400,
+    "end": 1787699400,
+    "window_count": 31,
+    "market_mapping_sha256": "29439a7a39b481ccd81bec23d5bc28be75d570af4892bbb8fc04dc7c595991be",
+    "outcome_free_projection_sha256": "ed1905881edcfb675e36101683d3a3df7b0337f7bb56f49ca99f7b9a0128b7e1"
+  },
+  "selection": {
+    "adapter": "0xada100db00ca00073811820692005400218fce1f",
+    "adapter_kind": "standard",
+    "candidate_scope": "current_adapter_lifecycle",
+    "op": "split",
+    "amount_base": "750000000",
+    "classification": "explicit_wallet",
+    "wallet_equals_counterparty": true,
+    "required_conditions": 31,
+    "reference_wallet": "0x1dd2a69e73ba444ecd5d87f0073d51a670ad51c2",
+    "qualifying_precursor_wallet_count": 11,
+    "qualifying_precursor_wallets_sha256": "5fb2ccd3aa4728ea30e74d71700eadd7e3af8d5c513da43a15a3467cd7c373a3"
+  },
+  "wallets": [
+    "0x0ab7993cd51f552a61e9211e424578f5bfc66fe6",
+    "0x32c4922da31d9f90232ea40748846e5ccc48b175",
+    "0x484e5213d4b75147fd92a0df0e8c7bbcc2ce8e9c",
+    "0x5916ce250c0b3e32eed3303ffb2938cab0b42a0b",
+    "0x809f275254e21f720a4e6c50c28c669c721f2ef0",
+    "0xa3338de30e72494d609f586e1e41c11a0a9a29c8",
+    "0xbfa0ed0c199c00aec969d822818f789ca35acd6d",
+    "0xd6d2b81f0c60e358500a84ce8fbd566bbcc73f40",
+    "0xe1e556d1de36301b5b21383918b2436d71675665",
+    "0xeb1f5a235318b312054df0de5724b74288495b91"
+  ],
+  "expected_grid": {
+    "wallets": 10,
+    "windows_per_wallet": 31,
+    "wallet_windows": 310,
+    "qualifying_splits": 310
+  },
+  "projections": {
+    "wallets_sha256": "d0ed4375eaa133a6894f48a35ab99185822725b1bb40766a37de00df134f8391",
+    "split_evidence_sha256": "4f7a2841fec5e0e446ae2ff990a4b1b5ed1a0ee093d356bbb97b363ade01fefa"
+  },
+  "limitations": [
+    "full-period behavioral selection, not an out-of-sample winner cohort",
+    "selection requires activity in all 31 windows",
+    "the ten addresses are not proven to be independent operators",
+    "the cohort is outside the original frozen40 trading-wallet list",
+    "outcomes, fills, merges, rebates, and profit are excluded from membership selection"
+  ]
+}

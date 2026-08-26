@@ -113,6 +113,41 @@ in 00-08 UTC. Volume and edge are not the same thing. Caveat: the 00-08 block
 is 99 windows (solid) while the negative 09-12 block is only 8 windows, so its
 sign is not established.
 
+**2026-08-26: the first tradeable edge, and why every earlier test missed it.**
+All prior work tested OUTCOME prediction, which is dead: the price is calibrated
+and Binance does not lead the TWAP. But the top-margin wallet does not predict
+outcomes - its terminal direction is a 53.8% coin flip. It ROUND-TRIPS inside
+the window: 73 of 103 token-windows, buying near 0.477 and selling near 0.580,
+capturing +5.9c/share on 137k shares (implied gross $15,761 against $2,365 of
+taker fees), 62% of its fills as taker. That is PATH prediction over seconds.
+
+tools/momentum_probe.py measures it directly on 600 BTC windows:
+
+    lookback 10s -> horizon 10s   corr +0.2312   z +28.69
+    lookback 30s -> horizon 30s   corr +0.0717   z  +8.25
+    quintiles: past 30s -0.1968 -> next -0.0109 ; +0.2025 -> next +0.0211
+
+Every lookback/horizon combination shows positive momentum. Because a
+calibrated market is a martingale (zero return autocorrelation), this had to be
+tested against costs rather than believed - trade-VWAP momentum can be
+manufactured by order splitting. Entering by lifting the ask, exiting by
+hitting the bid, paying the 0.07*p*(1-p) taker fee on both legs:
+
+    threshold 0.02  net -0.0026/share   fees eat it
+    threshold 0.05  net +0.0043/share   marginal
+    threshold 0.10  net +0.0196/share   over 1,030 trades - SURVIVES
+
+So a >=10c move in 10s predicts enough continuation to clear a 3.5c round-trip
+fee. It fires ~1.7 times per window, while the winner does ~232 fills/window, so
+this single signal does not reproduce him. Maker execution on either leg would
+roughly triple the net (3.5c of fee against 4.3c of gross).
+
+This is the first edge in this repo that is both statistically strong and
+cost-positive. It is also a DIRECTIONAL, taker-side, single-name strategy -
+nothing like the passive two-sided pair/mint inventory arms the paper board has
+carried, which is why no arm ever captured it.
+
+
 
 
 

@@ -70,6 +70,28 @@ longer current, which matters because the temporary August liquidity-reward
 program is already flagged here as a possible driver of that regime. Before
 running further paper experiments, confirm the market is actually trading.
 
+**Follow-up 07:40 UTC: the flow loss is specific to the 5m crypto products.**
+Independent data-api checks on the previous completed window:
+
+    btc 5m  0 trades   liquidity $15,392
+    eth 5m  0 trades   liquidity $12,484
+    sol 5m  1 trade    liquidity  $4,132
+    xrp 5m  0 trades   liquidity  $3,197
+
+while unrelated Polymarket markets show $1.00M / $890k / $637k of 24h volume.
+Polymarket is healthy; our target product is not. Makers are still quoting
+deep books with no takers against them - the shape a reward-subsidised market
+takes once organic flow leaves. Official docs confirm the liquidity-reward
+program runs "through the month of August" ($1M total, $550k to 5-minute
+markets), so the subsidy is still live while the flow is not.
+
+A maker strategy earns nothing without takers, so no paper arm can be
+evaluated in this state. Historical activity peaks at 13:00-18:00 UTC
+(Aug18-25: $74,901/window at hour 14 vs $55,149 at hour 07), so the next
+meaningful experiment window is the US session. Whether flow returns then is
+itself the measurement that dates the regime change.
+
+
 
 ---
 

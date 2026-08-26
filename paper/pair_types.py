@@ -27,6 +27,10 @@ class PairConfig:
     new_pair_start_s: float = 0.0
     mint_anchor_spread: float | None = None
     require_both_to_start: bool = False
+    # Winner 0x1Dd2A69e runs a 6.5-share median Up/Down imbalance (p90 16.5,
+    # max 43) and never stops quoting. The 0.1 default froze our mint arms
+    # after the first asymmetric fill.
+    imbalance_tolerance: float = 0.1
     basket_average_cap: bool = False
     ladder_offsets: tuple[int, ...] = ()
     quote_hold_s: float = 0.0

@@ -211,6 +211,7 @@ class PairWindow:
             price_up=prices[0], price_down=prices[1],
             sum_floor=self.config.sell_sum_floor,
             clip_shares=self.config.clip_shares,
+            imbalance_tolerance=self.config.imbalance_tolerance,
         )
         target = {(quote.side_up, "sell"): quote.price for quote in plan}
         current = {

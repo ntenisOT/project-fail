@@ -35,9 +35,13 @@ CANDIDATE = "basket99_complete99_t0"
 def completion_counterfactual_board(action_latency_s: float) -> tuple[PairConfig, ...]:
     """Clone the frozen baseline, changing only identity and taker timing."""
     active = current_strategy_board(action_latency_s)
-    if len(active) != 1 or active[0].name != "basket99":
-        raise RuntimeError("completion counterfactual requires the focused basket99 board")
-    baseline = active[0]
+    # The board now also carries winner-matched mint arms; this counterfactual
+    # is defined against the basket99 baseline, which must still be present and
+    # unchanged. Isolate it rather than requiring a single-arm board.
+    matches = [config for config in active if config.name == "basket99"]
+    if len(matches) != 1:
+        raise RuntimeError("completion counterfactual requires exactly one basket99 arm")
+    baseline = matches[0]
     if baseline.buy_sum_ceiling != 0.99 or not baseline.basket_average_cap:
         raise RuntimeError("basket99 no longer carries the frozen 0.99 basket cap")
     candidate = dataclasses.replace(

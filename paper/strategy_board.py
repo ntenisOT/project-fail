@@ -43,13 +43,34 @@ MODEL_SOURCES = (
 
 def current_strategy_board(action_latency_s: float) -> tuple[PairConfig, ...]:
     """Return the exact focused paper board for a modeled action latency."""
+    mint = dict(
+        action_latency_s=action_latency_s, mint_anchor_spread=0.0,
+        clip_shares=6.0, mint_sets=200.0, max_inventory=200.0,
+        require_both_to_start=True, new_pair_start_s=5, new_pair_cutoff_s=285,
+    )
     return (
+        # Incumbent control: buy-side paired accumulator (the retired thesis).
         PairConfig(
             "basket99", "accumulate", 0.02,
             action_latency_s=action_latency_s, buy_sum_ceiling=0.99,
             improve_ticks=1, require_both_to_start=True,
             basket_average_cap=True, new_pair_start_s=30,
         ),
+        # Winner-matched mint-to-make. Parameters measured from
+        # 0x1Dd2A69e73BA444ecd5D87f0073d51a670ad51c2 over 391 BTC windows via
+        # tools/winner_profile.py: first sell 6s p50, last sell 241s p50,
+        # 6.25-share median clip, both sides in 391/391 windows, 6.5-share
+        # median imbalance (p90 16.5), mean pair sum 1.0017, zero taker fees.
+        PairConfig("mintwin", "mint", 0.02,
+                   sell_sum_floor=1.00, imbalance_tolerance=7.0, **mint),
+        # Control A isolates the pair floor: 1.005 was our mintbot setting and
+        # sits ABOVE the winner's 1.0014 median pair sum.
+        PairConfig("mintwin_f5", "mint", 0.02,
+                   sell_sum_floor=1.005, imbalance_tolerance=7.0, **mint),
+        # Control B isolates the imbalance halt: 0.1 stops quoting after the
+        # first asymmetric fill, which the winner never does.
+        PairConfig("mintwin_t0", "mint", 0.02,
+                   sell_sum_floor=1.00, imbalance_tolerance=0.1, **mint),
     )
 
 

@@ -20,7 +20,22 @@ def test_current_strategy_board_is_the_focused_fill_probe() -> None:
         ),
     )
 
-    assert current_strategy_board(latency) == expected
+    board = current_strategy_board(latency)
+    assert board[0] == expected[0], "basket99 control must stay byte-identical"
+    assert [config.name for config in board] == [
+        "basket99", "mintwin", "mintwin_f5", "mintwin_t0",
+    ]
+    mint = {config.name: config for config in board if config.mode == "mint"}
+    # winner-matched parameters (tools/winner_profile.py, 391 BTC windows)
+    assert mint["mintwin"].sell_sum_floor == 1.00
+    assert mint["mintwin"].imbalance_tolerance == 7.0
+    assert mint["mintwin"].clip_shares == 6.0
+    assert mint["mintwin"].new_pair_start_s == 5
+    # controls isolate exactly one parameter each
+    assert mint["mintwin_f5"].sell_sum_floor == 1.005
+    assert mint["mintwin_f5"].imbalance_tolerance == 7.0
+    assert mint["mintwin_t0"].sell_sum_floor == 1.00
+    assert mint["mintwin_t0"].imbalance_tolerance == 0.1
 
 
 def test_strategy_board_canonical_hash_is_stable() -> None:
@@ -28,7 +43,7 @@ def test_strategy_board_canonical_hash_is_stable() -> None:
 
     assert " " not in canonical_board(board)
     assert strategy_board_hash(board) == (
-        "5a887398744ef74a8c2f72278ee07b3664ce9c62262be7bcf9577a211ef10f66"
+        "4a15891298dc6d4a56fbcbe37d2b3cecafa50b52a571749b6da2f0a47f00ea9c"
     )
 
 

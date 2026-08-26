@@ -8,6 +8,7 @@ import pathlib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
+from tools.crossvenue_gaps import GapIntegrityError, unavailable_gaps
 from tools.transport_telemetry import validate_clock_domain, validated_revision
 
 
@@ -169,6 +170,15 @@ def _raw_status_matches(
             raise JoinIntegrityError(f"{source} final raw status is incomplete")
 
 
+def _exact_marker(
+    row: Mapping[str, object], kind: str, start: tuple[int, int], end: tuple[int, int],
+) -> None:
+    wall = count_value(row.get("wall_ns"), f"{kind} wall_ns")
+    monotonic = count_value(row.get("monotonic_ns"), f"{kind} monotonic_ns")
+    if not start[0] <= wall <= end[0] or not start[1] <= monotonic <= end[1]:
+        raise JoinIntegrityError(f"{kind} timestamp falls outside capture boundaries")
+
+
 def load_cross_dataset(path: str | pathlib.Path) -> CrossDataset:
     target = pathlib.Path(path)
     value = _object(target, "cross-venue dataset")
@@ -203,9 +213,9 @@ def load_cross_dataset(path: str | pathlib.Path) -> CrossDataset:
             == _clock(end.get("clock_domain"), "capture_end")):
         raise JoinIntegrityError("cross-venue clock identity does not match boundaries")
     specs = start.get("sources")
-    if not isinstance(specs, list):
-        raise JoinIntegrityError("cross-venue capture lacks source specifications")
-    if {str(row.get("name")) for row in specs if isinstance(row, dict)} != REQUIRED_SOURCES:
+    if (not isinstance(specs, list) or len(specs) != len(REQUIRED_SOURCES)
+            or any(not isinstance(row, dict) for row in specs)
+            or {str(row.get("name")) for row in specs} != REQUIRED_SOURCES):
         raise JoinIntegrityError("cross-venue source set is incomplete")
 
     raw_entries = value.get("raw_manifests")
@@ -239,40 +249,118 @@ def load_cross_dataset(path: str | pathlib.Path) -> CrossDataset:
         _raw_status_matches(row.get("raw"), summaries[source], source)
 
     closes = [row for row in rows if row.get("kind") == "source_closed"]
+    failures = [row for row in rows if row.get("kind") == "source_connection_failure"]
     connections = [row for row in rows if row.get("kind") == "source_connected"]
     if clock_domain is not None:
-        lifecycle = [*connections, *closes, *source_finals]
-        if any("wall_ns" not in row or "monotonic_ns" not in row for row in lifecycle):
-            raise JoinIntegrityError("cross-venue source lifecycle lacks exact timestamps")
-    elif closes:
+        capture_start = (
+            count_value(start.get("wall_ns"), "capture_start wall_ns"),
+            count_value(start.get("monotonic_ns"), "capture_start monotonic_ns"),
+        )
+        capture_end = (
+            count_value(end.get("wall_ns"), "capture_end wall_ns"),
+            count_value(end.get("monotonic_ns"), "capture_end monotonic_ns"),
+        )
+        for row in [*connections, *closes, *failures, *source_finals, *raw_finals]:
+            _exact_marker(row, str(row.get("kind")), capture_start, capture_end)
+        positions = {id(row): index for index, row in enumerate(rows)}
+        for source in REQUIRED_SOURCES:
+            source_connected = [row for row in connections if row.get("source") == source]
+            source_closed = [row for row in closes if row.get("source") == source]
+            source_failed = [row for row in failures if row.get("source") == source]
+            final = next(row for row in source_finals if row.get("source") == source)
+            raw_final = next(row for row in raw_finals if row.get("source") == source)
+            reconnects = count_value(final.get("reconnects"), f"{source} reconnects")
+            connected_id_rows = [
+                count_value(row.get("connection_id"), "connection_id")
+                for row in source_connected
+            ]
+            closed_id_rows = [
+                count_value(row.get("connection_id"), "connection_id")
+                for row in source_closed
+            ]
+            failed_id_rows = [
+                count_value(row.get("connection_id"), "connection_id")
+                for row in source_failed
+            ]
+            connected_ids, closed_ids = set(connected_id_rows), set(closed_id_rows)
+            rich_fields = ("attempts", "disconnects", "preconnect_failures")
+            rich_present = [field in final for field in rich_fields]
+            if any(rich_present) and not all(rich_present):
+                raise JoinIntegrityError(f"{source} connection continuity is invalid")
+            if all(rich_present):
+                attempts = count_value(final.get("attempts"), f"{source} attempts")
+                n_connections = count_value(
+                    final.get("connections"), f"{source} connections",
+                )
+                disconnects = count_value(
+                    final.get("disconnects"), f"{source} disconnects",
+                )
+                preconnect = count_value(
+                    final.get("preconnect_failures"), f"{source} preconnect failures",
+                )
+                attempt_ids = connected_id_rows + failed_id_rows
+                if (attempts == 0
+                        or sorted(attempt_ids) != list(range(1, attempts + 1))
+                        or n_connections != len(source_connected)
+                        or disconnects != len(source_closed)
+                        or preconnect != len(source_failed)
+                        or reconnects != len(source_closed) + len(source_failed)
+                        or len(connected_ids) != len(connected_id_rows)
+                        or len(closed_ids) != len(closed_id_rows)
+                        or not closed_ids <= connected_ids):
+                    raise JoinIntegrityError(f"{source} connection continuity is invalid")
+                lifecycle_schema = "exact-lifecycle-v2"
+            else:
+                attempts = count_value(
+                    final.get("connections"), f"{source} legacy attempts",
+                )
+                observed_ids = connected_ids | closed_ids
+                if (attempts == 0 or source_failed
+                        or observed_ids != set(range(1, attempts + 1))
+                        or len(connected_ids) != len(connected_id_rows)
+                        or len(closed_ids) != len(closed_id_rows)
+                        or reconnects != len(source_closed)):
+                    raise JoinIntegrityError(f"{source} connection continuity is invalid")
+                lifecycle_schema = "exact-lifecycle-v1"
+            for connection_id in connected_ids:
+                if connection_id < attempts and connection_id not in closed_ids:
+                    raise JoinIntegrityError(f"{source} connection continuity is invalid")
+            source_lifecycle = [row for row in rows if row.get("source") == source
+                                and row.get("kind") in {
+                                    "source_connected", "source_closed",
+                                    "source_connection_failure",
+                                }]
+            ordered_ids = [count_value(row.get("connection_id"), "connection_id")
+                           for row in source_lifecycle]
+            connected_by_id = dict(zip(connected_id_rows, source_connected, strict=True))
+            closed_by_id = dict(zip(closed_id_rows, source_closed, strict=True))
+            bad_close_order = any(
+                positions[id(connected_by_id[key])] >= positions[id(closed_by_id[key])]
+                for key in connected_ids & closed_ids)
+            if ordered_ids != sorted(ordered_ids) or bad_close_order:
+                raise JoinIntegrityError(f"{source} connection marker order is invalid")
+            last_lifecycle = max(
+                positions[id(row)]
+                for row in [*source_connected, *source_closed, *source_failed]
+            )
+            if positions[id(final)] <= last_lifecycle or positions[id(raw_final)] <= positions[id(final)]:
+                raise JoinIntegrityError(f"{source} final marker order is invalid")
+            summaries[source] = {**summaries[source], "lifecycle_schema": lifecycle_schema}
+    elif closes or failures:
         raise JoinIntegrityError("legacy cross-venue reconnects lack exact timestamps")
     for row in source_finals:
         source = str(row["source"])
         reconnects = count_value(row.get("reconnects"), f"{source} reconnects")
-        if reconnects != sum(str(item.get("source")) == source for item in closes):
+        observed = sum(str(item.get("source")) == source for item in [*closes, *failures])
+        if reconnects != observed:
             raise JoinIntegrityError(f"{source} reconnect count mismatch")
 
-    gaps: list[Mapping[str, object]] = []
-    for closed in closes:
-        source = str(closed.get("source"))
-        connection_id = count_value(closed.get("connection_id"), "connection_id")
-        resumed = next((row for row in connections
-                        if row.get("source") == source
-                        and count_value(row.get("connection_id"), "connection_id")
-                        == connection_id + 1), end)
-        closed_mono = count_value(closed.get("monotonic_ns"), "closed monotonic_ns")
-        resumed_mono = count_value(resumed.get("monotonic_ns"), "resumed monotonic_ns")
-        if resumed_mono < closed_mono:
-            raise JoinIntegrityError("cross-venue reconnect interval is negative")
-        gaps.append({
-            "source": source,
-            "closed_wall_ns": count_value(closed.get("wall_ns"), "closed wall_ns"),
-            "resumed_wall_ns": count_value(resumed.get("wall_ns"), "resumed wall_ns"),
-            "closed_monotonic_ns": closed_mono,
-            "resumed_monotonic_ns": resumed_mono,
-            "reason": str(closed.get("error") or "unknown"),
-        })
+    try:
+        gaps = (() if clock_domain is None
+                else unavailable_gaps(rows, start, end, REQUIRED_SOURCES))
+    except GapIntegrityError as exc:
+        raise JoinIntegrityError(str(exc)) from exc
     return CrossDataset(
         target, file_sha256(target), label, asset, revision, clock_domain, start, end,
-        summaries, tuple(gaps),
+        summaries, gaps,
     )

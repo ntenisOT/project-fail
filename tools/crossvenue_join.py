@@ -8,110 +8,26 @@ import hashlib
 import json
 import os
 import pathlib
-import re
 from collections.abc import Mapping, Sequence
 
 import paper.replay_data as replay_data
 import tools.crossvenue_dataset as crossvenue_dataset
+import tools.crossvenue_gaps as crossvenue_gaps
+import tools.winner_artifacts as winner_artifacts
 from paper.replay_data import CaptureIntegrityError, load_paper_dataset
 from tools.crossvenue_dataset import (
     JoinIntegrityError,
     count_value,
-    file_sha256,
     load_cross_dataset,
     verified_raw_manifest,
 )
 from tools.transport_telemetry import validated_revision
+from tools.winner_artifacts import validate_artifacts
 
 
 SCHEMA = "project-fail-crossvenue-paper-join-v1"
-GAMMA_REGIME_SCHEMA = "project-fail-gamma-resolution-regimes-v1"
-REQUIRED_ARTIFACTS = frozenset({"cohort", "wallet_fills", "markets", "gamma"})
 MAX_CLOCK_OFFSET_DELTA_NS = 50_000_000
 WINDOW_NS = 300_000_000_000
-NAME_RE = re.compile(r"^[a-z][a-z0-9_]{1,31}$")
-
-
-def _market_slugs(path: pathlib.Path) -> set[str]:
-    slugs: set[str] = set()
-    try:
-        with path.open(encoding="utf-8") as handle:
-            for line_number, line in enumerate(handle, 1):
-                if not line.strip():
-                    continue
-                row = json.loads(line)
-                slug = str(row.get("slug") or "") if isinstance(row, dict) else ""
-                if not slug or slug in slugs:
-                    raise JoinIntegrityError(
-                        f"invalid or duplicate market slug at line {line_number}"
-                    )
-                slugs.add(slug)
-    except (OSError, json.JSONDecodeError) as exc:
-        raise JoinIntegrityError(f"invalid market artifact: {exc}") from exc
-    if not slugs:
-        raise JoinIntegrityError("market artifact has no rows")
-    return slugs
-
-
-def _gamma_regimes(path: pathlib.Path) -> tuple[set[str], dict[str, object]]:
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise JoinIntegrityError(f"invalid Gamma resolution regimes: {exc}") from exc
-    if not isinstance(value, dict):
-        raise JoinIntegrityError("Gamma resolution-regime artifact is not an object")
-    raw_rows = value.get("rows")
-    if value.get("schema") != GAMMA_REGIME_SCHEMA or not isinstance(raw_rows, list):
-        raise JoinIntegrityError("unsupported Gamma resolution-regime schema")
-    slugs: set[str] = set()
-    lookbacks: set[int] = set()
-    sources: set[str] = set()
-    for index, item in enumerate(raw_rows):
-        if not isinstance(item, dict):
-            raise JoinIntegrityError(f"invalid Gamma regime row {index}")
-        slug = str(item.get("slug") or "")
-        source = str(item.get("resolution_source") or "")
-        config_id = str(item.get("config_id") or "")
-        lookback = count_value(item.get("lookback_s"), "Gamma lookback_s")
-        opening = str(item.get("price_to_beat") or "")
-        final = str(item.get("final_price") or "")
-        if (not slug or slug in slugs or not source or not config_id
-                or lookback == 0 or not opening or not final):
-            raise JoinIntegrityError(f"incomplete Gamma regime row {index}")
-        slugs.add(slug)
-        sources.add(source)
-        lookbacks.add(lookback)
-    if not slugs:
-        raise JoinIntegrityError("Gamma resolution-regime artifact has no rows")
-    return slugs, {
-        "markets": len(slugs), "lookback_s": sorted(lookbacks),
-        "resolution_sources": sorted(sources),
-        "policy": "per_market_from_gamma_never_global_default",
-    }
-
-
-def _artifact_rows(artifacts: Mapping[str, pathlib.Path]) -> dict[str, object]:
-    if not REQUIRED_ARTIFACTS <= set(artifacts):
-        missing = sorted(REQUIRED_ARTIFACTS - set(artifacts))
-        raise JoinIntegrityError(f"required passive artifacts are missing: {missing}")
-    rows: dict[str, object] = {}
-    for name, path in sorted(artifacts.items()):
-        if not NAME_RE.fullmatch(name):
-            raise JoinIntegrityError(f"invalid artifact name: {name}")
-        try:
-            size, digest = path.stat().st_size, file_sha256(path)
-        except OSError as exc:
-            raise JoinIntegrityError(f"artifact is missing: {path}") from exc
-        if size == 0:
-            raise JoinIntegrityError(f"artifact is empty: {path}")
-        rows[name] = {"path": path.as_posix(), "sha256": digest, "bytes": size}
-    gamma_slugs, gamma_summary = _gamma_regimes(artifacts["gamma"])
-    if _market_slugs(artifacts["markets"]) != gamma_slugs:
-        raise JoinIntegrityError("Gamma resolution regimes do not cover exact markets")
-    gamma_row = rows["gamma"]
-    assert isinstance(gamma_row, dict)
-    gamma_row["regimes"] = gamma_summary
-    return rows
 
 
 def _anchor(row: Mapping[str, object], kind: str) -> tuple[int, int]:
@@ -123,7 +39,8 @@ def _anchor(row: Mapping[str, object], kind: str) -> tuple[int, int]:
 
 def _analysis_identity(revision: str) -> dict[str, object]:
     sources = tuple(pathlib.Path(path) for path in (
-        __file__, crossvenue_dataset.__file__, replay_data.__file__,
+        __file__, crossvenue_dataset.__file__, crossvenue_gaps.__file__,
+        winner_artifacts.__file__, replay_data.__file__,
     ))
     digest = hashlib.sha256()
     rows: list[dict[str, object]] = []
@@ -163,11 +80,26 @@ def build_join(
     offset_delta = max(offsets.values()) - min(offsets.values())
     if offset_delta > MAX_CLOCK_OFFSET_DELTA_NS:
         raise JoinIntegrityError("paper and cross-venue clock anchors do not agree")
-    if (paper.clock_domain is None) != (cross.clock_domain is None):
-        raise JoinIntegrityError("only one capture has explicit clock identity")
-    if paper.clock_domain is not None and paper.clock_domain != cross.clock_domain:
-        raise JoinIntegrityError("paper and cross-venue clock domains differ")
-    clock_mode = "explicit_host_boot" if paper.clock_domain is not None else "inferred_offset"
+    paper_clock, cross_clock = paper.clock_domain, cross.clock_domain
+    if paper_clock is None and any(
+        row.get("kind") in {"disconnect", "connection_failure"}
+        for row in paper.events
+    ):
+        raise JoinIntegrityError("legacy paper transport gap lacks clock identity")
+    if paper_clock is not None and cross_clock is not None:
+        if paper_clock != cross_clock:
+            raise JoinIntegrityError("paper and cross-venue clock domains differ")
+        clock_mode = "explicit_host_boot"
+        explicit_identity = paper_clock
+        identity_source = "paper_and_crossvenue"
+    elif paper_clock is None and cross_clock is None:
+        clock_mode = "inferred_offset"
+        explicit_identity = None
+        identity_source = None
+    else:
+        clock_mode = "mixed_inferred_to_explicit_host_boot"
+        explicit_identity = paper_clock if paper_clock is not None else cross_clock
+        identity_source = "paper" if paper_clock is not None else "crossvenue"
 
     overlap_start = max(anchor[0] for name, anchor in anchors.items() if name.endswith("start"))
     overlap_end = min(anchor[0] for name, anchor in anchors.items() if name.endswith("end"))
@@ -207,10 +139,13 @@ def build_join(
             "path": cross.path.as_posix(), "sha256": cross.sha256,
             "label": cross.label, "asset": cross.asset, "revision": cross.revision,
             "sources": dict(cross.sources), "disconnect_gaps": list(cross.gaps),
+            "gap_policy": "all_exact_source_unavailable_intervals",
         },
         "clock_evidence": {
             "mode": clock_mode,
-            "identity": None if paper.clock_domain is None else dict(paper.clock_domain),
+            "identity": (None if explicit_identity is None
+                         else dict(explicit_identity)),
+            "explicit_identity_source": identity_source,
             "wall_minus_monotonic_ns": offsets,
             "max_offset_delta_ns": offset_delta,
             "allowed_offset_delta_ns": MAX_CLOCK_OFFSET_DELTA_NS,
@@ -221,7 +156,11 @@ def build_join(
             "first_complete_window_start": first_window // 1_000_000_000,
             "last_complete_window_start": last_window // 1_000_000_000,
         },
-        "passive_artifacts": _artifact_rows(artifacts),
+        "passive_artifacts": validate_artifacts(
+            artifacts, overlap_start_s=overlap_start // 1_000_000_000,
+            first_window=first_window // 1_000_000_000,
+            last_window=last_window // 1_000_000_000,
+        ),
     }
 
 

@@ -22,6 +22,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from tools.crossvenue_sources import ParsedFrame, SourceSpec, parse_frame, source_specs
+from tools.crossvenue_lifecycle import ConnectionLifecycle
 from tools.transport_telemetry import (
     CaptureWriteError,
     JsonlSink,
@@ -67,8 +68,7 @@ class SourceStats:
     max_publish_delay_ms: float = 0.0
     last_frame_mono: float | None = None
     source_ages_ms: collections.deque[float] = dataclasses.field(
-        default_factory=lambda: collections.deque(maxlen=8192), repr=False,
-    )
+        default_factory=lambda: collections.deque(maxlen=8192), repr=False)
 
     def observe(self, parsed: ParsedFrame, payload_bytes: int,
                 received_ns: int, received_mono: float) -> None:
@@ -129,8 +129,7 @@ class SourceStats:
         }
 
 
-async def _tcp_sampler(ws: object, stop: asyncio.Event,
-                       stats: TcpExtrema, cadence_s: float) -> None:
+async def _tcp_sampler(ws: object, stop: asyncio.Event, stats: TcpExtrema, cadence_s: float) -> None:
     while not stop.is_set():
         stats.observe(websocket_tcp_info(ws))
         await asyncio.sleep(cadence_s)
@@ -140,6 +139,7 @@ async def _connection(
     spec: SourceSpec, args: argparse.Namespace, sink: JsonlSink,
     raw: RawFrameWriter | None, stop_all: asyncio.Event,
     stats: SourceStats, tcp_lifetime: TcpExtrema, connection_id: int,
+    lifecycle: ConnectionLifecycle,
 ) -> None:
     connected_mono = time.monotonic()
     async with websockets.connect(
@@ -152,6 +152,7 @@ async def _connection(
             "kind": "source_connected", **_timestamp_fields(),
             "source": spec.name, "connection_id": connection_id,
         })
+        lifecycle.mark_connected()
         connection_stop = asyncio.Event()
         tcp_task = asyncio.create_task(
             _tcp_sampler(ws, connection_stop, tcp_lifetime, args.tcp_cadence_s)
@@ -210,12 +211,12 @@ async def _source_loop(
     raw: RawFrameWriter | None, stop_all: asyncio.Event,
 ) -> None:
     stats, tcp = SourceStats(), TcpExtrema()
-    connection_id = reconnects = 0
+    lifecycle = ConnectionLifecycle()
     while not stop_all.is_set():
-        connection_id += 1
+        connection_id = lifecycle.begin_attempt()
         try:
             await _connection(
-                spec, args, sink, raw, stop_all, stats, tcp, connection_id,
+                spec, args, sink, raw, stop_all, stats, tcp, connection_id, lifecycle,
             )
         except asyncio.CancelledError:
             raise
@@ -223,17 +224,19 @@ async def _source_loop(
             stop_all.set()
             raise
         except Exception as exc:
-            reconnects += 1
+            kind = lifecycle.mark_failure()
             sink.emit({
-                "kind": "source_closed", **_timestamp_fields(), "source": spec.name,
-                "connection_id": connection_id, "reconnects": reconnects,
+                "kind": kind,
+                **_timestamp_fields(), "source": spec.name,
+                "connection_id": connection_id,
+                "reconnects": lifecycle.reconnects,
                 "error_type": exc.__class__.__name__, "error": str(exc),
                 "stats": stats.snapshot(), "tcp": tcp.snapshot(),
             })
-            await asyncio.sleep(min(5.0, 0.1 * 2 ** min(reconnects - 1, 6)))
+            await asyncio.sleep(min(5.0, 0.1 * 2 ** min(lifecycle.reconnects - 1, 6)))
     sink.emit({
         "kind": "source_final", **_timestamp_fields(), "source": spec.name,
-        "connections": connection_id, "reconnects": reconnects,
+        **lifecycle.snapshot(),
         "stats": stats.snapshot(), "tcp": tcp.snapshot(),
         "raw": None if raw is None else raw.snapshot(),
     })

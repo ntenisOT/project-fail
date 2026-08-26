@@ -57,6 +57,7 @@ class Notifier:
                     f"https://api.telegram.org/bot{self.token}/sendMessage", data=data
                 )
                 urllib.request.urlopen(req, timeout=8).read()
+                log.info("telegram send acknowledged (%s)", chat)
             except Exception as e:  # best-effort: never propagate
                 log.warning("telegram send failed (%s): %s", chat, e.__class__.__name__)
 

@@ -51,6 +51,21 @@ select a trading threshold.
 
 ## The question that is and is not identifiable
 
+There is also a real settlement-feed regime break. Exact Gamma responses for
+`btc-updown-5m-1786665300` and `btc-updown-5m-1786665600` identify a change from
+the BTC/USD 30-second TWAP at 2026-08-13 23:55 UTC to the 60-second TWAP at
+2026-08-14 00:00 UTC. The current Gen74/75 captures are correctly in the
+60-second regime. Every historical window must nevertheless bind its own Gamma
+`resolutionSource`; a date-wide hardcoded TWAP lookback would contaminate an
+event study across that boundary.
+
+The pre-change settlement-manipulation result in
+https://arxiv.org/abs/2606.31675 is therefore a discovery hypothesis, not a
+transferable strategy result. A post-change study may predeclare final-60/30/10
+second signed spot flow, near-the-money official-reference distance, and
+post-close reversal, but it must use the event's actual TWAP regime and an
+untouched future cohort.
+
 The following prospective observational question is identifiable:
 
 > After an external or official-reference move that is safely earlier than a
@@ -208,37 +223,54 @@ Required caveat:
 > the measured shock. Safety margins establish only coarse temporal separation;
 > reported associations are neither causal nor subsecond reaction estimates.
 
-## Current Gen74/Gen73 collection gap
+## Current Gen74/Gen75 collection gap
 
 The concurrently running `gen74-fillprobe-20260825T2340Z` paper capture and
-`gen73-crossvenue-prospective-20260825T2300Z` capture already collect the core
-feeds needed for the coarse study. Gen74 preserves the raw and actually
-processed Polymarket book/`price_change` timeline with exact handler wall and
-monotonic timestamps; Gen73 preserves RTDS TWAP60, Binance spot/futures, and
-Deribit raw frames with receive and published-source timestamps. **No additional
-live feed is required.** Their usable overlap begins at the Gen74 start and ends
-at the earlier finalized run end.
+active Gen75 cross-venue capture already collect the core feeds needed for the
+coarse study. Gen74 preserves the raw and actually processed Polymarket
+book/`price_change` timeline with exact handler wall and monotonic timestamps;
+Gen75 preserves RTDS TWAP60, Binance spot/futures, and Deribit raw frames with
+receive and published-source timestamps. **No additional live feed is
+required.** Their usable overlap begins at the Gen74 start and ends at the
+earlier finalized run end.
 
 Finalization and copying do not by themselves make the runs one dataset. The
 offline release gate still requires:
 
 - the complete Gen74 dataset, event file, raw/processed manifests, and every
-  referenced chunk, plus the complete Gen73 dataset, telemetry, all four source
+  referenced chunk, plus the complete Gen75 dataset, telemetry, all four source
   manifests, and every referenced chunk—not review manifests alone;
 - one immutable join manifest containing both dataset hashes, labels, exact
   overlap, frozen cohort hash, market/Gamma/fill-extract hashes, analysis-code
   identity, and validation results;
-- common-clock evidence derived from both runs' wall/monotonic anchors. The
-  current schemas have no shared run ID or host/boot ID, no reciprocal hashes,
-  and Gen73 source connect/close markers have wall time but no monotonic time;
+- common-clock evidence derived from all four run-boundary wall/monotonic
+  anchors. Gen74 lacks clock-domain identity while Gen75 has explicit host/boot
+  identity, and the captures still have no shared run ID or reciprocal hashes;
 - zero-loss/cap/error and accepted-equals-written checks, verified source finals,
-  a non-`unknown` Gen73 revision, and explicit reconnect/gap exclusion intervals;
+  a non-`unknown` Gen75 revision, and explicit reconnect/gap exclusion intervals;
 - a deterministic V2-normalized selected-wallet fill extract for the overlap
   with wallet, slug/token/side, block/log, whole-second block time, maker/taker,
   size, price, fee, and preferably transaction hash; pre-period-matched control
   fills if wallet controls are used; and
 - hashed resolved-market mappings and Gamma `priceToBeat`, `finalPrice`, config
   ID, and TWAP lookback.
+
+Future local captures now stamp hashed host/boot clock identity and exact
+cross-venue source lifecycle times, and require an explicit non-placeholder
+revision. `tools/crossvenue_join.py` binds the finalized trees and passive
+extracts offline without altering the active runs. For the active mixed Gen74/75
+pair it binds Gen75's explicit identity but labels the relationship inferred,
+requires all four wall-minus-monotonic anchors to agree within 50 ms, rejects
+any Gen74 disconnect or connection failure, and validates every exact Gen75
+connection/gap marker. It also retains a stricter both-legacy mode that rejects
+unclocked paper or cross-venue gaps.
+Its Gamma artifact is per-market and must bind `resolution_source`, lookback,
+config, opening, and final values for exactly the resolved market set; it never
+assumes one TWAP regime across historical and current windows.
+The join also validates the frozen cohort addresses and pre-period boundary,
+requires nonempty canonical V2 fill rows, rejects fills outside that cohort or
+the exact complete-overlap market/token mapping, and reports zero-fill wallets
+or markets as inactive rather than treating them as missing evidence.
 
 These gaps can be closed offline after collection. The permanent limit remains:
 public winner fills cannot reveal another wallet's order-placement time, so the

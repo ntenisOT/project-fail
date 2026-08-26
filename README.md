@@ -8,9 +8,11 @@ replicable, low-capital edge, and what execution captures it?*
 old mint-and-sell taxonomy. The strongest repeatable neutral signature is cheap
 FIFO acquisition of both outcome tokens; profitable examples range from paired
 accumulators to merge recyclers, while other leaders depend on directional
-residue. Trading both tokens does not prove simultaneous asks or direct CTF
-minting. Mint-and-ask is not the winner replica, and no current paper arm has
-passed a prospective economic gate.
+residue. Trading both tokens does not prove simultaneous asks or deliberate
+minting. Raw same-address CTF queries are also blind to Safe/Relayer splits made
+through the current collateral adapter, so explicit minting is unresolved—not
+disproved or established as the winner strategy. No current paper arm has passed
+a prospective economic gate.
 
 ---
 
@@ -22,7 +24,7 @@ passed a prospective economic gate.
 | SSH | `ssh -i ~/.ssh/pm_deploy ubuntu@3.254.130.64` |
 | Code | `~/project-fail` (deployed by `scp` from the local repo — **not** a git checkout) |
 | Python | `~/project-fail/.venv/bin/python` (always use the venv binary) |
-| Measured latency | CLOB `/time` GET **27–32 ms** median / **31–70 ms** p90 across probes; ordinary WS event age is usually tens of milliseconds, while observed upstream tails reached **4.68 s** and one provider `1013 slow consumer` disconnect; local queue residence stayed at or below **9 ms**; paper action proxy **65 ms** (authenticated POST/cancel unmeasured) |
+| Measured latency | CLOB `/time` GET **27–32 ms** median / **31–70 ms** p90 across probes; ordinary WS event age is usually tens of milliseconds, while observed upstream tails reached **4.68 s** and provider `1013 slow consumer` disconnects; local queue residence reached **33 ms** in the current Gen74 run; paper action proxy **65 ms** (authenticated POST/cancel unmeasured) |
 
 **Both machines are paper-and-tooling only.** On 2026-08-25 Polymarket's live
 `/api/geoblock` endpoint returned `blocked=true` for both the UK/local machine
@@ -88,7 +90,13 @@ Plus live narrative: `tail -30 ~/project-fail/live/mintbot.log` (`MINTED`, `ASK`
 
 **Telegram**: the paper runner pushes the phone-formatted report every
 `PAPER_SUMMARY_MINS` minutes (monospace, sorted by the adverse inventory floor,
-not the optimistic 50-cent residual mark) — configured via `.env`.
+not the optimistic 50-cent residual mark) — configured via `.env`. Gen74 logs
+confirm the 15-minute report task fired at the scheduled times, but successful
+Telegram delivery is not currently acknowledged in the log and therefore must
+not be inferred from scheduler activity alone. The next deliberately restarted
+runner will log `telegram send acknowledged` after the Bot API response; the
+healthy active Gen74 process has not been restarted merely for that observability
+change.
 
 **Legacy benchmark vs real winners** (local machine — currently not a launch
 gate because its outcome/fill comparison is not execution-normalised):
@@ -103,7 +111,16 @@ taker fees, and read-only ClickHouse external tables. The normalizer handles
 CLOB V2's per-order fill events: the taker summary has the exchange contract as
 counterparty and must not be expanded as a second bilateral trade. The old V1
 expansion fabricated sells, cycles, and maker roles from complementary buys.
-The tool separates direct CTF events and reports fee-inclusive pair proxies.
+The tool separates raw-stakeholder CTF events and reports fee-inclusive pair
+proxies. A zero direct split means only that the trading address was not the raw
+CTF stakeholder; the current collateral adapter can split as stakeholder and
+transfer both outcomes to a Safe in the same transaction. CLOB BUY/BUY matching
+also atomically splits through its outcome-token factory and must not be labeled
+a deliberate wallet mint. `tools/adapter_receipt_attributor.py` now classifies a
+bounded, provenance-hashed candidate set as CLOB atomic, explicit wallet, or
+unresolved from exact ordered ERC-1155 receipt evidence. It has not yet been run
+on the fresh cohort, so it closes the measurement path—not the empirical question. See
+`reports/2026-08-26-postfrozen-winner-mint-refresh.md`.
 Its `pnl$` excludes separately paid maker rebates; query the official rebate
 endpoint before comparing total wallet economics. Paper's `rebate$` is only the
 current documented 20% fee-equivalent baseline because actual pool payouts can differ.
@@ -124,6 +141,20 @@ from outcome alignment and screen public-tape signals after slippage and fees.
 `tools/wallet_pairs.py` matches opposite-token buys FIFO in exact block/log
 order so aggregate token averages cannot disguise completion coverage, pair-cost
 distribution, residual imbalance, or pairing delay.
+`tools/pair_completion_economics.py` applies terminal FIFO accounting to one
+immutable paper database and keeps completed-pair surplus separate from the
+adverse value of incomplete first legs. `tools/pair_completion_counterfactual.py`
+runs an isolated baseline/candidate causal replay and refuses capture/model drift
+unless it is acknowledged explicitly. The first candidate changed only
+`buy_taker_after_s=0`; it found no completion in the prospective finalized
+windows and worsened the three-window calibration tape, because completed cycles
+freed capacity that the unchanged initiator used to reopen new single-leg risk.
+It is rejected, not part of the active board, and will not be retuned on the
+same tapes. See `reports/2026-08-25-gen73-causal-replay-review.md`.
+`tools/pair_completion_opportunity_census.py` then records the first
+latency-valid, fee-inclusive full-completion opportunity without applying a
+hypothetical policy. It found no such opportunity in a resolved prospective
+window; the only prospective opportunity was still open when capture stopped.
 
 Latest bounded refresh separates two regimes. During 2026-08-23 15:25 through
 08-24 15:20 UTC, `0xb27…` made +$18,844 on $1.28m as a 99.5%-maker paired-bid
@@ -184,6 +215,11 @@ opening observation. It has no path into quote generation. The legacy spot
 `crypto_prices_chainlink` topic is not the settlement reference for current
 five-minute crypto markets ([Chainlink TWAP](https://docs.polymarket.com/market-data/chainlink-twap),
 [prediction changelog](https://docs.polymarket.com/changelog/predictions)).
+The lookback is market metadata, not a permanent asset constant: exact Gamma
+events show BTC five-minute markets changed from the 30-second source at
+2026-08-13 23:55 UTC to the 60-second source at 2026-08-14 00:00 UTC. Gen73/74
+are in the 60-second regime. Historical studies must persist each event's exact
+`resolutionSource` and must not mix 30-second and 60-second cohorts silently.
 
 Market discovery carries each market's Gamma `orderMinSize` into maker and
 taker simulation. A partial residual below that share minimum cannot normally
@@ -332,8 +368,9 @@ unlike the shadow bot, uses immediate simulated fills to complete an asymmetric
 clip. The shadow bot still stops after an inferred imbalance because its delayed
 position poll cannot prove fill price or order ownership. Corrected V2 wallet
 forensics no longer identifies mint-and-ask as the clean leader, so this is not
-the winner-replication path. Keep it out of place mode unless direct CTF events
-and execution-normalised economics independently restore the thesis.
+the winner-replication path. Keep it out of place mode unless receipt-attributed
+Safe lifecycle calls, subsequent inventory paths, and execution-normalised
+economics independently restore the thesis.
 
 ### `live/chain.py` — legacy direct-EOA Polygon layer
 Raw JSON-RPC + eth_account, retained for read-only balances and migration
@@ -390,7 +427,8 @@ hard-refuses before constructing a client or touching its database.
 5. Deploys: local edit → focused checks → `scp` → hash-verified restart →
    commit+push to `main`. Bind `PAPER_ASSETS`, action latency, and stale-event
    threshold explicitly in the tmux command, then verify the startup log.
-   Reports are sorted by PnL and retain queue/inventory evidence.
+   Reports are sorted by adverse inventory floor and retain queue/inventory
+   evidence; neutral PnL is only a diagnostic.
 
 ### Launch commands
 
@@ -487,6 +525,9 @@ live next to the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 70 | 08-25 19:05 | instrument the WebSocket client's internal frame depth; reject the 4096-frame fix because observed HWM was only 145; timed completion improved neutral/adverse mechanics in three lagged windows |
 | 71 | 08-25 19:30 | restore the 1024-frame limit and reject dust-tolerant replenishment after it paid more for the same paired shares and added unmatched inventory |
 | 72 | 08-25 19:58 | remove the rejected dust arm and smoke 240-second versus 270-second completion; neither fired in a valid window and two 1013 closes reproduced, so the timing A/B is untested |
+| 73 | 08-25 20:xx | freeze raw and causal event streams, add deterministic replay/accounting gates, retire the multi-arm board, and submit the one remaining mechanics probe to exact independent review |
+| 74 | 08-25 23:40 | run only Basket99 with the measured 65 ms action proxy and 400 ms freshness cutoff while a separate passive cross-venue capture records RTDS, Binance, and Deribit; the immediate-completion replay candidate was rejected before deployment |
+| 75 | 08-26 00:27 | restart only the passive cross-venue capture after the legacy Deribit reconnects proved its lifecycle clock insufficient; preserve the old dataset and stamp exact host/boot plus source connect/close wall and monotonic times |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

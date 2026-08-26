@@ -8,14 +8,16 @@ replicable, low-capital edge, and what execution captures it?*
 broad mint-and-sell taxonomy, but receipt-level attribution has now proven one
 specific frozen wallet's mechanism: `0x1dd2…51c2` split 750 complete sets before
 each of 31 BTC windows, sold both outcomes entirely as maker, and terminally
-merged exact paired leftovers in 24. Its exact-condition official rebates lift
-the fresh 50-cent residual diagnostic to about +$47.77 (+0.766% of book volume),
-but roughly 236 unmatched shares leave an adverse-payoff floor near -$70 even
-after that rebate. That is a real mint-to-make mechanism candidate, not proven
-outcome-neutral profitability, evidence that all winners do it, or a launch
-gate. Other behavior includes paired acquisition, same-token unwinds, and merge
-recycling; directional residue still dominates many headline winners. No current
-paper arm has passed a prospective economic gate.
+merged an amount equal to the smaller side of the observed split-minus-fill
+ledger in 24. Hostile review then invalidated the old 50-cent "directional"
+narrative: chronological FIFO attributes about $57.36 of the fresh +$60.27
+settlement-marked result to paired-sale surplus and only $2.90 to price-relative
+residual performance, before the separately recorded $29.87 rebate. The lot
+allocation, complete wallet balance, cash finality, capital, and quote policy are
+not yet proven. This is a real mint-to-make mechanism candidate, not proven
+profitability or a launch gate. See
+`reports/2026-08-26-mint-to-make-hostile-review-adjudication.md`. No current paper
+arm has passed a prospective economic gate.
 
 ---
 
@@ -162,18 +164,19 @@ latency-valid, fee-inclusive full-completion opportunity without applying a
 hypothetical policy. It found no such opportunity in a resolved prospective
 window; the only prospective opportunity was still open when capture stopped.
 
-Latest bounded refresh separates two regimes. During 2026-08-23 15:25 through
-08-24 15:20 UTC, `0xb27…` made +$18,844 on $1.28m as a 99.5%-maker paired-bid
-accumulator: 96.8% completion, $0.980 average pair, and 9 s / 43 s FIFO d50/d90.
-Its neutral mechanics made about +$30,251 while direction cost about $11,106.
-During the following 24 hours, `0x0cb…` made +$5,894 on $516k primarily from
-early directional flow: about +$15,858 direction versus -$9,963 neutral. Its
-T+30/T+60 calls underperformed the contemporaneous public favorite. A public
-T+60 favorite screen changed from -3.83 cents/share in the prior day to +3.89
-cents/share in the current day after optimistic 1% slippage and modeled fees.
-There is no durable fixed momentum rule, no observed direct split value at these
-trading addresses, and no single strategy shared by every current PnL leader.
-See `reports/2026-08-25-gen62-winner-regimes.md`.
+An earlier bounded refresh appeared to separate two regimes using the legacy
+50-cent residual decomposition. During 2026-08-23 15:25 through 08-24 15:20 UTC,
+`0xb27…` made +$18,844 on $1.28m as a 99.5%-maker paired-bid accumulator: 96.8%
+completion, $0.980 average pair, and 9 s / 43 s FIFO d50/d90. During the following
+24 hours, `0x0cb…` made +$5,894 on $516k while its T+30/T+60 calls underperformed
+the contemporaneous public favorite. A public T+60 favorite screen changed from
+-3.83 cents/share in the prior day to +3.89 cents/share in the current day after
+optimistic 1% slippage and modeled fees. Hostile review later showed that the
+50-cent "neutral/directional" labels are price-confounded and must not be read as
+signal evidence. The durable conclusions are the observed trading styles, the
+absence of a fixed momentum rule, and the absence of one strategy shared by every
+current PnL leader. See `reports/2026-08-25-gen62-winner-regimes.md` and
+`reports/2026-08-26-mint-to-make-hostile-review-adjudication.md`.
 
 The broader 2026-08-18 20:40 through 08-25 20:35 BTC lifecycle study selected
 40 wallets by discovery-period activity, never PnL. Its originally highlighted
@@ -184,9 +187,9 @@ distinction: discovery pair cost strongly persists into holdout (Spearman 0.826,
 n=34), while its holdout actual-PnL AUC is 0.471 for the 34 activity-qualified
 wallets and 0.482 across all 37 wallets with discovery FIFO evidence. That is no
 economic edge. The exact $0.99 threshold is post-hoc, holdout-activity filtering
-is survivorship selection, and actual PnL is often dominated by directional
-residue. The study therefore supports one paired-mechanics probe only. It does
-not justify a strategy gate, blind copying, or threshold mining. Artifacts:
+is survivorship selection, and public fills do not identify the paired/residual
+lot allocation. The study therefore supports one paired-mechanics probe only. It
+does not justify a strategy gate, blind copying, or threshold mining. Artifacts:
 `out/gen73-lifecycle-btc-7d.json` and
 `out/gen73-lifecycle-btc-7d-v2-frozen.json` (SHA-256
 `ecd98ac5d03427e26f9324b0327c6b2f0f73539d4e62f50773cd1f8552ae0825`).

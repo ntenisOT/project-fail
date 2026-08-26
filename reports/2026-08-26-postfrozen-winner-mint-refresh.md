@@ -1,29 +1,36 @@
 # Post-frozen winner and mint-mechanism refresh — 2026-08-26
 
+> **Economic interpretation superseded.** Receipt and rebate evidence below
+> remains useful, but the 50-cent residual decomposition is not directional-signal
+> evidence, the paired/residual lot allocation is not identified, and the exact
+> fill-side ledger was not frozen. See
+> `reports/2026-08-26-mint-to-make-hostile-review-adjudication.md`.
+
 ## Verdict
 
-There is a mechanism breakthrough, not yet a strategy promotion. Receipt-level
-attribution proves that one frozen wallet, `0x1dd2…51c2`, explicitly split 750
-complete sets before every one of 31 windows, sold both outcomes only as maker,
-and merged the exact paired leftovers in 24 windows. The official rebate endpoint
+There is a mechanism breakthrough, not yet a strategy promotion. Receipt and
+fill attribution show that one frozen wallet, `0x1dd2…51c2`, explicitly split
+750 complete sets before every one of 31 windows, sold both outcomes only as
+maker, and later merged in 24 windows. An integer-only rerun corroborated that
+each merge equaled the smaller side of the observed split-minus-CLOB-fill
+ledger, but that ledger is not yet hash-bound. The official rebate endpoint
 also records $29.869474 for those exact conditions. This is the first defensible
-evidence for the mint-to-make inventory business that the original V1 analysis
+evidence for the mint-to-make inventory mechanism that the original V1 analysis
 claimed too early.
 
-The receipt-proven paired-sale edge is small and concentrated in one shared
-market block. Including recorded rebates, its 50-cent residual diagnostic was
-+$47.77, or $1.54/window and 0.766% of book volume. That is not realized hedged
-profit: roughly 236 unmatched sold shares leave an adverse residual-payoff floor
-near -$70 even after the rebate. Actual PnL was +$90.13 because $42.37 came from
-favorable residual direction. A genuinely earlier frozen seven-day artifact does
-show the same address trading 100% maker across 1,889 BTC markets, but lacks
-receipt and exact-rebate attribution and was neutral-negative before rebates.
-That is a strong persistence clue, not an out-of-sample profitability result.
-The current Basket99 probe remains materially worse because it accumulates
-unmatched inventory instead of starting with complete sets and recycling
-symmetric leftovers. This evidence warrants a frozen replay/paper candidate
-after independent review; it does not warrant reviving the legacy EOA mintbot
-or placing orders.
+Fresh settlement-marked PnL is +$60.265 before the separately recorded rebate.
+A chronological FIFO diagnostic assigns +$57.362 to paired-sale surplus and
+only +$2.904 to price-relative residual performance. Public fills do not
+identify the intended lot allocation, complete wallet balance, quote policy,
+capital draw, or cash finality; the roughly -$70 zero-payoff floor after the
+rebate remains a tail scenario, not a central cash estimate. The earlier frozen
+seven-day artifact is now discovery for the corrected statistic and lacks
+receipt and exact-rebate attribution. It is a style-persistence clue, not an
+out-of-sample profitability result. The current Basket99 probe remains
+materially worse because it accumulates unmatched inventory instead of starting
+with complete sets and recycling symmetric leftovers. The next authorized step
+is one exact historical accounting ledger, not a new paper arm, a repair of the
+legacy EOA mintbot, or live orders.
 
 ## Immutable observation block
 
@@ -111,7 +118,7 @@ Of 40 frozen wallets, 31 traded and 28 had FIFO pair evidence:
 
 | Metric | Fresh value |
 |---|---:|
-| Descriptive actual PnL | -$9,590.65 |
+| Descriptive settlement-marked PnL | -$9,590.65 |
 | Outcome-neutral PnL | -$71,977.10 |
 | Directional component | +$62,386.46 |
 | Volume | $635,844 |
@@ -175,7 +182,7 @@ was 85.90% (72.42–99.81%). Earlier frozen blocks were similar at 87–90%.
 This strongly supports complementary bids being matched through the engine. It
 does not show that either wallet received both outcomes.
 
-### 2. Explicit Safe/Relayer lifecycle split or merge
+### 2. Explicit position-adapter counterparty split or merge
 
 The current standard adapter is
 `0xAdA100Db00Ca00073811820692005400218FcE1f`. For an explicit split it pulls
@@ -211,43 +218,48 @@ the frozen 40-wallet cohort:
 the event start. The first settled fills arrived 3–45 seconds after start; all
 1,628 owner legs and $6,234.02 book volume were maker sells, with both outcomes
 sold in 31/31 windows and zero CLOB buys. Each of 24 terminal merges occurred at
-event +369..+375 seconds, after the last fill, and equaled the exact smaller
-remaining outcome inventory. Seven windows did not merge. On-chain order is
-exact, but it cannot reveal pre-split order submission or unfilled/cancelled
-quotes.
+event +369..+375 seconds, after the last fill, and equaled the exact smaller side
+of the observed split-minus-CLOB-fill ledger. Seven windows did not merge.
+On-chain order is exact, but it cannot reveal complete wallet balances,
+pre-split order submission, or unfilled/cancelled quotes.
 
-Fresh economics before rebates were +$17.896 on a 50-cent residual diagnostic
-and +$60.265 actual. The 6,098.124 paired sold sets realized an average combined
-price of 1.004458, worth +$27.188; roughly 236 sold shares remained directionally
-unmatched and favorable outcome alignment added +$42.370. The public Polymarket
+The original proportional allocation reported +$17.896 on a 50-cent residual
+diagnostic and +$60.265 settlement-marked, assigning +$27.188 to 6,098.124
+paired sold sets and +$33.077 to roughly 236 excess sold shares. That allocation
+is not identified by public fills. A later chronological FIFO audit assigned
++$57.362 to paired-sale surplus and only +$2.904 to price-relative residual
+performance; admissible excess-fill allocations span roughly -$43 to +$101.
+The total is invariant, but the narrative is not, and none of these fill-side
+economics is yet in a frozen artifact. The public Polymarket
 [maker-rebate endpoint](https://docs.polymarket.com/api-reference/rebates/get-current-rebated-fees-for-a-maker)
 returned one row for every exact condition, totaling $29.869474. Including that
 endpoint-recorded rebate amount gives approximately +$47.77 on the 50-cent
-diagnostic and +$90.13 actual, before any unobserved Relayer/builder cost or
-proof of cash-settlement timing.
+diagnostic and +$90.13 settlement-marked, before any unobserved Relayer/builder
+cost or proof of cash-settlement timing.
 
-The +$47.77 number is not an outcome-neutral cash result. Valuing the unmatched
-shares at zero instead of 50 cents puts the adverse residual floor near -$70.2,
-including the rebate and before omitted costs. The unknown all-in cost that
-erases the 50-cent diagnostic is only about $1.54/window after rebate. Any
-replication must therefore report actual redemption, executable flattening, and
-zero-payoff floor separately; calling the 50-cent diagnostic hedged profit would
-be false.
+The +$47.77 number is an obsolete 50-cent diagnostic, not an outcome-neutral
+cash result. Valuing the unmatched shares at zero puts the adverse residual
+floor near -$70.2, including the rebate and before omitted costs. Any replication
+must report redemption, executable flattening, zero-payoff floor, and cash
+finality separately. The relevant question is whether paired-sale surplus plus
+defensible rebates survives queue loss, costs, capital, and tail-risk limits—not
+whether the 50-cent diagnostic clears a threshold.
 
 The same endpoint returned $130.252864 for `0x9d57…`'s 30 active conditions.
-That raises its 50-cent diagnostic from +$188.250 to about +$318.50, but actual
-PnL remains about -$124.14 because directional residue cost $442.643. Its 43,068.036
+Its legacy 50-cent decomposition is not used for a signal claim. Its 43,068.036
 FIFO buy pairs averaged a fee-inclusive 1.006294 and lost $271.080; profitable
-same-token unwinds and rebates, not cheap pair entry alone, supplied its neutral
-edge. `0x335a…` had no rebate for these conditions and no same-address CLOB rows.
+same-token unwinds and rebates, not cheap pair entry alone, supplied its reported
+inventory edge. That is a different mechanism requiring its own exact benchmark
+audit. `0x335a…` had no rebate for these conditions and no same-address CLOB rows.
 
 The already-frozen seven-day artifact ending before this fresh block (SHA-256
 `ecd98ac5d03427e26f9324b0327c6b2f0f73539d4e62f50773cd1f8552ae0825`)
-contains an important independent clue for `0x1dd2…`. Its discovery slice has
-1,395 markets, $359,792.53 volume, 100% maker volume, +$978.83 actual PnL, and
--$867.16 neutral PnL. Its later holdout has 494 markets, $106,171.10 volume,
-100% maker volume, +$544.40 actual PnL, and +$95.88 neutral PnL. Combined
-pre-rebate neutral economics are therefore negative despite positive actual PnL.
+contains an important independent style clue for `0x1dd2…`. Its discovery slice
+has 1,395 markets, $359,792.53 volume, 100% maker volume, +$978.83
+settlement-marked PnL, and a -$867.16 50-cent diagnostic. Its later slice has 494
+markets, $106,171.10 volume, 100% maker volume, +$544.40 settlement-marked PnL,
+and a +$95.88 50-cent diagnostic. The diagnostics do not establish neutral
+economics; the later raw FIFO audit is summarized in the adjudication report.
 The artifact predates the adapter correction and cannot prove those earlier
 sells were funded by 750-set splits. Exact wallet-specific receipt attribution,
 condition-matched daily rebates, and capital cashflow across this frozen period
@@ -372,17 +384,18 @@ edge.
 1. Reject Gen74 Basket99 economically and quarantine its unfinalized causal
    capture. Gen76 is only the clocked measurement continuation, not a strategy
    promotion.
-2. Advance exactly one new candidate to hostile review: receipt-proven
-   `0x1dd2…` mint-to-make mechanics—complete-set inventory before the window,
-   two-sided maker asks, fee-curve rebates, and exact terminal merge of symmetric
-   leftovers. Reconstruct it in replay/paper only after a frozen longer-history
-   persistence check. Do not repair the legacy EOA mintbot; any eventual chain
-   path is Safe + Relayer + current pUSD adapter.
-3. Keep `0x9d57…` separate. It is a buy/merge/unwind/rebate strategy whose
-   directional residue still lost money, not evidence for the same mint arm.
+2. Hostile review is complete. Advance exactly one experiment: an integer-exact,
+   fail-closed accounting ledger for `0x1dd2…` across Fresh31 and the earlier
+   seven-day period. Do not infer a quote policy or start replay/paper until that
+   ledger passes conservation, provenance, capital, cash-state, and tail-risk
+   gates. Do not repair the legacy EOA mintbot; any eventual chain path is Safe +
+   Relayer + current pUSD adapter.
+3. Keep `0x9d57…` separate. It is a buy/merge/unwind/rebate mechanism requiring
+   its own price-relative benchmark, not evidence for the same mint arm.
 4. Do not promote a late-directional arm or invent a signal threshold. Current
-   winner timing is already public on the tape, `0x1dd2…`'s favorable residual is
-   only one 31-window block, and the cross-venue causal join is not finalized.
+   winner timing is already public on the tape, `0x1dd2…` has only +$2.90 of
+   post-hoc price-relative FIFO residual in the fresh block, and the cross-venue
+   causal join is not finalized.
 5. Keep Gen75 passive capture. Exclude exact connection gaps, bind each Gamma
    regime, and add the per-market 250 ms taker delay before any executable event
    study.

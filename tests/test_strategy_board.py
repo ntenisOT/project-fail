@@ -49,7 +49,9 @@ def test_creation_board_is_first_queue_with_one_realized_exit_twin() -> None:
     assert all(config.activation_on_observation for config in board)
     assert all(config.new_pair_start_s == -90_000 for config in board)
     assert board[0].quote_hold_s == 90_000
+    assert board[0].hold_completion_leg
     assert board[1].quote_hold_s == 0
+    assert not board[1].hold_completion_leg
     assert board[2].flatten_residual_s == 285
     assert '"activation_on_observation":true' in canonical_board(board)
 

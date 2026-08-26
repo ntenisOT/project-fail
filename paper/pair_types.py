@@ -79,6 +79,9 @@ class PairConfig:
     # previously unavailable target. This must be explicit: treating any late
     # process start as a valid queue test erases the advantage being measured.
     activation_on_observation: bool = False
+    # Keep the original unfilled bid after its opposite leg fills. This is a
+    # separate policy from merely holding a balanced pair before the first fill.
+    hold_completion_leg: bool = False
 
 
 @dataclasses.dataclass

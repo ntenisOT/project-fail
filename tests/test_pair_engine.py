@@ -164,6 +164,27 @@ class FocusedPairTests(unittest.TestCase):
             {key: order.price for key, order in window.orders.items()}, initial,
         )
 
+    def test_quote_hold_keeps_original_completion_leg_after_first_fill(self) -> None:
+        config = PairConfig(
+            "hold", "accumulate", 0.01, action_latency_s=0,
+            buy_sum_ceiling=0.99, require_both_to_start=True,
+            quote_hold_s=60, hold_completion_leg=True,
+        )
+        window = PairWindow(
+            config, "btc", "btc-updown-5m-0", 0, "up", "down", 0,
+        )
+        window.on_books(
+            1, book(0.54, 0, 0.56, 5), book(0.45, 0, 0.47, 5),
+        )
+        window.on_trade(2, False, 0.45, 5, "SELL")
+
+        window.on_books(
+            3, book(0.40, 10, 0.41, 5), book(0.59, 10, 0.60, 5),
+        )
+
+        self.assertEqual(set(window.orders), {(True, "buy")})
+        self.assertEqual(window.orders[(True, "buy")].price, 0.54)
+
     def test_maker_posts_respect_market_minimum_and_available_inventory(self) -> None:
         too_small = PairWindow(
             PairConfig("small", "accumulate", 0.01, action_latency_s=0),

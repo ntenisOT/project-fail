@@ -125,27 +125,41 @@ class PairWindow:
         can_start_pair = now < self.start + self.config.new_pair_cutoff_s
 
         # A pre-open queue test is meaningless if every harmless book tick
-        # cancels and reposts the pair.  Retain a still-post-only balanced bid
-        # pair for its declared hold interval.  Once either leg fills, normal
-        # completion pricing resumes immediately.
+        # cancels and reposts the pair. Retain the original balanced bids for
+        # the declared interval; after one leg fills, cancel any remainder on
+        # that filled side but keep the original opposite bid. A public ask
+        # crossing our simulated resting bid is not a reason to cancel it: in
+        # reality it would match, and the causal trade event is the fill proof.
         current_buys = {
             side: self.orders[(side, "buy")]
             for side in (True, False) if (side, "buy") in self.orders
         }
         if (self.config.mode == "accumulate"
                 and self.config.quote_hold_s > 0
-                and self.buy_pairs.open_side is None
-                and len(current_buys) == 2
-                and can_start_pair):
-            oldest = min(order.placed_at for order in current_buys.values())
-            still_post_only = all(
-                books[side].best_ask is not None
-                and order.price < books[side].best_ask - 1e-9
-                for side, order in current_buys.items()
+                and current_buys):
+            open_side = self.buy_pairs.open_side
+            keep_completion = (
+                open_side is not None and self.config.hold_completion_leg
             )
-            if still_post_only and now - oldest < self.config.quote_hold_s:
-                return {(side, "buy"): order.price
-                        for side, order in current_buys.items()}
+            held_sides = ((True, False)
+                          if open_side is None and can_start_pair
+                          else (not open_side,) if keep_completion else ())
+            held = {
+                side: current_buys[side]
+                for side in held_sides if side in current_buys
+            }
+            expected = 2 if open_side is None else 1
+            if len(held) == expected:
+                oldest = min(order.placed_at for order in held.values())
+                still_post_only = all(
+                    books[side].best_ask is not None
+                    and order.price < books[side].best_ask - 1e-9
+                    for side, order in held.items()
+                )
+                if (now - oldest < self.config.quote_hold_s
+                        and (self.config.hold_completion_leg or still_post_only)):
+                    return {(side, "buy"): order.price
+                            for side, order in held.items()}
 
         replenishing = (self.config.mode == "inventory"
                         and min(self.inventory.values()) < self.config.max_inventory - 0.1)

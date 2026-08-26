@@ -100,7 +100,7 @@ def preopen_strategy_board(action_latency_s: float) -> tuple[PairConfig, ...]:
 def creation_strategy_board(action_latency_s: float) -> tuple[PairConfig, ...]:
     """First-observation test for markets listed roughly one day before T0.
 
-    ``open99_hold`` preserves its original balanced pair until one leg fills.
+    ``open99_hold`` preserves its original pair, including the unfilled leg.
     ``open99_dynamic`` measures the cost of surrendering queue position to
     follow the book. ``open99_flat285`` shares the held policy but realizes
     any remaining one-sided exposure against displayed depth at T+285.
@@ -119,7 +119,7 @@ def creation_strategy_board(action_latency_s: float) -> tuple[PairConfig, ...]:
     return (
         PairConfig(
             "open99_hold", "accumulate", 0.02,
-            quote_hold_s=90_000, **common,
+            quote_hold_s=90_000, hold_completion_leg=True, **common,
         ),
         PairConfig(
             "open99_dynamic", "accumulate", 0.02, **common,
@@ -127,7 +127,7 @@ def creation_strategy_board(action_latency_s: float) -> tuple[PairConfig, ...]:
         PairConfig(
             "open99_flat285", "accumulate", 0.02,
             quote_hold_s=90_000, flatten_residual_s=285,
-            new_pair_cutoff_s=285, **common,
+            new_pair_cutoff_s=285, hold_completion_leg=True, **common,
         ),
     )
 
@@ -138,8 +138,9 @@ def canonical_board(configs: Sequence[PairConfig]) -> str:
         row = dataclasses.asdict(config)
         # Preserve hashes of boards captured before this backward-compatible
         # field existed. A true value remains explicit and hash-covered.
-        if not row["activation_on_observation"]:
-            del row["activation_on_observation"]
+        for field in ("activation_on_observation", "hold_completion_leg"):
+            if not row[field]:
+                del row[field]
         rows.append(row)
     return json.dumps(
         rows,

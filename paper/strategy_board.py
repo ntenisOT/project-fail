@@ -71,6 +71,31 @@ def current_strategy_board(action_latency_s: float) -> tuple[PairConfig, ...]:
         PairConfig("basket99", "accumulate", 0.02, buy_sum_ceiling=0.99, **common),
     )
 
+
+def preopen_strategy_board(action_latency_s: float) -> tuple[PairConfig, ...]:
+    """Frozen first test of the already-live upcoming-window order book.
+
+    The two arms differ only in queue retention.  Both place minimum-size
+    maker bids whose combined price is at most 99 cents, beginning four
+    minutes before the price-measurement interval.  ``pre99_hold`` retains a
+    balanced pair through T+15 unless a leg fills; ``pre99_dynamic`` is the
+    old book-following behavior and is the contemporaneous control.
+    """
+    common = dict(
+        action_latency_s=action_latency_s,
+        improve_ticks=0,
+        require_both_to_start=True,
+        basket_average_cap=True,
+        new_pair_start_s=-240,
+        buy_sum_ceiling=0.99,
+        clip_shares=5,
+        max_inventory=20,
+    )
+    return (
+        PairConfig("pre99_hold", "accumulate", 0.02, quote_hold_s=255, **common),
+        PairConfig("pre99_dynamic", "accumulate", 0.02, **common),
+    )
+
 def canonical_board(configs: Sequence[PairConfig]) -> str:
     """Serialize every config field deterministically for experiment provenance."""
     return json.dumps(

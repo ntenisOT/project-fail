@@ -78,6 +78,58 @@ class FocusedPairTests(unittest.TestCase):
         self.assertIsNone(window.on_trade(1.05, True, 0.48, 5, "SELL"))
         self.assertEqual(window.pre_activation_trades, 1)
 
+    def test_negative_start_offset_rests_and_fills_before_price_window(self) -> None:
+        config = PairConfig(
+            "preopen", "accumulate", 0.01, action_latency_s=0,
+            new_pair_start_s=-60, require_both_to_start=True,
+            buy_sum_ceiling=0.99,
+        )
+        window = PairWindow(
+            config, "btc", "btc-updown-5m-300", 300, "up", "down", 240,
+        )
+        up = book(0.48, 0, 0.49, 5)
+        down = book(0.51, 0, 0.52, 5)
+
+        window.on_books(240, up, down)
+        self.assertEqual(
+            {(side, order.price) for (side, kind), order in window.orders.items()
+             if kind == "buy"},
+            {(True, 0.48), (False, 0.51)},
+        )
+        fill = window.on_trade(241, True, 0.48, 5, "SELL")
+        self.assertIsNotNone(fill)
+        self.assertEqual(window.inventory[True], 5)
+
+    def test_preopen_validity_begins_at_declared_activation(self) -> None:
+        config = PairConfig(
+            "preopen", "accumulate", 0.01, action_latency_s=0,
+            new_pair_start_s=-60,
+        )
+        late = PairWindow(
+            config, "btc", "btc-updown-5m-300", 300, "up", "down", 251,
+        )
+        late.on_books(251, book(0.48, 0, 0.52, 5), book(0.49, 0, 0.51, 5))
+        self.assertFalse(late.full_window)
+        self.assertEqual(late.invalid_reason, "late_first_books")
+
+    def test_balanced_quote_hold_keeps_preopen_queue_price(self) -> None:
+        config = PairConfig(
+            "hold", "accumulate", 0.01, action_latency_s=0,
+            buy_sum_ceiling=0.99, require_both_to_start=True,
+            quote_hold_s=60,
+        )
+        window = PairWindow(
+            config, "btc", "btc-updown-5m-0", 0, "up", "down", 0,
+        )
+        first = book(0.48, 10, 0.50, 5), book(0.51, 10, 0.53, 5)
+        moved = book(0.47, 10, 0.50, 5), book(0.50, 10, 0.53, 5)
+        window.on_books(1, *first)
+        initial = {key: order.price for key, order in window.orders.items()}
+        window.on_books(2, *moved)
+        self.assertEqual(
+            {key: order.price for key, order in window.orders.items()}, initial,
+        )
+
     def test_maker_posts_respect_market_minimum_and_available_inventory(self) -> None:
         too_small = PairWindow(
             PairConfig("small", "accumulate", 0.01, action_latency_s=0),

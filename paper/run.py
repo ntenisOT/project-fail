@@ -41,7 +41,11 @@ from paper.live_gate import LiveGate
 from paper.market_metadata import ActiveMarket, fetch_active_market
 from paper.notify import notifier
 from paper.reference_feed import ReferenceFeed, ReferenceUpdate
-from paper.strategy_board import current_strategy_board, strategy_board_hash
+from paper.strategy_board import (
+    current_strategy_board,
+    preopen_strategy_board,
+    strategy_board_hash,
+)
 from tools.market_windows import ASSET_PREFIX, fetch_gamma_window
 from tools.transport_telemetry import CaptureWriteError
 
@@ -65,7 +69,21 @@ if requested:
     wanted = {item.strip() for item in requested.split(",")}
     ASSETS = {asset: prefix for asset, prefix in ASSETS.items() if asset in wanted}
 
-STRATEGIES = current_strategy_board(ACTION_LATENCY_S)
+PREOPEN_TARGET_RAW = os.environ.get("PAPER_PREOPEN_TARGET_START")
+PREOPEN_TARGET_START: int | None = None
+if PREOPEN_TARGET_RAW:
+    try:
+        PREOPEN_TARGET_START = int(PREOPEN_TARGET_RAW)
+    except ValueError as exc:
+        raise RuntimeError("PAPER_PREOPEN_TARGET_START must be an epoch second") from exc
+    if PREOPEN_TARGET_START <= 0 or PREOPEN_TARGET_START % 300:
+        raise RuntimeError("PAPER_PREOPEN_TARGET_START must be a positive 5-minute boundary")
+
+STRATEGIES = (
+    preopen_strategy_board(ACTION_LATENCY_S)
+    if PREOPEN_TARGET_START is not None
+    else current_strategy_board(ACTION_LATENCY_S)
+)
 MKT_WS = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 KILL = "paper/KILL"
 
@@ -194,6 +212,47 @@ async def _discover(asset: str, base: int) -> tuple[str, ActiveMarket | None]:
 
 
 async def window_task() -> None:
+    if PREOPEN_TARGET_START is not None:
+        while True:
+            now = time.time()
+            finished_any = False
+            for asset, active_market in list(S.markets.items()):
+                if now + 1e-9 < active_market.start + 300:
+                    continue
+                observed_at = now
+                S.engine.finish_window(asset, observed_at)
+                if S.capture is not None:
+                    S.capture.market_finish(
+                        asset, active_market.slug, active_market.start, observed_at,
+                    )
+                S.pending.append(PendingWindow(
+                    asset, active_market.start, active_market.slug,
+                ))
+                del S.markets[asset]
+                finished_any = True
+            if finished_any:
+                _refresh_tokens()
+            if now < PREOPEN_TARGET_START + 300:
+                missing = [asset for asset in ASSETS if asset not in S.markets]
+                if missing:
+                    discoveries = await asyncio.gather(*(
+                        _discover(asset, PREOPEN_TARGET_START) for asset in missing
+                    ))
+                    for asset, market in discoveries:
+                        if market is None:
+                            continue
+                        observed_at = time.time()
+                        S.engine.open_market(market, observed_at)
+                        S.markets[asset] = market
+                        if S.capture is not None:
+                            S.capture.market_open(market, observed_at)
+                        log.info(
+                            "opened preopen target %s %s with %d focused strategies",
+                            asset, market.slug, len(STRATEGIES),
+                        )
+                    _refresh_tokens()
+            await asyncio.sleep(boundary_aligned_delay(time.time()))
+
     current_base = -1
     while True:
         base = int(time.time() // 300) * 300
@@ -457,6 +516,7 @@ async def main() -> None:
             "max_market_event_lag_s": MAX_MARKET_EVENT_LAG_S,
             "decision_cadence_s": DECISION_CADENCE_S,
             "assets": list(ASSETS),
+            "preopen_target_start": PREOPEN_TARGET_START,
         },
     )
     if S.capture is not None:
@@ -467,10 +527,11 @@ async def main() -> None:
         })
     log.info("focused pair paper starting | strategies=%s | queue-ahead fills | "
              "action-latency=%dms | max-market-lag=%dms | decision cadence=%dms | "
-             "official Gamma outcomes | assets=%s",
+             "official Gamma outcomes | assets=%s | preopen-target=%s",
              names, round(ACTION_LATENCY_S * 1000),
              round(MAX_MARKET_EVENT_LAG_S * 1000),
-             round(DECISION_CADENCE_S * 1000), list(ASSETS))
+             round(DECISION_CADENCE_S * 1000), list(ASSETS),
+             PREOPEN_TARGET_START)
     tasks = [
         asyncio.create_task(coroutine)
         for coroutine in (

@@ -34,6 +34,7 @@ from paper.replay_data import (
 from paper.strategy_board import (
     current_strategy_board,
     execution_model_identity,
+    preopen_strategy_board,
     strategy_board_hash,
 )
 
@@ -180,8 +181,11 @@ def replay_dataset(
     action_latency = float(str(dataset.runtime["action_latency_s"]))
     if not math.isfinite(action_latency) or action_latency < 0:
         raise ValueError("captured action latency is invalid")
-    board = (
-        tuple(configs) if configs is not None else current_strategy_board(action_latency)
+    preopen_target = dataset.runtime.get("preopen_target_start")
+    board = tuple(configs) if configs is not None else (
+        preopen_strategy_board(action_latency)
+        if preopen_target is not None
+        else current_strategy_board(action_latency)
     )
     replay_hash = strategy_board_hash(board)
     if require_board_match and replay_hash != dataset.board_hash:

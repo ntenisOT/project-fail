@@ -51,7 +51,14 @@ class PairWindow:
                  up_token: str, down_token: str, observed_at: float | None = None) -> None:
         self.config, self.asset, self.slug = config, asset, slug
         self.start, self.end = start, start + 300
-        self.full_window = (start if observed_at is None else observed_at) <= start + 10
+        # Outcome-token books are live before the five-minute price interval.
+        # A negative new_pair_start_s deliberately models an order resting in
+        # that pre-open book.  Validity must start at that strategy activation
+        # time, not at the later price-measurement boundary.
+        self.activation_start = start + min(0.0, config.new_pair_start_s)
+        self.full_window = (
+            self.activation_start if observed_at is None else observed_at
+        ) <= self.activation_start + 10
         self.invalid_reason = None if self.full_window else "partial_startup"
         self.invalid_event_lag_ms: float | None = None
         self.first_books_at: float | None = None
@@ -111,6 +118,30 @@ class PairWindow:
         books = {True: up, False: down}
         desired: dict[tuple[bool, str], float] = {}
         can_start_pair = now < self.start + self.config.new_pair_cutoff_s
+
+        # A pre-open queue test is meaningless if every harmless book tick
+        # cancels and reposts the pair.  Retain a still-post-only balanced bid
+        # pair for its declared hold interval.  Once either leg fills, normal
+        # completion pricing resumes immediately.
+        current_buys = {
+            side: self.orders[(side, "buy")]
+            for side in (True, False) if (side, "buy") in self.orders
+        }
+        if (self.config.mode == "accumulate"
+                and self.config.quote_hold_s > 0
+                and self.buy_pairs.open_side is None
+                and len(current_buys) == 2
+                and can_start_pair):
+            oldest = min(order.placed_at for order in current_buys.values())
+            still_post_only = all(
+                books[side].best_ask is not None
+                and order.price < books[side].best_ask - 1e-9
+                for side, order in current_buys.items()
+            )
+            if still_post_only and now - oldest < self.config.quote_hold_s:
+                return {(side, "buy"): order.price
+                        for side, order in current_buys.items()}
+
         replenishing = (self.config.mode == "inventory"
                         and min(self.inventory.values()) < self.config.max_inventory - 0.1)
         inventory_can_buy = (
@@ -480,10 +511,10 @@ class PairWindow:
         self.fill_probe.observe(now, up, down)
         if self.first_books_at is None:
             self.first_books_at = now
-            if now > self.start + 10:
+            if now > self.activation_start + 10:
                 self.full_window = False
                 self.invalid_reason = "late_first_books"
-        if not self.full_window or now < self.start or now >= self.end:
+        if not self.full_window or now < self.activation_start or now >= self.end:
             return []
         self._activate_pending(now, up, down)
         records = self._hedge_buy_pair(now, up, down)

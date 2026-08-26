@@ -71,7 +71,28 @@ DB = "live/mintbot.db"
 MINT_USD = float(os.environ.get("MINT_USD", "20"))
 MINT_DAY_CAP = float(os.environ.get("MINT_DAY_CAP", "250"))
 SPREAD = float(os.environ.get("MINT_SPREAD", "0.02"))
-SUM_FLOOR = 1.005            # M8: two asks must sum above set cost + margin
+SUM_FLOOR = 1.005            # M8 floor of last resort; see pair_premium_floor
+# Measured pair-premium curve (tools/pair_cost_curve.py, 600 BTC windows,
+# 3.9M trades). The traded pair sum rises monotonically through the window:
+#     -180..0s 0.998 | 0..120s 0.998-1.004 | 120..180s 1.017-1.022
+#     180..240s 1.040-1.068 | 240..300s 1.080-1.109
+# A single 1.005 floor is wrong in BOTH directions: it sits ABOVE the market
+# before T+120 (so the pair can never be lifted) and well BELOW it after T+180
+# (so the premium is given away). These floors track the measured curve with a
+# margin so the quote sits inside the market where the premium actually exists,
+# and never below 1.001 - selling a $1.00 minted set for less than $1 is a
+# guaranteed loss no matter how good the fill rate looks.
+PREMIUM_FLOORS = ((120, 1.001), (180, 1.008), (240, 1.025), (300, 1.055))
+
+
+def pair_premium_floor(elapsed_s: float) -> float:
+    """Return the ask-pair floor for this point in the window."""
+    for boundary, floor in PREMIUM_FLOORS:
+        if elapsed_s < boundary:
+            return floor
+    return PREMIUM_FLOORS[-1][1]
+
+
 BOOK_FRESH_S = float(os.environ.get("MINT_BOOK_FRESH_MS", "2000")) / 1000
 if not 0.05 <= BOOK_FRESH_S <= 5:
     raise RuntimeError("MINT_BOOK_FRESH_MS must be between 50 and 5000")
@@ -346,8 +367,9 @@ class Mintbot:
                         log.warning("quote paused %s: market feed stale", st["asset"])
                     continue
                 ask_up, ask_down = asks
+                floor = pair_premium_floor(now - st["base"])
                 prices = guarded_pair_prices(
-                    ask_up, ask_down, spread=SPREAD, sum_floor=SUM_FLOOR,
+                    ask_up, ask_down, spread=SPREAD, sum_floor=floor,
                 )
                 if prices is None:
                     if any(st["asks"].values()):
@@ -358,7 +380,7 @@ class Mintbot:
                 plan = plan_pair_quotes(
                     minted=st["minted"], sold_up=st["sold"][True],
                     sold_down=st["sold"][False], price_up=px_u, price_down=px_d,
-                    sum_floor=SUM_FLOOR, clip_shares=MIN_SHARES,
+                    sum_floor=floor, clip_shares=MIN_SHARES,
                 )
                 await self.requote_pair(
                     st, plan, self.books.revision(st["up"], st["dn"]),

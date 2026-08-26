@@ -7,12 +7,30 @@ replicable, low-capital edge, and what execution captures it?*
 **Status: NO-GO for real money.** Live geoblock returns blocked=true for both
 machines (see below), so no order path may run regardless of strategy quality.
 
-**2026-08-26 finding that inverts this project's core thesis.** Winner margin
-IS real and repeatable: ranking wallets independently in Aug18-22 and Aug22-25
-(78 wallets with >$1k volume in both) gives Spearman rho +0.517 (z +4.54) on
-margin and +0.746 (z +6.54) on $/market. Copying period-A's top-20 by margin
-returns 4.03% margin in period B against a 2.42% population mean, 0/20 losers.
-So "copy the winners" is not survivorship bias.
+**RETRACTED 2026-08-26 (Codex independent review).** This section previously
+claimed winner margin is real and repeatable - Spearman rho +0.517 (z +4.54)
+on margin, +0.746 (z +6.54) on $/market, and a period-A top-20 returning 4.03%
+margin against a 2.42% population mean with 0/20 losers - and concluded that
+"copy the winners" is not survivorship bias. **That conclusion was wrong and
+the numbers are future-conditioned.**
+
+`tools/winner_persistence.py:65` intersects two top-300-BY-PNL files before
+ranking, so only wallets that already survived into period B are eligible:
+222 period-A wallets collapse to 78. Its "period-A top-20" is then drawn only
+from those survivors (`winner_persistence.py:113`), so just **9 of period A's
+actual top-20 by margin appear at all** - the other 11 are silently replaced
+by ex-post winners. The periods are also not comparable (period A is BTC-only
+with 1,008 resolved asset-windows; period B is partly four-asset with 1,984)
+and they overlap one inclusive boundary window.
+
+This is selection on the future outcome, not evidence of persistence. **There
+is currently no valid statistical support for "copy the winners."** Rerunning
+it honestly requires ranking period A on period-A data alone, carrying the
+full top-20 forward including wallets that vanish, and matching asset coverage.
+
+Related mislabel from the same review: `0x1dd2a69e` is "#58 of 300" only
+because that file is PnL-sorted. Its **margin** rank among those 300 is
+approximately **#267**, not #58.
 
 But the behaviour that predicts HIGHER next-period margin is the opposite of
 what every arm in this repo was built to do:

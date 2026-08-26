@@ -111,6 +111,11 @@ def main() -> None:
                     help="ignore windows whose signal is flatter than this")
     ap.add_argument("--ask", action="store_true",
                     help="enter at a real ask print (taker-buy) instead of any print")
+    ap.add_argument("--signal-lag-s", type=float, default=0.0,
+                    help="seconds between a reference sample being observed and "
+                         "this process receiving it. Every sample in our data "
+                         "arrives late (median 1.678s), so entry must be priced "
+                         "AFTER checkpoint+lag or the backtest is lookahead.")
     ap.add_argument("--fresh-s", type=int, default=0,
                     help="only use prints within this many seconds of the "
                          "checkpoint; 0 means any print since the window opened. "
@@ -153,9 +158,16 @@ def main() -> None:
             predict_up = signal_bps > 0
             token = up_token if predict_up else down_token
             sql = ASK_SQL if args.ask else PRICE_SQL
-            lo = start + cp - args.fresh_s if args.fresh_s else start
+            if args.signal_lag_s:
+                # we cannot act until the sample reaches us; price the entry
+                # from prints strictly AFTER that, never before
+                act_at = start + cp + args.signal_lag_s
+                lo, hi = act_at, act_at + max(args.fresh_s, 5)
+            else:
+                lo = start + cp - args.fresh_s if args.fresh_s else start
+                hi = start + cp
             rows = c.query(sql, parameters={
-                "lo": lo, "hi": start + cp, "tok": token}).result_rows
+                "lo": int(lo), "hi": int(hi), "tok": token}).result_rows
             price = rows[0][0] if rows and rows[0][0] else None
             if price is None:
                 continue

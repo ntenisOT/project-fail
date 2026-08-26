@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import asyncio
+import collections
 import os
 import subprocess
 import sys
+import threading
+import time
 import unittest
 from pathlib import Path
 
-from live import lockbot
+from live import lockbot, mintbot
 from live.chain import PreflightError, merge, split
 from live.feed_health import (
     FeedHealth,
@@ -14,8 +18,10 @@ from live.feed_health import (
     market_event_tokens,
     stale_market_event,
 )
+from live.feed_pump import FeedPumpStats
 from live.market_book import BestAskCache, fresh_ask_pair
 from live.mint_quotes import (
+    Quote,
     guarded_pair_prices,
     plan_pair_quotes,
     should_reprice,
@@ -60,6 +66,10 @@ class MintSafetyTests(unittest.TestCase):
         self.assertFalse(stale_market_event(delta, 1000.3, 0.4))
         self.assertTrue(stale_market_event(delta, 999.9, 0.4))
         self.assertFalse(stale_market_event(trade, 1001.0, 0.4))
+        self.assertIsNone(event_time_s({"timestamp": "nan"}))
+        self.assertTrue(stale_market_event(
+            {"event_type": "book", "timestamp": "nan"}, 1000.0, 0.4,
+        ))
         self.assertEqual(
             market_event_tokens({
                 "event_type": "price_change", "price_changes": [
@@ -95,9 +105,9 @@ class MintSafetyTests(unittest.TestCase):
     def test_price_change_replaces_stale_snapshot(self) -> None:
         books = BestAskCache()
         books.apply({"event_type": "book", "asset_id": "up",
-                     "asks": [{"price": "0.70"}]}, 1.0)
+                     "bids": [], "asks": [{"price": "0.70"}]}, 1.0)
         books.apply({"event_type": "book", "asset_id": "down",
-                     "asks": [{"price": "0.40"}]}, 1.0)
+                     "bids": [], "asks": [{"price": "0.40"}]}, 1.0)
         books.apply({"event_type": "price_change", "price_changes": [
             {"asset_id": "up", "best_ask": "0.63"},
         ]}, 2.0, source_at=2.0)
@@ -119,6 +129,97 @@ class MintSafetyTests(unittest.TestCase):
                          (0.63, 0.39))
         books.clear()
         self.assertIsNone(books.get("up"))
+
+    def test_best_ask_freshness_bounds_source_age_and_nonfinite_time(self) -> None:
+        books = BestAskCache()
+        books.apply({"event_type": "book", "asset_id": "up",
+                     "bids": [], "asks": [{"price": "0.60"}]},
+                    10.0, source_at=9.7)
+        books.apply({"event_type": "book", "asset_id": "down",
+                     "bids": [], "asks": [{"price": "0.40"}]},
+                    10.0, source_at=9.7)
+        self.assertIsNone(fresh_ask_pair(books, "up", "down", 10.11, 0.4))
+        with self.assertRaisesRegex(ValueError, "finite and positive"):
+            books.apply({"event_type": "book", "asset_id": "up",
+                         "bids": [], "asks": []}, 10.2, source_at=float("nan"))
+
+    def test_mint_malformed_mixed_delta_clears_every_book(self) -> None:
+        bot = mintbot.Mintbot.__new__(mintbot.Mintbot)
+        bot.books = BestAskCache()
+        now = time.time()
+        bot.feed_health = FeedHealth()
+        bot.feed_counts = collections.Counter()
+        bot.quote_counts = collections.Counter()
+        bot.quote_wakeup = asyncio.Event()
+        bot.last_feed_log = time.monotonic()
+        bot.feed_pump_stats = FeedPumpStats()
+        for timestamp in (now, now - 10):
+            for token in ("up", "down"):
+                bot.books.apply({
+                    "event_type": "book", "asset_id": token,
+                    "bids": [], "asks": [{"price": "0.50"}],
+                }, now, source_at=now)
+            bot.on_market_event({
+                "event_type": "price_change", "timestamp": timestamp,
+                "price_changes": [
+                    {"asset_id": "up", "best_ask": "0.49"},
+                    {"best_ask": "0.51"},
+                ],
+            })
+            self.assertIsNone(bot.books.get("up"))
+            self.assertIsNone(bot.books.get("down"))
+
+    def test_feed_change_during_verified_cancel_aborts_stale_plan(self) -> None:
+        async def scenario() -> None:
+            started, release = threading.Event(), threading.Event()
+
+            class FakeClob:
+                def __init__(self) -> None:
+                    self.placements: list[object] = []
+
+                def cancel_many_verified(self, _order_ids) -> None:
+                    started.set()
+                    assert release.wait(2)
+
+                def place_many(self, orders, _post_only):
+                    self.placements.append(orders)
+                    return ["new-up", "new-down"]
+
+                def cancel_all_verified(self) -> None:
+                    return None
+
+            bot = mintbot.Mintbot.__new__(mintbot.Mintbot)
+            bot.books = BestAskCache()
+            bot.quote_counts = collections.Counter()
+            bot.clob = FakeClob()
+            now = time.time()
+            for token, ask in (("up", "0.60"), ("down", "0.40")):
+                bot.books.apply({
+                    "event_type": "book", "asset_id": token,
+                    "bids": [], "asks": [{"price": ask}],
+                }, now, source_at=now)
+            generation = bot.books.revision("up", "down")
+            state = {
+                "up": "up", "dn": "down", "asset": "btc", "closing": False,
+                "asks": {True: (0.50, "old-up"), False: (0.50, "old-down")},
+                "pair_placed_at": now - 20, "quote_lock": asyncio.Lock(),
+            }
+            plan = (Quote(True, 0.65, 5), Quote(False, 0.40, 5))
+            old_mode = mintbot.MODE
+            mintbot.MODE = "place"
+            try:
+                task = asyncio.create_task(bot.requote_pair(state, plan, generation))
+                assert await asyncio.to_thread(started.wait, 1)
+                bot.books.drop("up")
+                release.set()
+                await task
+            finally:
+                mintbot.MODE = old_mode
+                release.set()
+            self.assertEqual(bot.clob.placements, [])
+            self.assertEqual(bot.quote_counts["stale_plan_abort"], 1)
+
+        asyncio.run(scenario())
 
     def test_asymmetric_fill_stops_further_quotes(self) -> None:
         plan = plan_pair_quotes(minted=20, sold_up=5, sold_down=0,

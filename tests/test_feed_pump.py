@@ -6,6 +6,7 @@ import pytest
 
 from live.feed_pump import (
     FeedBacklogError,
+    FeedIntegrityError,
     FeedPump,
     FeedPumpStats,
     subscription_messages,
@@ -100,6 +101,22 @@ def test_feed_pump_acknowledges_only_the_processed_prefix_on_tail_loss() -> None
     assert len(raw_frames) == 1
     assert 0 <= len(seen) < 20
     assert processed == [(41, index) for index in range(len(seen))]
+
+
+def test_feed_pump_reconnects_instead_of_hiding_malformed_frames() -> None:
+    class Socket:
+        def __init__(self, raw: str) -> None:
+            self.raw = raw
+
+        async def send(self, message: str) -> None:
+            del message
+
+        async def recv(self) -> str:
+            return self.raw
+
+    for raw in ("not-json", json.dumps([{"ok": True}, 7]), json.dumps("scalar")):
+        with pytest.raises(FeedIntegrityError):
+            asyncio.run(FeedPump(lambda _event: None).run(Socket(raw), asyncio.Event()))
 
 
 def test_subscription_rotation_adds_before_removing() -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import math
 from typing import Mapping
 
 
@@ -29,20 +30,49 @@ class OrderBook:
         return levels.get(price, 0.0)
 
 
-def _levels(raw: object) -> dict[float, float]:
+def _levels(raw: object) -> dict[float, float] | None:
     if not isinstance(raw, list):
-        return {}
+        return None
     result: dict[float, float] = {}
     for row in raw:
         if not isinstance(row, dict):
-            continue
+            return None
         try:
             price, size = float(row["price"]), float(row["size"])
         except (KeyError, TypeError, ValueError):
-            continue
-        if 0 < price < 1 and size > 0:
+            return None
+        if (not math.isfinite(price) or not math.isfinite(size)
+                or not 0 < price < 1 or size < 0):
+            return None
+        if size > 0:
             result[price] = size
     return result
+
+
+def well_formed_book_event(event: Mapping[str, object]) -> bool:
+    """Validate an entire causal depth event before any level can mutate."""
+    event_type = event.get("event_type")
+    if event_type == "book":
+        return (bool(event.get("asset_id"))
+                and _levels(event.get("bids")) is not None
+                and _levels(event.get("asks")) is not None)
+    if event_type != "price_change":
+        return True
+    rows = event.get("price_changes")
+    if not isinstance(rows, list) or not rows:
+        return False
+    for row in rows:
+        if not isinstance(row, dict) or not row.get("asset_id"):
+            return False
+        try:
+            price, size = float(row["price"]), float(row["size"])
+        except (KeyError, TypeError, ValueError):
+            return False
+        if (str(row.get("side") or "").upper() not in ("BUY", "SELL")
+                or not math.isfinite(price) or not math.isfinite(size)
+                or not 0 < price < 1 or size < 0):
+            return False
+    return True
 
 
 class OrderBookCache:
@@ -54,6 +84,21 @@ class OrderBookCache:
 
     def drop(self, token: str) -> None:
         self._books.pop(token, None)
+
+    def invalidate(self, token: str) -> None:
+        """Break a token's delta chain while preserving static market metadata."""
+        book = self._books.get(token)
+        if book is None:
+            return
+        book.bids.clear()
+        book.asks.clear()
+        book.received_at = 0.0
+        book.source_at = 0.0
+        book.bootstrapped = False
+
+    def invalidate_all(self) -> None:
+        for token in tuple(self._books):
+            self.invalidate(token)
 
     def clear(self) -> None:
         self._books.clear()
@@ -75,11 +120,14 @@ class OrderBookCache:
             token = str(event.get("asset_id") or "")
             if not token:
                 return changed
+            bids, asks = _levels(event.get("bids")), _levels(event.get("asks"))
+            if bids is None or asks is None:
+                return changed
             book = self._books.setdefault(token, OrderBook())
             if book.bootstrapped and source_time < book.source_at:
                 return changed
-            book.bids = _levels(event.get("bids"))
-            book.asks = _levels(event.get("asks"))
+            book.bids = bids
+            book.asks = asks
             book.received_at = received_at
             book.source_at = source_time
             book.bootstrapped = True
@@ -100,7 +148,8 @@ class OrderBookCache:
                     price, size = float(row["price"]), float(row["size"])
                 except (KeyError, TypeError, ValueError):
                     continue
-                if not 0 < price < 1 or size < 0:
+                if (not math.isfinite(price) or not math.isfinite(size)
+                        or not 0 < price < 1 or size < 0):
                     continue
                 delta_book = self._books.get(token)
                 if (delta_book is None or not delta_book.bootstrapped
@@ -125,6 +174,4 @@ class OrderBookCache:
             if token and tick > 0:
                 book = self._books.setdefault(token, OrderBook())
                 book.tick = tick
-                book.received_at = received_at
-                changed.add(token)
         return changed

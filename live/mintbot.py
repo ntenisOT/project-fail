@@ -46,7 +46,7 @@ from live.feed_health import (
     market_event_tokens,
     stale_market_event,
 )
-from live.market_book import BestAskCache, fresh_ask_pair
+from live.market_book import BestAskCache, fresh_ask_pair, parse_book_updates
 from live.mint_quotes import Quote, guarded_pair_prices, plan_pair_quotes, should_reprice
 from live.window_clock import boundary_aligned_delay
 from paper import envload
@@ -360,7 +360,9 @@ class Mintbot:
                     sold_down=st["sold"][False], price_up=px_u, price_down=px_d,
                     sum_floor=SUM_FLOOR, clip_shares=MIN_SHARES,
                 )
-                await self.requote_pair(st, plan)
+                await self.requote_pair(
+                    st, plan, self.books.revision(st["up"], st["dn"]),
+                )
 
     async def _cancel_pair_unlocked(self, st):
         had_pair = any(st["asks"].values())
@@ -379,8 +381,19 @@ class Mintbot:
         async with st["quote_lock"]:
             await self._cancel_pair_unlocked(st)
 
-    async def requote_pair(self, st, plan: tuple[Quote, ...]):
+    def _feed_plan_current(self, st, generation: tuple[int, ...]) -> bool:
+        return (generation == self.books.revision(st["up"], st["dn"])
+                and fresh_ask_pair(
+                    self.books, st["up"], st["dn"], time.time(), BOOK_FRESH_S,
+                ) is not None)
+
+    async def requote_pair(
+        self, st, plan: tuple[Quote, ...], generation: tuple[int, ...],
+    ):
         async with st["quote_lock"]:
+            if not self._feed_plan_current(st, generation):
+                self.quote_counts["stale_plan_abort"] += 1
+                return
             current = st["asks"]
             if not plan:
                 if any(current.values()):
@@ -395,7 +408,8 @@ class Mintbot:
                 if not should_reprice(old, target, time.time() - st["pair_placed_at"]):
                     return
             await self._cancel_pair_unlocked(st)            # old pair is proven gone first
-            if st.get("closing"):
+            if st.get("closing") or not self._feed_plan_current(st, generation):
+                self.quote_counts["stale_plan_abort"] += 1
                 return                                     # close raced the API await
             if MODE != "place" or not self.clob:
                 for quote in plan:
@@ -416,6 +430,16 @@ class Mintbot:
                 # verified wallet sweep is the only safe continuation.
                 await asyncio.to_thread(self.clob.cancel_all_verified)
                 raise RuntimeError(f"pair placement failed closed: {exc}") from exc
+            if not self._feed_plan_current(st, generation):
+                try:
+                    await asyncio.to_thread(self.clob.cancel_many_verified, order_ids)
+                except Exception as exc:
+                    await asyncio.to_thread(self.clob.cancel_all_verified)
+                    raise RuntimeError(
+                        "feed changed during placement and targeted cancellation failed"
+                    ) from exc
+                self.quote_counts["stale_submission_cancel"] += 1
+                return
             for quote, order_id in zip(plan, order_ids):
                 st["asks"][quote.side_up] = (quote.price, order_id)
             st["pair_placed_at"] = time.time()
@@ -428,17 +452,39 @@ class Mintbot:
         self.feed_health.observe(event, received_at)
         self.feed_counts[event_type] += 1
         source_at = event_time_s(event)
-        if (event_type in ("book", "price_change", "best_bid_ask")
-                and stale_market_event(event, received_at, BOOK_FRESH_S)):
-            self.feed_counts["market_update_rejected_timestamp"] += 1
-            for token in market_event_tokens(event):
-                self.books.drop(token)
+        market_update = event_type in ("book", "price_change", "best_bid_ask")
+        payload_valid = True
+        try:
+            if market_update:
+                parse_book_updates(event)
+        except ValueError:
+            payload_valid = False
+        if not payload_valid:
+            self.feed_counts["market_update_rejected_payload"] += 1
+            self.books.clear()
             self.quote_wakeup.set()
             changed: set[str] = set()
+        elif market_update and stale_market_event(event, received_at, BOOK_FRESH_S):
+            self.feed_counts["market_update_rejected_timestamp"] += 1
+            tokens = market_event_tokens(event)
+            if tokens:
+                for token in tokens:
+                    self.books.drop(token)
+            else:
+                self.books.clear()
+            self.quote_wakeup.set()
+            changed = set()
         else:
-            changed = self.books.apply(
-                event, received_at, source_at=source_at,
-            )
+            try:
+                changed = self.books.apply(
+                    event, received_at, source_at=source_at,
+                )
+            except ValueError:
+                self.feed_counts["market_update_rejected_payload"] += 1
+                # A malformed row without asset_id could affect any active book.
+                self.books.clear()
+                self.quote_wakeup.set()
+                changed = set()
         if changed:
             self.feed_counts[f"{event_type}_book_updates"] += len(changed)
             self.quote_wakeup.set()
@@ -490,12 +536,19 @@ class Mintbot:
                 raise
             except Exception as e:
                 self.feed_health.reconnect()
+                self.books.clear()
+                self.quote_wakeup.set()
+                await self.cancel_everything()
                 if connected_at is not None and time.monotonic() - connected_at >= 5:
                     retry_delay = 0.1
                 wait = retry_delay
                 retry_delay = min(2.0, retry_delay * 2)
                 log.warning("ws reconnect in %.1fs: %s: %s", wait, type(e).__name__, e)
                 await asyncio.sleep(wait)
+            else:
+                self.books.clear()
+                self.quote_wakeup.set()
+                await self.cancel_everything()
 
     async def cancel_everything(self):
         if not (MODE == "place" and self.clob):

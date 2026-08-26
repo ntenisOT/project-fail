@@ -16,7 +16,7 @@ from live.feed_health import (
 )
 from paper.ladder_engine import LadderWindow
 from paper.market_metadata import ActiveMarket
-from paper.order_book import OrderBookCache
+from paper.order_book import OrderBookCache, well_formed_book_event
 from paper.pair_engine import PairWindow
 from paper.pair_types import PairConfig
 from paper.settlement import settle_valid
@@ -103,7 +103,7 @@ class CohortEngine:
 
     def reset_feed(self) -> None:
         """Forget all book state until fresh snapshots arrive for active markets."""
-        self.books.clear()
+        self.books.invalidate_all()
         self._fresh_tokens.clear()
         self._stale_assets.update(self._active)
 
@@ -163,6 +163,10 @@ class CohortEngine:
             return ()
         event_type = event.get("event_type")
         if event_type in ("book", "price_change"):
+            if not well_formed_book_event(event):
+                # An unidentifiable malformed row may belong to any active token.
+                self._break_book_chains(set())
+                return ()
             if not self._gate_freshness(event, known_at):
                 return ()
             event_at = event_time_s(event)
@@ -301,7 +305,8 @@ class CohortEngine:
             book = self.books.get(token)
             if (book is None or not book.bootstrapped
                     or now < book.received_at
-                    or now - book.received_at > self.max_event_lag_s):
+                    or now - book.received_at > self.max_event_lag_s
+                    or now - book.source_at > self.max_event_lag_s):
                 self._fresh_tokens.discard(token)
         for asset, cohort in self._active.items():
             required = {cohort.market.up_token, cohort.market.down_token}
@@ -326,7 +331,7 @@ class CohortEngine:
             None if event_at is None else max(0.0, 1000 * (known_at - event_at))
         )
         if stale:
-            self._fresh_tokens.difference_update(tokens)
+            self._break_book_chains(set(tokens))
         for asset in assets:
             cohort = self._active.get(asset)
             if cohort is None:
@@ -342,6 +347,17 @@ class CohortEngine:
                     else:
                         window.observe_stale_market_event(event_lag_ms, event_at)
         return not stale
+
+    def _break_book_chains(self, tokens: set[str]) -> None:
+        """Require new snapshots after any rejected causal depth event."""
+        if not tokens:
+            tokens = set(self._token_map)
+        self._fresh_tokens.difference_update(tokens)
+        for token in tokens:
+            self.books.invalidate(token)
+            info = self._token_map.get(token)
+            if info is not None:
+                self._stale_assets.add(info[0])
 
     @staticmethod
     def _fill_record(

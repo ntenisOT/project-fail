@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import collections
+import math
 from collections.abc import Mapping
 
 MARKET_WS_MAX_QUEUE = 1024
@@ -13,6 +14,8 @@ def event_time_s(event: Mapping[str, object]) -> float | None:
     try:
         timestamp = float(str(event["timestamp"]))
     except (KeyError, TypeError, ValueError):
+        return None
+    if not math.isfinite(timestamp) or timestamp <= 0:
         return None
     return timestamp / 1000 if timestamp >= 100_000_000_000 else timestamp
 

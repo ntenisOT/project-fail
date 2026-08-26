@@ -21,6 +21,10 @@ class FeedBacklogError(RuntimeError):
     pass
 
 
+class FeedIntegrityError(RuntimeError):
+    """A raw frame cannot be represented as an ordered market-event sequence."""
+
+
 def websocket_frame_depth(ws: object) -> int | None:
     """Read the websockets client's internal frame-buffer depth when exposed."""
     receiver = getattr(ws, "recv_messages", None)
@@ -182,13 +186,14 @@ class FeedPump:
             parse_started = time.monotonic()
             try:
                 payload = json.loads(raw)
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                continue
-            events = [
-                event for event in payload if isinstance(event, dict)
-            ] if isinstance(payload, list) else (
-                [payload] if isinstance(payload, dict) else []
-            )
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                raise FeedIntegrityError("market frame is not valid JSON") from exc
+            if isinstance(payload, dict):
+                events = [payload]
+            elif isinstance(payload, list) and all(isinstance(event, dict) for event in payload):
+                events = payload
+            else:
+                raise FeedIntegrityError("market frame contains a non-object event")
             self.stats.observe_frame(
                 len(events), (time.monotonic() - parse_started) * 1000,
             )

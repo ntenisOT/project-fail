@@ -48,7 +48,7 @@ def _fresh_books(engine: CohortEngine, timestamp: float = 1) -> None:
     engine.on_event(_book("down-0", timestamp), timestamp)
 
 
-def test_price_change_must_be_fresh_before_it_unpauses_quotes() -> None:
+def test_rejected_delta_breaks_chain_until_authoritative_snapshot() -> None:
     engine = CohortEngine((_config("pair"),))
     engine.open_market(_market(), 0)
     engine.on_event(_book("up-0", 1.2), 1.2)
@@ -64,7 +64,8 @@ def test_price_change_must_be_fresh_before_it_unpauses_quotes() -> None:
     assert engine.tick(1.5) == ()
     down = engine.books.get("down-0")
     assert down is not None
-    assert down.best_ask == 0.51
+    assert not down.bootstrapped
+    assert down.best_ask is None
 
     fresh_down = {
         "event_type": "price_change", "timestamp": 1.51,
@@ -73,9 +74,11 @@ def test_price_change_must_be_fresh_before_it_unpauses_quotes() -> None:
         ],
     }
     engine.on_event(fresh_down, 1.51)
-    engine.tick(1.51)
+    assert engine.runtime_snapshot()["stale_assets"] == ["btc"]
+    engine.on_event(_book("down-0", 1.52), 1.52)
+    engine.tick(1.52)
 
-    fills = engine.on_event(_trade("up-0", 1.52), 1.52)
+    fills = engine.on_event(_trade("up-0", 1.53), 1.53)
     assert [(row.strategy, row.size) for row in fills] == [("pair", 5)]
 
 
@@ -98,11 +101,34 @@ def test_deltas_cannot_bootstrap_a_book_after_reset() -> None:
     assert engine.runtime_snapshot()["stale_assets"] == []
 
 
+def test_unattributable_malformed_delta_invalidates_every_active_book() -> None:
+    engine = CohortEngine((_config("pair"),))
+    engine.open_market(_market(), 0)
+    _fresh_books(engine, 1)
+    engine.on_event({
+        "event_type": "price_change", "timestamp": 1.1,
+        "price_changes": [
+            {"asset_id": "up-0", "side": "BUY", "price": 0.48, "size": 0},
+            {"side": "SELL", "price": 0.52, "size": 0},
+        ],
+    }, 1.1)
+    assert engine.runtime_snapshot()["stale_assets"] == ["btc"]
+    assert not engine.books.get("up-0").bootstrapped  # type: ignore[union-attr]
+    assert not engine.books.get("down-0").bootstrapped  # type: ignore[union-attr]
+    engine.on_event(_book("up-0", 1.2), 1.2)
+    assert engine.runtime_snapshot()["stale_assets"] == ["btc"]
+
+
 def test_book_freshness_expires_during_feed_silence() -> None:
     engine = CohortEngine((_config("pair"),), max_event_lag_s=0.4)
     engine.open_market(_market(), 0)
-    _fresh_books(engine, 1)
-    engine.tick(1)
+    engine.on_event(_book("up-0", 1), 1.39)
+    engine.on_event(_book("down-0", 1), 1.39)
+    engine.on_event({
+        "event_type": "tick_size_change", "asset_id": "up-0",
+        "new_tick_size": "0.001",
+    }, 1.4)
+    engine.tick(1.39)
     assert engine.runtime_snapshot()["stale_assets"] == []
 
     engine.tick(1.401)

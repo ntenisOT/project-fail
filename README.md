@@ -48,6 +48,29 @@ not margin - is the decision variable.
 The paper board is now a selectivity test (basket99/97/95) rather than another
 mint variant. No paper arm has passed a prospective economic gate.
 
+**2026-08-26 07:30 UTC - recent paper generations ran in a near-flowless market.**
+Gen80-84 produced zero fills for EVERY arm, including the basket99 control that
+has quoted since Gen74. That is not evidence about strategy quality:
+
+  - our own feed: ~18 price_change/min vs ~540/min in the Gen79 baseline, and
+    zero last_trade_price events in 27 minutes
+  - live CLOB book for the current window is quoted and healthy ($15,392
+    liquidity, 12 bid / 11 ask levels, best 0.50 / 0.51)
+  - Gamma volume for the completed previous window: $7.50
+  - same UTC hour in the Aug18-25 baseline: $55,149 and 5,861 trades per
+    window (rank 19 of 24), so this is NOT a quiet-hour effect
+
+ClickHouse cannot arbitrate the present: trade_history ingestion is stalled at
+04:02:22 and the apparent 04:00 cliff is that lag, not a market event.
+
+Two consequences. First, any earlier claim that a zero-fill generation
+"confirmed" a backtest is retracted - no arm could fill in this flow at any
+price. Second, the Aug18-25 evidence base may describe a regime that is no
+longer current, which matters because the temporary August liquidity-reward
+program is already flagged here as a possible driver of that regime. Before
+running further paper experiments, confirm the market is actually trading.
+
+
 ---
 
 ## 1. The Ireland box (paper monitoring only)

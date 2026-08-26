@@ -66,7 +66,12 @@ if requested_assets:
     if not ASSETS:
         raise RuntimeError("MINTBOT_ASSETS selected no supported assets")
 MKT_WS = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
-KILL = "paper/KILL"
+# Component-specific brake. The mintbot used to watch paper/KILL, which is the
+# PAPER runner's brake - so every paper redeploy (touch paper/KILL, wait, restart)
+# silently killed the mintbot too. Observed twice on 2026-08-26. Each component
+# owns its own file, matching the README rule that only the component being
+# deliberately restarted has its kill file touched.
+KILL = "paper/MINTBOT_KILL"
 DB = "live/mintbot.db"
 MINT_USD = float(os.environ.get("MINT_USD", "20"))
 MINT_DAY_CAP = float(os.environ.get("MINT_DAY_CAP", "250"))

@@ -109,5 +109,44 @@ class MomentumWindowTests(unittest.TestCase):
         self.assertGreater(settlement["pnl"], 0.0)
 
 
+class MomentumRecordContractTests(unittest.TestCase):
+    """Gen85 regression: momentum records must satisfy the cohort engine.
+
+    The unit tests all passed while production died with KeyError: 'size',
+    because they inspected counters and never fed a record through
+    CohortEngine._fill_record. This asserts the integration contract.
+    """
+
+    def test_every_record_is_accepted_by_the_cohort_fill_record(self) -> None:
+        from paper.cohort_engine import CohortEngine
+
+        window = MomentumWindow(config(), "btc", "btc-updown-5m-1000",
+                                1000, "UP", "DN", 1000)
+        flat = book(0.49, 0.51)
+        produced = []
+        produced += window.on_books(1001, flat, flat)
+        produced += window.on_books(1012, book(0.61, 0.63), flat)   # entry
+        produced += window.on_books(1045, book(0.66, 0.68), flat)   # exit
+        self.assertTrue(produced, "the round trip must emit records")
+        for record in produced:
+            fill = CohortEngine._fill_record(
+                1012.0, "mom", "btc", "btc-updown-5m-1000", record,
+            )
+            self.assertIn(fill.action, ("taker_buy", "taker_sell"))
+            self.assertGreater(fill.size, 0.0)
+            self.assertGreater(fill.price, 0.0)
+            self.assertNotEqual(fill.signed_cash, 0.0)
+
+    def test_buy_and_sell_cash_signs_are_correct(self) -> None:
+        window = MomentumWindow(config(), "btc", "btc-updown-5m-1000",
+                                1000, "UP", "DN", 1000)
+        flat = book(0.49, 0.51)
+        window.on_books(1001, flat, flat)
+        buys = window.on_books(1012, book(0.61, 0.63), flat)
+        sells = window.on_books(1045, book(0.66, 0.68), flat)
+        self.assertTrue(all(float(r["signed_cash"]) < 0 for r in buys if r.get("action") == "taker_buy"))
+        self.assertTrue(all(float(r["signed_cash"]) > 0 for r in sells if r.get("action") == "taker_sell"))
+
+
 if __name__ == "__main__":
     unittest.main()

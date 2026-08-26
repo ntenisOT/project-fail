@@ -82,30 +82,42 @@ class MomentumWindow(PairWindow):
             history.pop(0)
 
     def _execute(self, now: float, side: bool, direction: str,
-                 shares: float, book: OrderBook) -> dict[str, float | str] | None:
+                 shares: float, book: OrderBook) -> list[dict[str, float | str]]:
+        """Cross the spread, emitting one record per leg exactly like PairWindow.
+
+        The cohort engine's _fill_record requires action/price/size/signed_cash/
+        outcome_up per leg; an aggregated record raises KeyError and kills the
+        cohort (observed live in Gen85).
+        """
         legs = sweep(book, direction, shares) or sweep_available(book, direction, shares)
         if not legs:
             self.momentum_blocked += 1
-            return None
-        filled = sum(leg.shares for leg in legs)
-        fees = sum(leg.fee for leg in legs)
-        notional = sum(leg.price * leg.shares for leg in legs)
-        if direction == "buy":
-            self.inventory[side] += filled
-            self.cash -= notional + fees
-            self.buys += 1
-        else:
-            self.inventory[side] -= filled
-            self.cash += notional - fees
-            self.sells += 1
-        self.taker_fees += fees
-        self.filled_shares += filled
+            return []
+        records: list[dict[str, float | str]] = []
+        for leg in legs:
+            if direction == "buy":
+                cost = leg.price * leg.shares + leg.fee
+                self.inventory[side] += leg.shares
+                self.cash -= cost
+                self.buys += 1
+                signed_cash = -cost
+                action = "taker_buy"
+            else:
+                net_cash = leg.price * leg.shares - leg.fee
+                self.inventory[side] -= leg.shares
+                self.cash += net_cash
+                self.sells += 1
+                signed_cash = net_cash
+                action = "taker_sell"
+            self.filled_shares += leg.shares
+            self.taker_fees += leg.fee
+            records.append({
+                "action": action, "price": leg.price, "size": leg.shares,
+                "signed_cash": signed_cash, "outcome_up": int(side),
+            })
+        self._update_peak()
         self._sync_exposure(now)
-        return {
-            "kind": "momentum", "side": "up" if side else "down",
-            "action": direction, "shares": filled,
-            "price": notional / filled if filled else 0.0, "fee": fees,
-        }
+        return records
 
     # -- decision loop ---------------------------------------------------
     def on_books(self, now: float, up: OrderBook,
@@ -126,10 +138,10 @@ class MomentumWindow(PairWindow):
                 side = self._open_side
                 shares = min(self._open_shares, self.inventory[side])
                 if shares > 0:
-                    record = self._execute(now, side, "sell", shares, books[side])
-                    if record is not None:
+                    legs = self._execute(now, side, "sell", shares, books[side])
+                    if legs:
                         self.momentum_exits += 1
-                        records.append(record)
+                        records.extend(legs)
                         self._open_side, self._open_at, self._open_shares = None, None, 0.0
                 else:
                     self._open_side, self._open_at, self._open_shares = None, None, 0.0
@@ -148,12 +160,12 @@ class MomentumWindow(PairWindow):
             shares = min(self.config.clip_shares, room)
             if shares <= 0:
                 continue
-            record = self._execute(now, side, "buy", shares, books[side])
-            if record is not None:
+            legs = self._execute(now, side, "buy", shares, books[side])
+            if legs:
                 self.momentum_entries += 1
                 self._open_side = side
                 self._open_at = now
-                self._open_shares = record["shares"]  # type: ignore[assignment]
-                records.append(record)
+                self._open_shares = sum(float(leg["size"]) for leg in legs)
+                records.extend(legs)
             break
         return records

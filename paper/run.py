@@ -37,6 +37,7 @@ from paper.cohort_engine import (
     SettlementRecord,
 )
 from paper.ledger_writer import LedgerWriter
+from paper.live_gate import LiveGate
 from paper.market_metadata import ActiveMarket, fetch_active_market
 from paper.notify import notifier
 from paper.reference_feed import ReferenceFeed, ReferenceUpdate
@@ -94,6 +95,7 @@ class State:
         self.events: collections.Counter[str] = collections.Counter()
         self.resolution_errors: collections.Counter[str] = collections.Counter()
         self.feed_health = FeedHealth()
+        self.live_gate = LiveGate()
         self.feed_pump: FeedPump | None = None
         self.feed_pump_stats = FeedPumpStats()
         self.loop_health = EventLoopHealth()
@@ -388,19 +390,31 @@ async def quote_task() -> None:
         await asyncio.sleep(DECISION_CADENCE_S)
 
 
+async def intent_task() -> None:
+    """Publish resting quotes for live/executor.py; inert unless enabled."""
+    if not S.live_gate.active:
+        return
+    while True:
+        await asyncio.sleep(1.0)
+        try:
+            S.live_gate.emit(S.engine.live_quotes(), time.time())
+        except Exception as exc:                     # never kill the cohort
+            log.warning("intent emit failed: %s", exc)
+
+
 async def heartbeat_task() -> None:
     while True:
         await asyncio.sleep(20)
         engine = S.engine.runtime_snapshot()
         feed_queue = S.feed_pump_stats.snapshot(reset_interval=True)
         log.info("hb | events=%s fills=%s active_orders=%d pending_resolution=%d "
-                 "feed_paused=%s feed=%s feed_queue=%s loop=%s reference=%s "
+                 "feed_paused=%s feed=%s feed_queue=%s loop=%s reference=%s gate=%s "
                  "capture=%s errors=%s",
                  dict(S.events), engine["fills"], engine["orders"], len(S.pending),
                  engine["stale_assets"],
                  S.feed_health.snapshot(reset_interval=True), feed_queue,
                  S.loop_health.snapshot(reset_interval=True),
-                 S.reference_feed.snapshot(),
+                 S.reference_feed.snapshot(), S.live_gate.snapshot(),
                  None if S.capture is None else S.capture.snapshot(),
                  dict(S.resolution_errors))
 
@@ -455,6 +469,7 @@ async def main() -> None:
             window_task(), settlement_task(), market_task(),
             S.reference_feed.run(_record_reference), quote_task(),
             S.loop_health.run(), heartbeat_task(), report_task(), kill_task(),
+            intent_task(),
             asyncio.to_thread(
                 S.notify.send,
                 f"focused pair paper started ({len(names)} strategies, "

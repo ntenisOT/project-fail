@@ -129,6 +129,35 @@ class CohortEngine:
             "stale_assets": sorted(self._stale_assets),
         }
 
+    def live_quotes(self) -> list[dict[str, object]]:
+        """Current resting quote per (strategy, token) for the live gate.
+
+        Reports what each arm actually has posted right now, so the executor
+        mirrors the paper board rather than re-deriving prices. A side with no
+        resting order is published as None, which the executor reads as
+        "cancel that side".
+        """
+        quotes: list[dict[str, object]] = []
+        for cohort in self._active.values():
+            for name, window in cohort.windows.items():
+                if not window.full_window or window.invalid_reason:
+                    continue
+                for side_up in (True, False):
+                    buy = window.orders.get((side_up, "buy"))
+                    sell = window.orders.get((side_up, "sell"))
+                    if buy is None and sell is None:
+                        continue
+                    quotes.append({
+                        "strategy": name,
+                        "token": window.tokens[side_up],
+                        "slug": window.slug,
+                        "bid": None if buy is None else round(buy.price, 2),
+                        "bid_shares": 0.0 if buy is None else round(buy.size, 2),
+                        "ask": None if sell is None else round(sell.price, 2),
+                        "ask_shares": 0.0 if sell is None else round(sell.size, 2),
+                    })
+        return quotes
+
     def open_market(self, market: ActiveMarket, observed_at: float) -> None:
         if market.asset in self._active:
             raise RuntimeError(f"active market already exists for {market.asset}")

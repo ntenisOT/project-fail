@@ -183,6 +183,17 @@ Two external research results constrain the next experiment:
 - Queue-reactive limit-order-book research models order arrivals and
   cancellations conditional on the current queue state. Our capture can support
   that calibration; a static displayed-depth assumption cannot.
+- Adverse-selection simulation research shows that modelling prices separately
+  from fills inflates a market-making backtest. Fill probability and post-fill
+  adverse drift must be estimated jointly from the same event tape.
+- Limit-order survival research treats cancellation/cutoff as censoring and
+  conditions time-to-fill on high-frequency book state. The first implementation
+  here should be an interpretable Kaplan-Meier/competing-risk baseline with
+  proper scoring, not a transformer fitted to a few windows.
+- A 2026 Kalshi study reports that one-sided order flow predicts maker losses.
+  This supports testing flow toxicity as an initiation gate, but it is a research
+  direction rather than evidence that the same rule transfers to BTC five-minute
+  Polymarket books.
 
 The first research target is conditional second-leg completion after a first
 fill, because unmatched inventory—not a missing directional forecast—is the
@@ -203,6 +214,9 @@ Official references:
 - https://docs.polymarket.com/market-makers/maker-rebates
 - https://arxiv.org/abs/2607.26245
 - https://arxiv.org/abs/1312.0563
+- https://arxiv.org/abs/2409.12721
+- https://arxiv.org/abs/2306.05479
+- https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6615739
 
 ## Ireland calibration and current deployment
 
@@ -330,6 +344,116 @@ at most 6 ms while the same interval already contained a 4.270-second upstream
 event-age tail. SQLite `integrity_check` returned `ok`, and its run metadata
 matched the capture label, board hash, and model hash. The passive four-feed
 cross-venue capture remained uninterrupted. No real-order process was started.
+
+At 00:06 UTC the corrected run had three full scored windows plus one fill-free
+startup invalidation. Nine settled maker fills produced -$4.36 realized and
+adverse-floor PnL despite +$1.48 paired edge and +$2.23 at the optimistic
+50-cent residue mark; 13.2 shares remained unmatched. Share-weighted completion
+delay was 79.8/114.6 seconds p50/p90, and maker markouts were negative by
+1.92/1.32/0.72 cents per share at 1/5/15 seconds. All three windows were
+feed-tail exposed. The latest heartbeat was back to 19/134 ms upstream p50/p90
+with a 4.319-second lifetime maximum; local queue residence was at most 16 ms
+and the loop p50/p90 remained 1 ms. Capture drops, caps, errors, future
+timestamps, and reconnects remained zero. Three windows are engineering
+evidence only, but the loss mechanism is already the same unmatched-residue
+mechanism seen in the earlier tapes.
+
+## Terminal pair-completion economics
+
+`tools/pair_completion_economics.py` reconstructs FIFO first-leg lots from
+immutable paper ledgers and reconciles paired surplus plus directional residue
+to settlement PnL. Acquisition cost comes from signed cash, so `taker_buy` fees
+are included rather than silently replaced with displayed price. It refuses
+conflicting finalized copies, reports unfinished source rows explicitly, hashes
+every input, and refuses to overwrite output. This is terminal accounting, not
+yet a censored survival/hazard model.
+
+On the corrected Gen73 prospective ledger, the exact terminal cohort was four
+settled plus two invalid windows; one unfinished slug was excluded:
+
+- 26.70 first-leg shares opened, 9.30 completed, and 17.40 remained unmatched:
+  **34.83% completion**.
+- Share-weighted completed-pair delay was 58.38 seconds p50 / 80.28 seconds p90.
+- Completed pairs earned only $0.1217 total, or $0.01309 per completed share.
+  Residue cost $9.4080, or $0.54069 per incomplete share.
+- The observed adverse floor was **-$9.2863**. Under those empirical unit
+  economics, the algebraic zero-adverse-floor completion fraction was
+  **97.64%**.
+- FIFO mechanism PnL reconciled to every settled row within
+  `3.9e-16` dollars.
+
+Artifact SHA-256:
+`bbece70dade91e8b09e44f6ea97eddae82248ce0f28c35996e6971e6328b84af`.
+
+The dirty Gen60--72 mechanics archive points the same way but is not a
+validation cohort. Across 51 finalized rows (33 settled, 18 invalid), 363.18
+shares opened, 234.21 completed, and 128.97 remained unmatched: 64.49%
+completion versus an 86.08% algebraic zero-floor rate, with a -$45.1956 adverse
+floor. Only three settled windows were clean; 30 were lagged. Five of seven
+reconnect-invalid windows carried exposure and contributed a -$8.31 floor.
+Eighteen unfinished source rows were excluded, including three exact
+fill-derived recoveries accepted by old reports; adding those three changes the
+completion diagnostic to 63.39% and the zero-floor rate to 85.39%, without
+changing the outcome-neutral risk conclusion. Historical artifact SHA-256:
+`c8ffb75a06da352a8025aed879f72c7bb4fd6d3a96ea6dfc3b5f7616a2fb1394`.
+
+These percentages are not independent share trials, confidence bounds, or
+expected-PnL break-evens. Directional outcome luck or a real signal can still
+make realized residue profitable; this screen measures whether paired surplus
+alone insures the residue, and it plainly does not. A real conditional hazard
+needs stable lot IDs, exact right-censor/competing-event times, contemporaneous
+queue/book state, all
+unfinished exposure followed to official settlement, contiguous time blocks,
+and inference clustered by market window. The present result fails an
+outcome-neutral robustness gate, so `basket99` cannot be promoted. Keeping it
+on Ireland is justified only as a fill/queue-mechanics probe.
+
+## Immediate-completion counterfactual
+
+The first replayed improvement changed exactly one economic field: clone
+`basket99` and set `buy_taker_after_s=0`. After a first maker fill, the existing
+engine waits through the captured 65 ms action proxy and then takes the full
+opposite depth only when taker fees included still preserve the rolling $0.99
+basket cap. The A/B board hash is
+`0d576e12a2e5d769fcdad44dbd71cf8c57d093be42cfaeeb0c556383daa8633f`.
+
+Both complete Ireland tapes were restored locally and every chunk matched its
+manifest. The prospective tape replayed 668,422 raw frames, 668,430 decoded
+events, and 163,591 actual ticks with zero parse errors. Across its four settled
+and two invalid windows, the candidate found **zero** taker-completion shares;
+every finalized PnL, neutral, floor, and residue endpoint equaled baseline. It
+completed three five-share cycles only in the seventh open-at-stop window,
+turning a -$1.30 baseline snapshot floor into +$0.15211 after $0.19789 fees.
+That is a censored complete-set snapshot, not settled or prospective evidence.
+
+The earlier calibration tape replayed 522,739 frames, 522,745 events, and
+131,633 ticks with zero parse errors. Here the candidate took 30 shares across
+three settled windows. It increased completed-pair shares by 25, but worsened
+the aggregate adverse floor by **-$1.95810**, neutral value by -$1.78810, and
+realized PnL by -$1.61810; terminal unmatched inventory rose by 0.34 shares and
+finalized taker fees were $0.38270. Immediate completion freed capacity, then
+the unchanged initiation policy opened new first legs and recreated the residue
+risk. The cap protects completed pairs, not the next exposure cycle.
+
+The candidate is therefore rejected and was not added to the active board.
+Tuning a cooldown or cutoff on these same tapes would be post-hoc overfitting.
+Both replays explicitly allowed captured-v1/current-v2 model drift, so they are
+historical current-engine screens rather than parity or deployment evidence.
+Authenticated POST/cancel latency, the documented 50-vs-250 ms taker-hold
+conflict, real depth, partial fills, and cancel/take races remain unmeasured.
+
+Counterfactual artifact hashes:
+
+- prospective ledger/report:
+  `aa8c811a911155eeb94cc4e0f87e3d3ac93fa941d893ff0624a3e22fd2285a41` /
+  `339df739c56aee044d924e494564fa6be4aa895b3d5d9439cd39c3c42396eab5`;
+- calibration ledger/report:
+  `afa7fb3050c9fcd0e9fb580662a4812af89742393e1c0901d28ca442b93036b9` /
+  `384ca616a6dbae5aba17f3a1f3b2d3adf9fa0a901be2c701491d156dc29aba6e`.
+
+Current mechanical gate: **132 tests passed**. Ruff and mypy are green on the
+four new tool/test files, and `git diff --check` has no content error (only the
+expected Windows line-ending warning).
 
 ## Decision process from here
 

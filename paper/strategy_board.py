@@ -61,8 +61,10 @@ def current_strategy_board(action_latency_s: float) -> tuple[PairConfig, ...]:
         # fill less often at a better price: selectivity on the price axis, which
         # the engine supports without a refactor. The tape shows the cheapest 25%
         # of pre-open volume reaches <=0.97 in 58% of windows.
-        PairConfig("basket97", "accumulate", 0.02, buy_sum_ceiling=0.97, **common),
-        PairConfig("basket95", "accumulate", 0.02, buy_sum_ceiling=0.95, **common),
+        PairConfig("basket97", "accumulate", 0.02, buy_sum_ceiling=0.97,
+                   patient_bids=True, **common),
+        PairConfig("basket95", "accumulate", 0.02, buy_sum_ceiling=0.95,
+                   patient_bids=True, **common),
     )
 
 def canonical_board(configs: Sequence[PairConfig]) -> str:

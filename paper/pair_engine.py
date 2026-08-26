@@ -122,7 +122,24 @@ class PairWindow:
                     self.config.buy_sum_ceiling, self.config.clip_shares,
                 )
             if open_side is None and sum(improved_bids.values()) > start_cap:
-                buy_sides = ()
+                if self.config.patient_bids:
+                    # Rest below the book at what we are willing to pay instead
+                    # of refusing to quote; scale both legs so the pair meets
+                    # the cap, rounding each down to its tick.
+                    total = sum(improved_bids.values())
+                    scaled = {
+                        side: _tick_price(
+                            improved_bids[side] * (start_cap / total),
+                            books[side].tick, round_up=False,
+                        )
+                        for side in improved_bids
+                    }
+                    if all(0 < price < 1 for price in scaled.values()):
+                        improved_bids = scaled
+                    else:
+                        buy_sides = ()
+                else:
+                    buy_sides = ()
             candidates: dict[tuple[bool, str], float] = {}
             for side in buy_sides:
                 inv, other = self.inventory[side], self.inventory[not side]

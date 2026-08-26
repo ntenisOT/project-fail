@@ -31,6 +31,11 @@ class PairConfig:
     # max 43) and never stops quoting. The 0.1 default froze our mint arms
     # after the first asymmetric fill.
     imbalance_tolerance: float = 0.1
+    # When the book is too tight to satisfy buy_sum_ceiling, a patient maker
+    # rests BELOW the book at the price it is willing to pay and waits. The
+    # default refuses to quote at all, which makes any ceiling under ~0.99
+    # structurally inert rather than selective (observed Gen83).
+    patient_bids: bool = False
     basket_average_cap: bool = False
     ladder_offsets: tuple[int, ...] = ()
     quote_hold_s: float = 0.0

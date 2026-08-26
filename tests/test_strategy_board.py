@@ -27,6 +27,9 @@ def test_current_strategy_board_is_the_focused_fill_probe() -> None:
     ]
     ceilings = {config.name: config.buy_sum_ceiling for config in board}
     assert ceilings == {"basket99": 0.99, "basket97": 0.97, "basket95": 0.95}
+    # the selective arms must rest below the book, not refuse to quote
+    patient = {config.name: config.patient_bids for config in board}
+    assert patient == {"basket99": False, "basket97": True, "basket95": True}
     for config in board:
         assert config.mode == "accumulate"
         assert config.new_pair_start_s == 30
@@ -40,7 +43,7 @@ def test_strategy_board_canonical_hash_is_stable() -> None:
 
     assert " " not in canonical_board(board)
     assert strategy_board_hash(board) == (
-        "38a89bf7d46696055254433c9a76040e42da5a8d5f5fa8c1b3ffb352f926f741"
+        "5e4fd52457673072be1f1f5324a6a45999611a5324e7a9e1c52a73254c8ad4a2"
     )
 
 

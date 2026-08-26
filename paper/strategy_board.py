@@ -46,7 +46,7 @@ def current_strategy_board(action_latency_s: float) -> tuple[PairConfig, ...]:
     mint = dict(
         action_latency_s=action_latency_s, mint_anchor_spread=0.0,
         clip_shares=6.0, mint_sets=200.0, max_inventory=200.0,
-        require_both_to_start=True, new_pair_start_s=5, new_pair_cutoff_s=285,
+        imbalance_tolerance=7.0, require_both_to_start=True,
     )
     return (
         # Incumbent control: buy-side paired accumulator (the retired thesis).
@@ -56,23 +56,23 @@ def current_strategy_board(action_latency_s: float) -> tuple[PairConfig, ...]:
             improve_ticks=1, require_both_to_start=True,
             basket_average_cap=True, new_pair_start_s=30,
         ),
-        # Winner-matched mint-to-make. Parameters measured from
-        # 0x1Dd2A69e73BA444ecd5D87f0073d51a670ad51c2 over 391 BTC windows via
-        # tools/winner_profile.py: first sell 6s p50, last sell 241s p50,
-        # 6.25-share median clip, both sides in 391/391 windows, 6.5-share
-        # median imbalance (p90 16.5), mean pair sum 1.0017, zero taker fees.
-        PairConfig("mintwin", "mint", 0.02,
-                   sell_sum_floor=1.00, imbalance_tolerance=7.0, **mint),
-        # Control A isolates the pair floor: 1.005 was our mintbot setting and
-        # sits ABOVE the winner's 1.0014 median pair sum.
-        PairConfig("mintwin_f5", "mint", 0.02,
-                   sell_sum_floor=1.005, imbalance_tolerance=7.0, **mint),
-        # Control B isolates the imbalance halt: 0.1 stops quoting after the
-        # first asymmetric fill, which the winner never does.
-        PairConfig("mintwin_t0", "mint", 0.02,
-                   sell_sum_floor=1.00, imbalance_tolerance=0.1, **mint),
+        # PUBLIC-TAPE FINDING (600 BTC windows, 3.9M trades): the traded pair
+        # cost rises monotonically through the window --
+        #   -180..0s 0.998 | 0..120s ~1.00 | 120..180s 1.02
+        #   180..240s 1.04-1.07 | 240..300s 1.08-1.11
+        # So a minted set is worth ~par early and an 8-11% premium late. Early
+        # mint arms could never fill because a >=1.00 ask sat ABOVE a 0.998
+        # market. These arms concentrate selling where the premium exists.
+        PairConfig("mintlate", "mint", 0.02, sell_sum_floor=1.03,
+                   new_pair_start_s=180, new_pair_cutoff_s=295, **mint),
+        # Higher-premium twin: only sells into the richest part of the curve.
+        PairConfig("mintlate_f6", "mint", 0.02, sell_sum_floor=1.06,
+                   new_pair_start_s=210, new_pair_cutoff_s=295, **mint),
+        # Retained early control: proves the zero-fill diagnosis is timing, not
+        # tolerance or floor (this is the previous mintwin configuration).
+        PairConfig("mintwin", "mint", 0.02, sell_sum_floor=1.00,
+                   new_pair_start_s=5, new_pair_cutoff_s=285, **mint),
     )
-
 
 def canonical_board(configs: Sequence[PairConfig]) -> str:
     """Serialize every config field deterministically for experiment provenance."""

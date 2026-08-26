@@ -1,11 +1,40 @@
 # Exact mint ledger and feed-causality decision — 2026-08-26
 
+## V2 implementation addendum
+
+Revisions `a6dec0c` and `3f910c0` supersede the engineering and evidence gaps
+described below. V2 now binds all producer sources and runtimes to one clean Git
+revision, reads the ClickHouse ReplacingMergeTree sources with `FINAL`, requires
+an exact candidate/attribution/receipt bijection, obtains authoritative outcomes
+from a finalized hash-pinned Polygon state, enforces a 24-hour post-close tail,
+queries every target-side fill, and publishes two separately labeled
+mechanics-implied collateral-equivalent capital paths. Any mapped redemption or
+ERC-1155 custody activity aborts until consumption accounting exists.
+
+This is implemented infrastructure, not a result. The new artifact chain cannot
+be produced until both ClickHouse tables cover the pre-registered lifecycle end
+at **2026-08-26 23:15 UTC** and a canonical finalized Polygon anchor lies beyond
+it. Every v1 candidate, attribution, receipt and ledger hash below is historical
+and is forbidden as a v2 input. The old label “observed event cash flow” also
+overstated the evidence: it is a mechanics-implied collateral-equivalent balance,
+not observed Safe/pUSD cash.
+
+Gen79 additionally falsified the 400 ms receive-silence expiry model. An
+event-driven order book may remain unchanged while the transport is healthy.
+The corrected engine rejects late incoming events and broken causal chains but
+does not age out an unchanged bootstrapped book; a separate 10-second ping /
+15-second inbound lease detects a stuck socket. Gen79 economics are invalid.
+Its lossless tape is eligible only for replay under the corrected model after
+finalization, with exact transport gaps kept separate from book-rebootstrap gaps.
+The sections below retain the immutable v1/Gen78 record and must be read subject
+to this addendum.
+
 ## Bottom line
 
 The feed defect is fixed. The mint strategy is not proven profitable.
 
-Revision `030f157c5ec2f912cde1a515de98c278077c9a3c` contains the final
-feed-causality patch and the first frozen, integer-exact observed ledger for
+Revision `030f157c5ec2f912cde1a515de98c278077c9a3c` contains the earlier
+feed-causality patch and the first frozen, integer-exact contractual ledger for
 `0x1dd2…51c2`. A short Ireland calibration exercised real stale-feed
 pause/recovery, finalized without capture loss, and replayed with exact ledger
 parity. That is an engineering GO for paper calibration and mint shadow only.
@@ -16,8 +45,9 @@ sets, 1,628 fee-zero V2 maker sells on both outcomes, zero buys, and 24 exact
 terminal merges. It does not prove cash realization, quote policy, queue
 priority, capital efficiency, or reproducible profit. The contractual terminal
 mark is +$60.265463 before an endpoint-recorded $29.869474 rebate, while the
-residual-zero-payoff case is -$100.107122 before the rebate. Observed event cash
-flow is -$4,320.048803; the positive result appears only after marking
+residual-zero-payoff case is -$100.107122 before the rebate. The
+mechanics-implied collateral-equivalent event balance is -$4,320.048803; the
+positive result appears only after marking
 $4,380.314266 of retained winning tokens at par.
 
 Both independent reviewers therefore return **NO-GO on implementation**, reject
@@ -98,7 +128,8 @@ book snapshots. The repaired path:
 
 - requires an authoritative snapshot before accepting a delta chain;
 - invalidates bootstrap after a stale, future, malformed or disconnected chain;
-- expires by exact source age, not a second receive-time TTL;
+- rejects each incoming event by exact source age without expiring an unchanged
+  causal book during healthy transport silence;
 - rejects non-finite timestamps and numerics;
 - fails closed on invalid JSON, non-object frames and structurally malformed
   mixed payloads;
@@ -128,7 +159,7 @@ proxy and the venue's separate taker delay.
 | maker sells / buys | 1,628 / 0 |
 | sale cash | $6,234.022169 |
 | merges / merge return | 24 / $12,695.929028 |
-| observed event cash flow | **-$4,320.048803** |
+| mechanics-implied collateral-equivalent event balance | **-$4,320.048803** |
 | contractual winning-token mark | $4,380.314266 |
 | losing retained tokens marked zero | $4,295.574514 |
 | contractual terminal PnL | **+$60.265463** |
@@ -259,7 +290,8 @@ Make one compact v2 accounting pass that:
 2. verifies winners from authoritative payout data, not Gamma floats;
 3. extends the post-window lifecycle bound to at least 24 hours and reports the
    exact query/watermark boundary;
-4. computes peak confirmed draw, simultaneous principals, capital-seconds,
+4. computes separately labeled portfolio-netted and non-cross-netted
+   mechanics-implied collateral requirements, state paths, capital-seconds,
    per-window no-merge tails and rebate availability without backdating;
 5. labels the current floor precisely: complete pairs are contractually
    mergeable, while unmatched residuals receive zero;
@@ -315,6 +347,8 @@ arm or used to tune a threshold on the same sample.
 ## Operational state
 
 - Gen78 paper runner: stopped and archived cleanly;
+- Gen79 causal-overlap capture: running at the time of this addendum; economics
+  invalid, tape preservation/replay only;
 - Gen75 cross-venue capture: still running passively;
 - executor/mintbot/lockbot: not running;
 - mint place mode: hard-disabled;

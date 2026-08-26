@@ -5,15 +5,21 @@ BTC/ETH/SOL/XRP "up or down" markets. One question end-to-end: *is there a
 replicable, low-capital edge, and what execution captures it?*
 
 **Status: NO-GO for real money.** Receipt attribution and the frozen integer
-ledger prove one wallet's 31-window split → two-sided maker sell → merge
+v1 ledger prove one wallet's 31-window split → two-sided maker sell → merge
 mechanism, not a profitable strategy. Its +$60.27 contractual terminal mark is
 not observed cash, 97.48% comes from five windows, the allocation is not
 identified, and the rebate-inclusive residual-zero-payoff case is -$70.24.
-Independent Opus/Qwen max-effort review found no material accounting bug but
-rejected implementation, another Basket99 variant, and every live path. The feed
-causality defect is fixed and Gen78 replayed exactly; this is an engineering GO
-for paper/shadow only. The next gate is an evidence-complete v2 ledger followed
-by one frozen sibling-wallet falsification. See
+Independent Opus/Qwen max-effort review found no material v1 arithmetic bug but
+rejected implementation, another Basket99 variant, and every live path. Revision
+`3f910c0` implements the evidence-complete v2 producer and frozen ten-wallet
+falsification; it cannot emit results until ClickHouse covers the pre-registered
+24-hour tail through **2026-08-26 23:15 UTC** and Polygon provides a finalized
+anchor beyond it. Gen78 replayed exactly, but Gen79 then exposed a separate false
+book-expiry defect: unchanged event-driven books were being called stale after
+400 ms. Revision `a6dec0c` fixes that readiness model and adds a 15-second
+inbound transport lease. Gen79 economics are invalid and no corrected economic
+replay exists yet. The next economic gate remains exactly one frozen
+sibling-wallet falsification. See
 `reports/2026-08-26-exact-mint-ledger-and-feed-causality.md`. No current paper arm
 has passed a prospective economic gate.
 
@@ -45,7 +51,7 @@ servers, VPNs, or proxies must not be used to circumvent a restriction.
 
 | Session | Command it runs | What it is |
 |---|---|---|
-| `paper` | stopped after clean Gen78 archival | Basket99 is not a promotion candidate; Gen78 is engineering calibration only |
+| `paper` | Gen79 causal-overlap capture (economics invalid) | Basket99 is not a promotion candidate; preserve the tape for corrected replay only |
 | `crossvenue` | `python -m tools.crossvenue_capture` | passive RTDS/Binance/Deribit causal capture; never feeds a strategy during collection |
 | `mintbot` | stopped; on-demand `MINTBOT_MODE=shadow MINTBOT_ASSETS=btc python -m live.mintbot` | do not duplicate paper's BTC feed during primary experiments; place mode is forbidden |
 
@@ -130,6 +136,13 @@ condition-exact, fail-closed join; immutable evidence SHA-256 is
 `c2a2d60e909ee4da0e21e13f2cb58c4880fd48715ea0910b277c5cf8734f753d`
 and `586832f28481ed4abc9a52e8be52919817d4cc151595c5f42b3c0a0a215ca947`,
 respectively.
+Those hashes belong to the historical v1 evidence and must not feed the v2
+falsification. V2 regenerates candidate, attribution, receipt and authoritative
+outcome artifacts from one clean revision, uses stable `FINAL` reads of the
+ReplacingMergeTree source tables, requires exhaustive target-fill coverage, and
+fails closed on mapped redemptions or ERC-1155 custody activity until those cash
+and token-consumption paths are integrated. Its two capital paths are explicitly
+mechanics-implied collateral-equivalent estimates, not observed Safe/pUSD cash.
 `tools/latency_probe.py` measures GET and feed surfaces without calling an order
 endpoint, then compares the configured paper delay with twice the GET p90 proxy.
 `tools/order_latency_probe.py` is a separate dry-run-by-default, account-owner-run
@@ -257,16 +270,20 @@ still fill while a delayed cancellation is in flight, and stale post-only
 replacements are rejected. Once one token fills, its exact open-leg price caps
 or floors the opposite-token quote; the reported pair sums are FIFO-matched
 fills rather than same-time quote sums. Any market-WebSocket disconnect
-invalidates the active window because missed trades cannot be reconstructed. A
-`book` or `price_change` event arriving more than `PAPER_MAX_EVENT_LAG_MS`
-(400 ms by default) late freezes new decisions for its affected asset until both
-token streams catch up. An event timestamp more than 50 ms in the future fails
-closed and invalidates the affected window; negative clock skew is never clamped
-to fake zero latency. Existing hypothetical exchange orders remain exposed and
-ordered delayed trades can still fill them; this models measured latency instead
-of censoring it. Settlement reports split these windows into `lagged` and `clean`
-economics. A delayed `last_trade_price` does not freeze a fresh book, but its
-late fill awareness independently marks exposed windows `lagged`. Heartbeats
+invalidates the active window because missed trades cannot be reconstructed. An
+incoming `book` or `price_change` event more than `PAPER_MAX_EVENT_LAG_MS`
+(400 ms by default) late breaks that token's causal chain and freezes decisions
+until both token books rebootstrap authoritatively. A healthy event-driven book
+does **not** expire merely because its price and size remain unchanged; transport
+liveness is separate and enforced by a 10-second application ping plus a
+15-second inbound-frame/PONG lease. An event timestamp more than 50 ms in the
+future fails closed and invalidates the affected window; negative clock skew is
+never clamped to fake zero latency. Existing hypothetical exchange orders remain
+exposed and ordered delayed trades can still fill them; this models measured
+latency instead of censoring it. Settlement reports split these windows into
+`lagged` and `clean` economics. A delayed `last_trade_price` does not freeze a
+fresh book, but its late fill awareness independently marks exposed windows
+`lagged`. Heartbeats
 report rolling server-event p50/p90/max lag, stale/delayed-trade event counts,
 reconnect count, and the ordered feed-queue high-water mark. Socket reads are
 decoupled from event processing through a bounded 8,192-event queue; local queue
@@ -548,6 +565,9 @@ live next to the DB as `paper/paper_genN_<date>{start,end}.db`.
 | 74 | 08-25 23:40 | run only Basket99 with the measured 65 ms action proxy and 400 ms freshness cutoff while a separate passive cross-venue capture records RTDS, Binance, and Deribit; the immediate-completion replay candidate was rejected before deployment |
 | 75 | 08-26 00:27 | restart only the passive cross-venue capture after the legacy Deribit reconnects proved its lifecycle clock insufficient; preserve the old dataset and stamp exact host/boot plus source connect/close wall and monotonic times |
 | 76 | 08-26 01:19 | preserve Basket99, BTC-only, 65 ms action proxy and 400 ms freshness; restart paper only so it shares Gen75's explicit host/boot clock domain and logs Telegram API acknowledgement; Gen74 economics are archived but its raw capture is unfinalized after the old tmux-first stop procedure |
+| 77 | 08-26 03:xx | stop after hostile review found the first feed-causality correction incomplete; no economic conclusion |
+| 78 | 08-26 03:22 | validate exact raw/causal capture and replay parity with zero loss; engineering calibration only |
+| 79 | 08-26 03:59 | collect causal overlap with Gen75; invalidate economics after proving the 400 ms receive-silence expiry confounded unchanged books with a dead transport |
 
 Audit verdict 2026-08-25: the neutral/pair/mint launch gates are **closed**.
 The previous winner taxonomy, execution-parity claim, and latency attribution

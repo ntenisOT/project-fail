@@ -10,6 +10,7 @@ from typing import Mapping
 class BestAsk:
     price: float | None
     received_at: float
+    source_at: float
 
 
 @dataclasses.dataclass(frozen=True)
@@ -64,13 +65,22 @@ class BestAskCache:
     def clear(self) -> None:
         self._books.clear()
 
-    def apply(self, event: Mapping[str, object], received_at: float) -> set[str]:
-        """Apply authoritative snapshots or best-ask values from delta events."""
+    def apply(
+        self, event: Mapping[str, object], received_at: float, *,
+        source_at: float | None = None,
+    ) -> set[str]:
+        """Apply authoritative BBO values without allowing time to move backward."""
+        source_time = received_at if source_at is None else source_at
         changed: set[str] = set()
         for update in parse_book_updates(event):
             if not update.token or not update.has_ask:
                 continue
-            self._books[update.token] = BestAsk(update.ask, received_at)
+            previous = self._books.get(update.token)
+            if previous is not None and source_time < previous.source_at:
+                continue
+            self._books[update.token] = BestAsk(
+                update.ask, received_at, source_time,
+            )
             changed.add(update.token)
         return changed
 

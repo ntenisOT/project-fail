@@ -161,8 +161,17 @@ class CohortEngine:
         event_tokens = market_event_tokens(event)
         if event_tokens and not event_tokens & self._token_map.keys():
             return ()
-        self.books.apply(event, known_at)
-        self._gate_freshness(event, known_at)
+        event_type = event.get("event_type")
+        if event_type in ("book", "price_change"):
+            if not self._gate_freshness(event, known_at):
+                return ()
+            event_at = event_time_s(event)
+            assert event_at is not None
+            changed = self.books.apply(event, known_at, source_at=event_at)
+            self._fresh_tokens.update(changed & self._token_map.keys())
+            self._expire_freshness(known_at)
+        else:
+            self.books.apply(event, known_at)
         if event.get("event_type") != "last_trade_price":
             return ()
         token = str(event.get("asset_id") or "")
@@ -208,6 +217,7 @@ class CohortEngine:
         return tuple(fills)
 
     def tick(self, now: float) -> tuple[FillRecord, ...]:
+        self._expire_freshness(now)
         fills: list[FillRecord] = []
         for asset in sorted(self._active):
             if asset in self._stale_assets:
@@ -286,15 +296,29 @@ class CohortEngine:
             ))
         return tuple(records)
 
+    def _expire_freshness(self, now: float) -> None:
+        for token in tuple(self._fresh_tokens):
+            book = self.books.get(token)
+            if (book is None or not book.bootstrapped
+                    or now < book.received_at
+                    or now - book.received_at > self.max_event_lag_s):
+                self._fresh_tokens.discard(token)
+        for asset, cohort in self._active.items():
+            required = {cohort.market.up_token, cohort.market.down_token}
+            if required <= self._fresh_tokens:
+                self._stale_assets.discard(asset)
+            else:
+                self._stale_assets.add(asset)
+
     def _gate_freshness(
         self, event: Mapping[str, object], known_at: float,
-    ) -> None:
+    ) -> bool:
         if event.get("event_type") not in ("book", "price_change"):
-            return
+            return True
         tokens = market_event_tokens(event) & self._token_map.keys()
         assets = sorted({self._token_map[token][0] for token in tokens})
         if not assets:
-            return
+            return False
         event_at = event_time_s(event)
         stale = stale_market_event(event, known_at, self.max_event_lag_s)
         clock_lead_s = future_event_skew_s(event, known_at)
@@ -303,18 +327,12 @@ class CohortEngine:
         )
         if stale:
             self._fresh_tokens.difference_update(tokens)
-        else:
-            self._fresh_tokens.update(tokens)
         for asset in assets:
             cohort = self._active.get(asset)
             if cohort is None:
                 continue
-            required = {cohort.market.up_token, cohort.market.down_token}
-            if required <= self._fresh_tokens:
-                self._stale_assets.discard(asset)
-            else:
-                self._stale_assets.add(asset)
             if stale:
+                self._stale_assets.add(asset)
                 for window in cohort.windows.values():
                     if clock_lead_s is not None:
                         window.invalidate(
@@ -323,6 +341,7 @@ class CohortEngine:
                         )
                     else:
                         window.observe_stale_market_event(event_lag_ms, event_at)
+        return not stale
 
     @staticmethod
     def _fill_record(

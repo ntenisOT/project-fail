@@ -20,7 +20,7 @@ def event_time_s(event: Mapping[str, object]) -> float | None:
 def stale_market_event(event: Mapping[str, object], received_at: float,
                        max_lag_s: float) -> bool:
     """Fail closed when a causal book update is missing or outside clock bounds."""
-    if event.get("event_type") not in ("book", "price_change"):
+    if event.get("event_type") not in ("book", "price_change", "best_bid_ask"):
         return False
     event_at = event_time_s(event)
     if event_at is None:

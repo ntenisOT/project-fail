@@ -43,6 +43,10 @@ class FocusedPairTests(unittest.TestCase):
             {"asset_id": "up", "side": "BUY", "price": "0.49", "size": "0"},
         ]}, 3.0)
         self.assertEqual(cache.get("up").best_bid, 0.48)  # type: ignore[union-attr]
+        cache.apply({"event_type": "price_change", "price_changes": [
+            {"asset_id": "up", "side": "BUY", "price": "0.20", "size": "99"},
+        ]}, 4.0, source_at=2.5)
+        self.assertEqual(cache.get("up").best_bid, 0.48)  # type: ignore[union-attr]
 
     def test_public_queue_depth_must_trade_before_our_fill(self) -> None:
         window = PairWindow(PairConfig("carry", "accumulate", 0.6, action_latency_s=0),

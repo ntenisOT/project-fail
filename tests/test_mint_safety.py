@@ -100,12 +100,17 @@ class MintSafetyTests(unittest.TestCase):
                      "asks": [{"price": "0.40"}]}, 1.0)
         books.apply({"event_type": "price_change", "price_changes": [
             {"asset_id": "up", "best_ask": "0.63"},
-        ]}, 2.0)
+        ]}, 2.0, source_at=2.0)
         book = books.get("up")
         self.assertIsNotNone(book)
         assert book is not None
         self.assertEqual(book.price, 0.63)
         self.assertEqual(book.received_at, 2.0)
+        self.assertEqual(book.source_at, 2.0)
+        books.apply({"event_type": "price_change", "price_changes": [
+            {"asset_id": "up", "best_ask": "0.20"},
+        ]}, 2.1, source_at=1.9)
+        self.assertEqual(books.get("up"), book)
         self.assertIsNone(fresh_ask_pair(books, "up", "down", 2.1, 0.5))
         books.apply({"event_type": "price_change", "price_changes": [
             {"asset_id": "down", "best_ask": "0.39"},

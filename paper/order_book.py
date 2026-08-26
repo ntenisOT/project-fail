@@ -13,6 +13,8 @@ class OrderBook:
     received_at: float = 0.0
     tick: float = 0.01
     min_order_size: float = 5.0
+    source_at: float = 0.0
+    bootstrapped: bool = False
 
     @property
     def best_bid(self) -> float | None:
@@ -61,18 +63,26 @@ class OrderBookCache:
             raise ValueError("minimum order size must be positive")
         self._books.setdefault(token, OrderBook()).min_order_size = shares
 
-    def apply(self, event: Mapping[str, object], received_at: float) -> set[str]:
-        """Apply official snapshot, price-level delta, or tick-size events."""
+    def apply(
+        self, event: Mapping[str, object], received_at: float, *,
+        source_at: float | None = None,
+    ) -> set[str]:
+        """Apply ordered state only after an authoritative snapshot bootstrap."""
         event_type = event.get("event_type")
+        source_time = received_at if source_at is None else source_at
         changed: set[str] = set()
         if event_type == "book":
             token = str(event.get("asset_id") or "")
             if not token:
                 return changed
             book = self._books.setdefault(token, OrderBook())
+            if book.bootstrapped and source_time < book.source_at:
+                return changed
             book.bids = _levels(event.get("bids"))
             book.asks = _levels(event.get("asks"))
             book.received_at = received_at
+            book.source_at = source_time
+            book.bootstrapped = True
             return {token}
 
         if event_type == "price_change":
@@ -92,13 +102,17 @@ class OrderBookCache:
                     continue
                 if not 0 < price < 1 or size < 0:
                     continue
-                book = self._books.setdefault(token, OrderBook())
-                levels = book.bids if side == "BUY" else book.asks
+                delta_book = self._books.get(token)
+                if (delta_book is None or not delta_book.bootstrapped
+                        or source_time < delta_book.source_at):
+                    continue
+                levels = delta_book.bids if side == "BUY" else delta_book.asks
                 if size > 0:
                     levels[price] = size
                 else:
                     levels.pop(price, None)
-                book.received_at = received_at
+                delta_book.received_at = received_at
+                delta_book.source_at = source_time
                 changed.add(token)
             return changed
 

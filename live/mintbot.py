@@ -39,7 +39,13 @@ import time
 import urllib.request
 
 from live.feed_pump import FeedPump, FeedPumpStats
-from live.feed_health import FeedHealth, MARKET_WS_MAX_QUEUE, event_time_s
+from live.feed_health import (
+    FeedHealth,
+    MARKET_WS_MAX_QUEUE,
+    event_time_s,
+    market_event_tokens,
+    stale_market_event,
+)
 from live.market_book import BestAskCache, fresh_ask_pair
 from live.mint_quotes import Quote, guarded_pair_prices, plan_pair_quotes, should_reprice
 from live.window_clock import boundary_aligned_delay
@@ -149,6 +155,7 @@ class Mintbot:
         self.feed_health = FeedHealth()
         self.feed_pump: FeedPump | None = None
         self.feed_pump_stats = FeedPumpStats()
+        self.quote_wakeup = asyncio.Event()
 
     def spawn(self, coro):
         t = asyncio.create_task(coro)
@@ -319,7 +326,11 @@ class Mintbot:
     # ---- quoting: paired batches, no old/new cross-pair transition --------
     async def quoter_task(self):
         while True:
-            await asyncio.sleep(REQUOTE_S)
+            try:
+                await asyncio.wait_for(self.quote_wakeup.wait(), timeout=REQUOTE_S)
+            except TimeoutError:
+                pass
+            self.quote_wakeup.clear()
             now = time.time()
             for st in list(self.state.values()):
                 if (st.get("closing") or st["minted"] <= 0
@@ -417,13 +428,20 @@ class Mintbot:
         self.feed_health.observe(event, received_at)
         self.feed_counts[event_type] += 1
         source_at = event_time_s(event)
-        if event_type in ("book", "price_change") and source_at is None:
-            self.feed_counts["market_update_missing_timestamp"] += 1
+        if (event_type in ("book", "price_change", "best_bid_ask")
+                and stale_market_event(event, received_at, BOOK_FRESH_S)):
+            self.feed_counts["market_update_rejected_timestamp"] += 1
+            for token in market_event_tokens(event):
+                self.books.drop(token)
+            self.quote_wakeup.set()
             changed: set[str] = set()
         else:
-            changed = self.books.apply(event, source_at or received_at)
+            changed = self.books.apply(
+                event, received_at, source_at=source_at,
+            )
         if changed:
             self.feed_counts[f"{event_type}_book_updates"] += len(changed)
+            self.quote_wakeup.set()
         if time.monotonic() - self.last_feed_log < 60:
             return
         rest_count = self.quote_counts["rest_count"]
@@ -455,6 +473,7 @@ class Mintbot:
             connected_at = None
             try:
                 self.books.clear()
+                self.quote_wakeup.set()
                 async with websockets.connect(MKT_WS, ping_interval=None,
                                               open_timeout=12,
                                               close_timeout=0.1,

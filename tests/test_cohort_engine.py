@@ -51,29 +51,62 @@ def _fresh_books(engine: CohortEngine, timestamp: float = 1) -> None:
 def test_price_change_must_be_fresh_before_it_unpauses_quotes() -> None:
     engine = CohortEngine((_config("pair"),))
     engine.open_market(_market(), 0)
-    engine.on_event(_book("up-0", 1), 1)
+    engine.on_event(_book("up-0", 1.2), 1.2)
+    engine.on_event(_book("down-0", 1.2), 1.2)
     stale_down = {
         "event_type": "price_change", "timestamp": 1,
         "price_changes": [
-            {"asset_id": "down-0", "side": "BUY", "price": 0.49, "size": 1},
-            {"asset_id": "down-0", "side": "SELL", "price": 0.51, "size": 5},
+            {"asset_id": "down-0", "side": "BUY", "price": 0.20, "size": 1},
+            {"asset_id": "down-0", "side": "SELL", "price": 0.21, "size": 5},
         ],
     }
     engine.on_event(stale_down, 1.5)
     assert engine.tick(1.5) == ()
-    assert engine.on_event(_trade("up-0", 1.55), 1.55) == ()
+    down = engine.books.get("down-0")
+    assert down is not None
+    assert down.best_ask == 0.51
 
     fresh_down = {
-        "event_type": "price_change", "timestamp": 1.6,
+        "event_type": "price_change", "timestamp": 1.51,
         "price_changes": [
             {"asset_id": "down-0", "side": "BUY", "price": 0.49, "size": 1},
         ],
     }
-    engine.on_event(fresh_down, 1.6)
-    engine.tick(1.6)
+    engine.on_event(fresh_down, 1.51)
+    engine.tick(1.51)
 
-    fills = engine.on_event(_trade("up-0", 1.7), 1.7)
+    fills = engine.on_event(_trade("up-0", 1.52), 1.52)
     assert [(row.strategy, row.size) for row in fills] == [("pair", 5)]
+
+
+def test_deltas_cannot_bootstrap_a_book_after_reset() -> None:
+    engine = CohortEngine((_config("pair"),))
+    engine.open_market(_market(), 0)
+    delta = {
+        "event_type": "price_change", "timestamp": 1,
+        "price_changes": [
+            {"asset_id": "up-0", "side": "BUY", "price": 0.48, "size": 1},
+            {"asset_id": "down-0", "side": "BUY", "price": 0.49, "size": 1},
+        ],
+    }
+    engine.on_event(delta, 1)
+    assert engine.tick(1) == ()
+    assert engine.runtime_snapshot()["stale_assets"] == ["btc"]
+
+    _fresh_books(engine, 1.1)
+    engine.tick(1.1)
+    assert engine.runtime_snapshot()["stale_assets"] == []
+
+
+def test_book_freshness_expires_during_feed_silence() -> None:
+    engine = CohortEngine((_config("pair"),), max_event_lag_s=0.4)
+    engine.open_market(_market(), 0)
+    _fresh_books(engine, 1)
+    engine.tick(1)
+    assert engine.runtime_snapshot()["stale_assets"] == []
+
+    engine.tick(1.401)
+    assert engine.runtime_snapshot()["stale_assets"] == ["btc"]
 
 
 def test_trade_causality_respects_pre_and_post_activation_times() -> None:
